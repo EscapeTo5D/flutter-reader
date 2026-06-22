@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum PageAnimationType { cover, slide, scroll, none }
+enum PageAnimationType { cover, slide, simulation, scroll, none }
 
 enum TipPosition { none, chapterTitle, time, battery, batteryPercent, pageNumber, progress, bookName, timeAndBattery }
 

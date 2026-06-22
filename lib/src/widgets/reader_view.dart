@@ -58,6 +58,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
         _pageAnimation = CoverAnimation();
         break;
       case PageAnimationType.slide:
+      case PageAnimationType.simulation:
         _pageAnimation = SlideAnimation();
         break;
       case PageAnimationType.scroll:

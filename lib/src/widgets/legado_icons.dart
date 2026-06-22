@@ -45,6 +45,12 @@ class LegadoIcons {
 
   static Widget settings({double size = 24, Color color = const Color(0xFF595757)}) =>
       CustomPaint(size: Size(size, size), painter: _SettingsPainter(color));
+
+  static Widget reduce({double size = 24, Color color = const Color(0xFF000000)}) =>
+      CustomPaint(size: Size(size, size), painter: _ReducePainter(color));
+
+  static Widget add({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _AddPainter(color));
 }
 
 // ic_arrow_back.xml
@@ -837,4 +843,55 @@ class _SettingsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SettingsPainter old) => old.color != color;
+}
+
+class _ReducePainter extends CustomPainter {
+  final Color color;
+  _ReducePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final s = size.width / 24;
+    canvas.drawRect(Rect.fromLTRB(5 * s, 11 * s, 19 * s, 13 * s), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ReducePainter old) => old.color != color;
+}
+
+class _AddPainter extends CustomPainter {
+  final Color color;
+  _AddPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final s = size.width / 24;
+    canvas.drawPath(
+      Path()
+        ..moveTo(12.822 * s, 20 * s)
+        ..lineTo(11.177 * s, 20 * s)
+        ..lineTo(11.177 * s, 12.821 * s)
+        ..lineTo(4 * s, 12.821 * s)
+        ..lineTo(4 * s, 11.178 * s)
+        ..lineTo(11.178 * s, 11.178 * s)
+        ..lineTo(11.178 * s, 4 * s)
+        ..lineTo(12.823 * s, 4 * s)
+        ..lineTo(12.823 * s, 11.179 * s)
+        ..lineTo(20 * s, 11.179 * s)
+        ..lineTo(20 * s, 12.822 * s)
+        ..lineTo(12.822 * s, 12.822 * s)
+        ..lineTo(12.822 * s, 20 * s)
+        ..close(),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _AddPainter old) => old.color != color;
 }

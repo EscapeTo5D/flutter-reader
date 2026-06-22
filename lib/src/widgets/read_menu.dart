@@ -213,7 +213,12 @@ class _ReadMenuState extends State<ReadMenu> {
   }
 
   void _showStyleDialog(BuildContext context) {
-    showDialog(context: context, builder: (ctx) => _StyleDialog(controller: widget.controller));
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _StyleDialog(controller: widget.controller),
+    );
   }
 
   void _showMoreSettings(BuildContext context) {
@@ -234,226 +239,429 @@ class _StyleDialog extends StatefulWidget {
 }
 
 class _StyleDialogState extends State<_StyleDialog> {
-  late double fontSize;
-  late double lineHeight;
-  late double paragraphSpacing;
-  late double letterSpacing;
+  late int _fontSizeProgress;
+  late int _letterSpacingProgress;
+  late int _lineHeightProgress;
+  late int _paragraphSpacingProgress;
   late int textIndent;
   late Color bgColor;
   late Color textColor;
   late String? bgImage;
+  late PageAnimationType pageAnim;
   bool _clearBgImage = false;
 
-  static const _bgColors = [
-    Color(0xFFF5F5F5), Color(0xFFE8E0D0), Color(0xFFD5E8D4),
-    Color(0xFFE8D4D4), Color(0xFF2C2C2C), Color(0xFF1A1A2E),
-    Color(0xFFFDF6E3), Color(0xFF0D1117),
-  ];
-  static const _textColors = [
-    Color(0xFF333333), Color(0xFF5B4636), Color(0xFF2D4A22),
-    Color(0xFF4A2222), Color(0xFFCCCCCC), Color(0xFFC8C8D0),
-    Color(0xFF3C3226), Color(0xFFC9D1D9),
-  ];
-  static const _bgImages = [
-    'assets/bg/边彩画布.jpg',
-    'assets/bg/护眼漫绿.jpg',
-    'assets/bg/明媚倾城.jpg',
-    'assets/bg/宁静夜色.jpg',
-    'assets/bg/清新时光.jpg',
-    'assets/bg/山水画.jpg',
-    'assets/bg/山水墨影.jpg',
-    'assets/bg/深宫魅影.jpg',
-    'assets/bg/午后沙滩.jpg',
-    'assets/bg/新羊皮纸.jpg',
-    'assets/bg/羊皮纸1.jpg',
-    'assets/bg/羊皮纸2.jpg',
-    'assets/bg/羊皮纸3.jpg',
-    'assets/bg/羊皮纸4.jpg',
+  static const _stylePresets = [
+    _StylePreset('默认', Color(0xFFF5F5F5), Color(0xFF333333)),
+    _StylePreset('护眼', Color(0xFFD5E8D4), Color(0xFF2D4A22)),
+    _StylePreset('羊皮纸', Color(0xFFE8E0D0), Color(0xFF5B4636)),
+    _StylePreset('深色', Color(0xFF2C2C2C), Color(0xFFCCCCCC)),
+    _StylePreset('夜间', Color(0xFF1A1A2E), Color(0xFFC8C8D0)),
   ];
 
   @override
   void initState() {
     super.initState();
     final s = widget.controller.settings;
-    fontSize = s.fontSize;
-    lineHeight = s.lineHeight;
-    paragraphSpacing = s.paragraphSpacing;
-    letterSpacing = s.letterSpacing;
+    _fontSizeProgress = s.fontSize.toInt() - 5;
+    _letterSpacingProgress = (s.letterSpacing * 100).toInt() + 50;
+    _lineHeightProgress = (s.lineHeight * 10).toInt() + 10;
+    _paragraphSpacingProgress = (s.paragraphSpacing * 10).toInt();
     textIndent = s.textIndent;
     bgColor = s.backgroundColor;
     textColor = s.textColor;
     bgImage = s.backgroundImage;
+    pageAnim = s.pageAnimation;
+  }
+
+  void _apply() {
+    widget.controller.updateSettings(
+      widget.controller.settings.copyWith(
+        fontSize: (_fontSizeProgress + 5).toDouble(),
+        lineHeight: (_lineHeightProgress - 10) / 10.0,
+        paragraphSpacing: _paragraphSpacingProgress / 10.0,
+        letterSpacing: (_letterSpacingProgress - 50) / 100.0,
+        textIndent: textIndent,
+        backgroundColor: bgColor,
+        textColor: textColor,
+        backgroundImage: bgImage,
+        clearBackgroundImage: _clearBgImage,
+        pageAnimation: pageAnim,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: DefaultTabController(
-        length: 3,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const TabBar(
-              tabs: [
-                Tab(text: '排版'),
-                Tab(text: '颜色'),
-                Tab(text: '背景'),
-              ],
-            ),
-            Flexible(
-              child: TabBarView(
-                children: [
-                  _buildTypographyTab(),
-                  _buildColorTab(),
-                  _buildBackgroundTab(),
-                ],
-              ),
-            ),
-            _buildActions(),
-          ],
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildDragHandle(),
+          _buildTopButtons(),
+          _buildSeekBars(),
+          _buildDivider(),
+          _buildPageAnimSection(),
+          _buildDivider(),
+          _buildStyleSection(),
+          SizedBox(height: bottomPadding),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDragHandle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Container(
+        width: 32,
+        height: 4,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade300,
+          borderRadius: BorderRadius.circular(2),
         ),
       ),
     );
   }
 
-  Widget _buildTypographyTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          _buildSlider('字号', fontSize, 12, 32, (v) => setState(() => fontSize = v), '${fontSize.toInt()}'),
-          _buildSlider('行高', lineHeight, 1.0, 3.0, (v) => setState(() => lineHeight = v), lineHeight.toStringAsFixed(1)),
-          _buildSlider('段距', paragraphSpacing, 0, 32, (v) => setState(() => paragraphSpacing = v), paragraphSpacing.toInt().toString()),
-          _buildSlider('字距', letterSpacing, -2, 8, (v) => setState(() => letterSpacing = v), letterSpacing.toStringAsFixed(1)),
-          _buildSlider('缩进', textIndent.toDouble(), 0, 8, (v) => setState(() => textIndent = v.toInt()), textIndent.toString()),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildColorTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('背景颜色'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _bgColors.map((color) {
-              final selected = bgColor == color && bgImage == null;
-              return GestureDetector(
-                onTap: () => setState(() { bgColor = color; bgImage = null; _clearBgImage = true; }),
-                child: Container(
-                  width: 36, height: 36,
-                  decoration: BoxDecoration(
-                    color: color, shape: BoxShape.circle,
-                    border: Border.all(color: selected ? Colors.blue : Colors.grey.shade300, width: selected ? 3 : 1),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-          const Text('文字颜色'),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _textColors.map((color) {
-              final selected = textColor == color;
-              return GestureDetector(
-                onTap: () => setState(() => textColor = color),
-                child: Container(
-                  width: 36, height: 36,
-                  decoration: BoxDecoration(
-                    color: color, shape: BoxShape.circle,
-                    border: Border.all(color: selected ? Colors.blue : Colors.grey.shade300, width: selected ? 3 : 1),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBackgroundTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('背景图片'),
-          const SizedBox(height: 8),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8, childAspectRatio: 1.5,
-            ),
-            itemCount: _bgImages.length,
-            itemBuilder: (ctx, i) {
-              final img = _bgImages[i];
-              final selected = bgImage == img;
-              return GestureDetector(
-                onTap: () => setState(() { bgImage = img; _clearBgImage = false; }),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: selected ? Colors.blue : Colors.grey.shade300, width: selected ? 3 : 1),
-                    image: DecorationImage(image: AssetImage(img, package: 'flutter_reader'), fit: BoxFit.cover),
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActions() {
+  Widget _buildTopButtons() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: () {
-              widget.controller.updateSettings(
-                widget.controller.settings.copyWith(
-                  fontSize: fontSize, lineHeight: lineHeight,
-                  paragraphSpacing: paragraphSpacing, letterSpacing: letterSpacing,
-                  textIndent: textIndent, backgroundColor: bgColor,
-                  textColor: textColor, backgroundImage: bgImage,
-                  clearBackgroundImage: _clearBgImage,
-                ),
-              );
-              Navigator.pop(context);
-            },
-            child: const Text('确定'),
+          Expanded(child: _buildTextButton('加粗', () {})),
+          const SizedBox(width: 6),
+          Expanded(child: _buildTextButton('字体', () {})),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _buildTextButton('缩进', () {
+              _showIndentPicker();
+            }),
+          ),
+          const SizedBox(width: 6),
+          Expanded(child: _buildTextButton('繁简', () {})),
+          const SizedBox(width: 6),
+          Expanded(child: _buildTextButton('内边距', () {})),
+          const SizedBox(width: 6),
+          Expanded(child: _buildTextButton('信息', () {})),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextButton(String label, VoidCallback onTap) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        side: BorderSide(color: Colors.grey.shade300),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 13, color: Colors.black87),
+      ),
+    );
+  }
+
+  Widget _buildSeekBars() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        children: [
+          _buildSeekBar(
+            title: '字号',
+            progress: _fontSizeProgress,
+            max: 45,
+            display: '${_fontSizeProgress + 5}',
+            onChanged: (v) { setState(() => _fontSizeProgress = v); _apply(); },
+          ),
+          _buildSeekBar(
+            title: '字间距',
+            progress: _letterSpacingProgress,
+            max: 100,
+            display: ((_letterSpacingProgress - 50) / 100.0).toStringAsFixed(2),
+            onChanged: (v) { setState(() => _letterSpacingProgress = v); _apply(); },
+          ),
+          _buildSeekBar(
+            title: '行高',
+            progress: _lineHeightProgress,
+            max: 20,
+            display: ((_lineHeightProgress - 10) / 10.0).toStringAsFixed(1),
+            onChanged: (v) { setState(() => _lineHeightProgress = v); _apply(); },
+          ),
+          _buildSeekBar(
+            title: '段距',
+            progress: _paragraphSpacingProgress,
+            max: 20,
+            display: (_paragraphSpacingProgress / 10.0).toStringAsFixed(1),
+            onChanged: (v) { setState(() => _paragraphSpacingProgress = v); _apply(); },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSlider(String label, double value, double min, double max, ValueChanged<double> onChanged, String display) {
+  Widget _buildSeekBar({
+    required String title,
+    required int progress,
+    required int max,
+    required String display,
+    required ValueChanged<int> onChanged,
+  }) {
     return Row(
       children: [
-        SizedBox(width: 40, child: Text(label, style: const TextStyle(fontSize: 13))),
-        Expanded(child: Slider(value: value, min: min, max: max, onChanged: onChanged)),
-        SizedBox(width: 36, child: Text(display, textAlign: TextAlign.right, style: const TextStyle(fontSize: 13))),
+        SizedBox(
+          width: 60,
+          child: Text(title, style: const TextStyle(fontSize: 13, color: Colors.black54)),
+        ),
+        _buildSeekBarButton(LegadoIcons.reduce(size: 24, color: Colors.black54), () {
+          if (progress > 0) onChanged(progress - 1);
+        }),
+        Expanded(
+          child: SliderTheme(
+            data: SliderThemeData(
+              activeTrackColor: Theme.of(context).colorScheme.primary,
+              thumbColor: Theme.of(context).colorScheme.primary,
+              trackHeight: 2,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+            ),
+            child: Slider(
+              value: progress.toDouble().clamp(0, max.toDouble()),
+              min: 0,
+              max: max.toDouble(),
+              divisions: max,
+              onChanged: (v) => onChanged(v.round()),
+            ),
+          ),
+        ),
+        _buildSeekBarButton(LegadoIcons.add(size: 24, color: Colors.black54), () {
+          if (progress < max) onChanged(progress + 1);
+        }),
+        SizedBox(
+          width: 60,
+          child: Text(
+            display,
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+        ),
       ],
     );
   }
+
+  Widget _buildSeekBarButton(Widget icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(width: 24, height: 24, child: icon),
+    );
+  }
+
+  Widget _buildDivider() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      height: 0.8,
+      color: Colors.grey.shade200,
+    );
+  }
+
+  Widget _buildPageAnimSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '翻页动画',
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _buildAnimChip('覆盖', PageAnimationType.cover),
+              const SizedBox(width: 8),
+              _buildAnimChip('滑动', PageAnimationType.slide),
+              const SizedBox(width: 8),
+              _buildAnimChip('仿真', PageAnimationType.simulation),
+              const SizedBox(width: 8),
+              _buildAnimChip('滚动', PageAnimationType.scroll),
+              const SizedBox(width: 8),
+              _buildAnimChip('无动画', PageAnimationType.none),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnimChip(String label, PageAnimationType type) {
+    final selected = pageAnim == type;
+    return Expanded(
+      child: OutlinedButton(
+        onPressed: () {
+          setState(() => pageAnim = type);
+          _apply();
+        },
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          side: BorderSide(
+            color: selected ? Theme.of(context).colorScheme.primary : Colors.grey.shade300,
+          ),
+          backgroundColor: selected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
+              : null,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: selected ? Theme.of(context).colorScheme.primary : Colors.black87,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStyleSection() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '文字底色',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
+              const Text('共用布局', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              const SizedBox(width: 4),
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: Checkbox(
+                  value: false,
+                  onChanged: (v) {},
+                  activeColor: Theme.of(context).colorScheme.primary,
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide(color: Colors.grey.shade400),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 60,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                ...List.generate(_stylePresets.length, (i) {
+                  final preset = _stylePresets[i];
+                  final selected =
+                      bgColor == preset.bg && textColor == preset.text && bgImage == null;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          bgColor = preset.bg;
+                          textColor = preset.text;
+                          bgImage = null;
+                          _clearBgImage = true;
+                        });
+                        _apply();
+                      },
+                      child: Container(
+                        width: 56,
+                        decoration: BoxDecoration(
+                          color: preset.bg,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: selected
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.grey.shade300,
+                            width: selected ? 2 : 1,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            preset.label,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: preset.text,
+                              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+                GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    width: 56,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Center(
+                      child: LegadoIcons.add(size: 20, color: Colors.black54),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showIndentPicker() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(9, (i) {
+            final indent = i;
+            return ListTile(
+              title: Text(indent == 0 ? '无缩进' : '缩进 $indent 字符'),
+              trailing: textIndent == indent
+                  ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
+                  : null,
+              onTap: () {
+                setState(() => textIndent = indent);
+                _apply();
+                Navigator.pop(ctx);
+              },
+            );
+          }),
+        ),
+      ),
+    );
+  }
+}
+
+class _StylePreset {
+  final String label;
+  final Color bg;
+  final Color text;
+  const _StylePreset(this.label, this.bg, this.text);
 }
 
 class _MoreSettingsSheet extends StatefulWidget {
@@ -465,7 +673,6 @@ class _MoreSettingsSheet extends StatefulWidget {
 }
 
 class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
-  late PageAnimationType pageAnim;
   late bool keepScreenOn;
   late bool hideStatusBar;
   late bool hideNavigationBar;
@@ -481,7 +688,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   void initState() {
     super.initState();
     final s = widget.controller.settings;
-    pageAnim = s.pageAnimation;
     keepScreenOn = s.keepScreenOn;
     hideStatusBar = s.hideStatusBar;
     hideNavigationBar = s.hideNavigationBar;
@@ -497,7 +703,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   void _apply() {
     widget.controller.updateSettings(
       widget.controller.settings.copyWith(
-        pageAnimation: pageAnim,
         keepScreenOn: keepScreenOn,
         hideStatusBar: hideStatusBar,
         hideNavigationBar: hideNavigationBar,
@@ -516,12 +721,12 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     return Container(
-      height: 360,
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -530,16 +735,11 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
               decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
             ),
           ),
-          Expanded(
+          Flexible(
             child: ListView(
+              shrinkWrap: true,
               padding: EdgeInsets.only(bottom: bottomPadding),
               children: [
-                _buildDropdown('翻页动画', pageAnim, const {
-                  PageAnimationType.cover: '覆盖',
-                  PageAnimationType.slide: '滑动',
-                  PageAnimationType.scroll: '滚动',
-                  PageAnimationType.none: '无动画',
-                }, (v) => setState(() { pageAnim = v; _apply(); })),
                 _buildSwitch('屏幕常亮', keepScreenOn, (v) => setState(() { keepScreenOn = v; _apply(); })),
                 _buildSwitch('隐藏状态栏', hideStatusBar, (v) => setState(() { hideStatusBar = v; _apply(); })),
                 _buildSwitch('隐藏导航栏', hideNavigationBar, (v) => setState(() { hideNavigationBar = v; _apply(); })),
@@ -565,24 +765,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
       onChanged: onChanged,
       activeThumbColor: Colors.blue,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-    );
-  }
-
-  Widget _buildDropdown<T>(String title, T value, Map<T, String> items, ValueChanged<T> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          Text(title, style: const TextStyle(fontSize: 14)),
-          const Spacer(),
-          DropdownButton<T>(
-            value: value,
-            underline: const SizedBox(),
-            items: items.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 14)))).toList(),
-            onChanged: (v) { if (v != null) onChanged(v); },
-          ),
-        ],
-      ),
     );
   }
 }
