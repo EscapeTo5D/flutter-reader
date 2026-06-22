@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../controller/reading_controller.dart';
 import '../models/reading_settings.dart';
+import 'chapter_list_page.dart';
+import 'legado_icons.dart';
 
 class ReadMenu extends StatefulWidget {
   final ReadingController controller;
@@ -38,7 +40,7 @@ class _ReadMenuState extends State<ReadMenu> {
         child: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.black87),
+              icon: LegadoIcons.arrowBack(size: 24, color: Colors.black87),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
             Expanded(
@@ -61,10 +63,7 @@ class _ReadMenuState extends State<ReadMenu> {
               ),
             ),
             IconButton(
-              icon: Icon(
-                widget.controller.isCurrentPageBookmarked() ? Icons.bookmark : Icons.bookmark_border,
-                color: Colors.black87,
-              ),
+              icon: LegadoIcons.bookmark(size: 24, color: Colors.black87),
               onPressed: () => widget.controller.addBookmark(),
             ),
           ],
@@ -79,19 +78,19 @@ class _ReadMenuState extends State<ReadMenu> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildFab(Icons.search, '搜索', () {
+          _buildFab(LegadoIcons.search(), '搜索', () {
             widget.controller.hideMenu();
             widget.controller.toggleSearch();
           }),
-          _buildFab(Icons.play_circle_outline, '自动', () {}),
-          _buildFab(Icons.find_replace, '替换', () {}),
-          _buildFab(Icons.brightness_6, '夜间', () {}),
+          _buildFab(LegadoIcons.autoPage(), '自动', () {}),
+          _buildFab(LegadoIcons.findReplace(), '替换', () {}),
+          _buildFab(LegadoIcons.brightness(), '夜间', () {}),
         ],
       ),
     );
   }
 
-  Widget _buildFab(IconData icon, String tooltip, VoidCallback onPressed) {
+  Widget _buildFab(Widget icon, String tooltip, VoidCallback onPressed) {
     return FloatingActionButton.small(
       heroTag: tooltip,
       onPressed: onPressed,
@@ -99,7 +98,7 @@ class _ReadMenuState extends State<ReadMenu> {
       foregroundColor: Colors.black54,
       elevation: 2,
       tooltip: tooltip,
-      child: Icon(icon),
+      child: icon,
     );
   }
 
@@ -163,19 +162,19 @@ class _ReadMenuState extends State<ReadMenu> {
     return Row(
       children: [
         const Spacer(flex: 1),
-        _buildBottomIcon(Icons.toc, '目录', () {
+        _buildBottomIcon(LegadoIcons.toc(), '目录', () {
           widget.controller.hideMenu();
           _showChapterDrawer(context);
         }),
         const Spacer(flex: 2),
-        _buildBottomIcon(Icons.headphones, '朗读', () {}),
+        _buildBottomIcon(LegadoIcons.readAloud(), '朗读', () {}),
         const Spacer(flex: 2),
-        _buildBottomIcon(Icons.font_download, '界面', () {
+        _buildBottomIcon(LegadoIcons.interfaceSetting(), '界面', () {
           widget.controller.hideMenu();
           _showStyleDialog(context);
         }),
         const Spacer(flex: 2),
-        _buildBottomIcon(Icons.settings, '设置', () {
+        _buildBottomIcon(LegadoIcons.settings(), '设置', () {
           widget.controller.hideMenu();
           _showMoreSettings(context);
         }),
@@ -184,7 +183,7 @@ class _ReadMenuState extends State<ReadMenu> {
     );
   }
 
-  Widget _buildBottomIcon(IconData icon, String label, VoidCallback onTap) {
+  Widget _buildBottomIcon(Widget icon, String label, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -193,7 +192,7 @@ class _ReadMenuState extends State<ReadMenu> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.black54, size: 24),
+            SizedBox(width: 24, height: 24, child: icon),
             const SizedBox(height: 3),
             Text(label, style: const TextStyle(color: Colors.black54, fontSize: 12)),
             const SizedBox(height: 7),
@@ -206,36 +205,9 @@ class _ReadMenuState extends State<ReadMenu> {
   void _showChapterDrawer(BuildContext context) {
     final book = widget.controller.book;
     if (book == null) return;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.3,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (ctx, scrollController) => Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('目录', style: Theme.of(ctx).textTheme.titleLarge),
-            ),
-            Expanded(
-              child: ListView.builder(
-                controller: scrollController,
-                itemCount: book.chapters.length,
-                itemBuilder: (ctx, i) => ListTile(
-                  title: Text(book.chapters[i].title),
-                  selected: i == widget.controller.currentChapterIndex,
-                  onTap: () {
-                    widget.controller.goToChapter(i);
-                    Navigator.pop(ctx);
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => ChapterListPage(controller: widget.controller),
       ),
     );
   }
@@ -245,7 +217,11 @@ class _ReadMenuState extends State<ReadMenu> {
   }
 
   void _showMoreSettings(BuildContext context) {
-    showDialog(context: context, builder: (ctx) => _MoreSettingsDialog(controller: widget.controller));
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _MoreSettingsSheet(controller: widget.controller),
+    );
   }
 }
 
@@ -480,16 +456,24 @@ class _StyleDialogState extends State<_StyleDialog> {
   }
 }
 
-class _MoreSettingsDialog extends StatefulWidget {
+class _MoreSettingsSheet extends StatefulWidget {
   final ReadingController controller;
-  const _MoreSettingsDialog({required this.controller});
+  const _MoreSettingsSheet({required this.controller});
 
   @override
-  State<_MoreSettingsDialog> createState() => _MoreSettingsDialogState();
+  State<_MoreSettingsSheet> createState() => _MoreSettingsSheetState();
 }
 
-class _MoreSettingsDialogState extends State<_MoreSettingsDialog> {
+class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   late PageAnimationType pageAnim;
+  late bool keepScreenOn;
+  late bool hideStatusBar;
+  late bool hideNavigationBar;
+  late bool textFullJustify;
+  late bool textBottomJustify;
+  late bool selectable;
+  late bool showBrightnessView;
+  late bool noAnimScrollPage;
   late bool showHeaderDivider;
   late bool showFooterDivider;
 
@@ -498,53 +482,107 @@ class _MoreSettingsDialogState extends State<_MoreSettingsDialog> {
     super.initState();
     final s = widget.controller.settings;
     pageAnim = s.pageAnimation;
+    keepScreenOn = s.keepScreenOn;
+    hideStatusBar = s.hideStatusBar;
+    hideNavigationBar = s.hideNavigationBar;
+    textFullJustify = s.textFullJustify;
+    textBottomJustify = s.textBottomJustify;
+    selectable = s.selectable;
+    showBrightnessView = s.showBrightnessView;
+    noAnimScrollPage = s.noAnimScrollPage;
     showHeaderDivider = s.showHeaderDivider;
     showFooterDivider = s.showFooterDivider;
   }
 
+  void _apply() {
+    widget.controller.updateSettings(
+      widget.controller.settings.copyWith(
+        pageAnimation: pageAnim,
+        keepScreenOn: keepScreenOn,
+        hideStatusBar: hideStatusBar,
+        hideNavigationBar: hideNavigationBar,
+        textFullJustify: textFullJustify,
+        textBottomJustify: textBottomJustify,
+        selectable: selectable,
+        showBrightnessView: showBrightnessView,
+        noAnimScrollPage: noAnimScrollPage,
+        showHeaderDivider: showHeaderDivider,
+        showFooterDivider: showFooterDivider,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('更多设置'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return Container(
+      height: 360,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      child: Column(
         children: [
-          Row(
-            children: [
-              const Text('翻页动画'),
-              const Spacer(),
-              DropdownButton<PageAnimationType>(
-                value: pageAnim,
-                items: const [
-                  DropdownMenuItem(value: PageAnimationType.cover, child: Text('覆盖')),
-                  DropdownMenuItem(value: PageAnimationType.slide, child: Text('滑动')),
-                  DropdownMenuItem(value: PageAnimationType.scroll, child: Text('滚动')),
-                  DropdownMenuItem(value: PageAnimationType.none, child: Text('无动画')),
-                ],
-                onChanged: (v) => setState(() => pageAnim = v!),
-              ),
-            ],
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Container(
+              width: 32, height: 4,
+              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+            ),
           ),
-          SwitchListTile(title: const Text('页头分割线'), value: showHeaderDivider, onChanged: (v) => setState(() => showHeaderDivider = v)),
-          SwitchListTile(title: const Text('页尾分割线'), value: showFooterDivider, onChanged: (v) => setState(() => showFooterDivider = v)),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.only(bottom: bottomPadding),
+              children: [
+                _buildDropdown('翻页动画', pageAnim, const {
+                  PageAnimationType.cover: '覆盖',
+                  PageAnimationType.slide: '滑动',
+                  PageAnimationType.scroll: '滚动',
+                  PageAnimationType.none: '无动画',
+                }, (v) => setState(() { pageAnim = v; _apply(); })),
+                _buildSwitch('屏幕常亮', keepScreenOn, (v) => setState(() { keepScreenOn = v; _apply(); })),
+                _buildSwitch('隐藏状态栏', hideStatusBar, (v) => setState(() { hideStatusBar = v; _apply(); })),
+                _buildSwitch('隐藏导航栏', hideNavigationBar, (v) => setState(() { hideNavigationBar = v; _apply(); })),
+                _buildSwitch('文字两端对齐', textFullJustify, (v) => setState(() { textFullJustify = v; _apply(); })),
+                _buildSwitch('文字底部对齐', textBottomJustify, (v) => setState(() { textBottomJustify = v; _apply(); })),
+                _buildSwitch('允许选择文字', selectable, (v) => setState(() { selectable = v; _apply(); })),
+                _buildSwitch('显示亮度调节', showBrightnessView, (v) => setState(() { showBrightnessView = v; _apply(); })),
+                _buildSwitch('无动画翻页', noAnimScrollPage, (v) => setState(() { noAnimScrollPage = v; _apply(); })),
+                _buildSwitch('页头分割线', showHeaderDivider, (v) => setState(() { showHeaderDivider = v; _apply(); })),
+                _buildSwitch('页尾分割线', showFooterDivider, (v) => setState(() { showFooterDivider = v; _apply(); })),
+              ],
+            ),
+          ),
         ],
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-        TextButton(
-          onPressed: () {
-            widget.controller.updateSettings(
-              widget.controller.settings.copyWith(
-                pageAnimation: pageAnim,
-                showHeaderDivider: showHeaderDivider,
-                showFooterDivider: showFooterDivider,
-              ),
-            );
-            Navigator.pop(context);
-          },
-          child: const Text('确定'),
-        ),
-      ],
+    );
+  }
+
+  Widget _buildSwitch(String title, bool value, ValueChanged<bool> onChanged) {
+    return SwitchListTile(
+      title: Text(title, style: const TextStyle(fontSize: 14)),
+      value: value,
+      onChanged: onChanged,
+      activeThumbColor: Colors.blue,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+    );
+  }
+
+  Widget _buildDropdown<T>(String title, T value, Map<T, String> items, ValueChanged<T> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Text(title, style: const TextStyle(fontSize: 14)),
+          const Spacer(),
+          DropdownButton<T>(
+            value: value,
+            underline: const SizedBox(),
+            items: items.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 14)))).toList(),
+            onChanged: (v) { if (v != null) onChanged(v); },
+          ),
+        ],
+      ),
     );
   }
 }

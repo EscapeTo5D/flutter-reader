@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'legado_icons.dart';
 
 class ReaderTextSelectionToolbar extends StatelessWidget {
   final String selectedText;
@@ -26,19 +27,19 @@ class ReaderTextSelectionToolbar extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildButton(context, Icons.content_copy, '复制', () {
+            _buildButton(context, LegadoIcons.copy(size: 18, color: Colors.white), '复制', () {
               Clipboard.setData(ClipboardData(text: selectedText));
               onCopy?.call();
             }),
-            _buildButton(context, Icons.bookmark_add, '书签', onBookmark),
-            _buildButton(context, Icons.search, '搜索', onSearch),
+            _buildButton(context, LegadoIcons.bookmark(size: 18, color: Colors.white), '书签', onBookmark),
+            _buildButton(context, LegadoIcons.search(size: 18, color: Colors.white), '搜索', onSearch),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildButton(BuildContext context, IconData icon, String label, VoidCallback? onTap) {
+  Widget _buildButton(BuildContext context, Widget icon, String label, VoidCallback? onTap) {
     return InkWell(
       onTap: () {
         onTap?.call();
@@ -48,7 +49,7 @@ class ReaderTextSelectionToolbar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 18),
+            SizedBox(width: 18, height: 18, child: icon),
             const SizedBox(height: 2),
             Text(label, style: const TextStyle(color: Colors.white, fontSize: 11)),
           ],

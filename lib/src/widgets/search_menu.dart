@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../controller/reading_controller.dart';
+import 'legado_icons.dart';
 
 class SearchMenu extends StatefulWidget {
   final ReadingController controller;
@@ -54,11 +55,11 @@ class _SearchMenuState extends State<SearchMenu> {
               ),
               const SizedBox(width: 8),
               IconButton(
-                icon: const Icon(Icons.search, color: Colors.black54),
+                icon: LegadoIcons.search(size: 24, color: Colors.black54),
                 onPressed: () => widget.controller.search(_searchController.text),
               ),
               IconButton(
-                icon: const Icon(Icons.close, color: Colors.black54),
+                icon: LegadoIcons.close(size: 24, color: Colors.black54),
                 onPressed: () => widget.controller.toggleSearch(),
               ),
             ],
@@ -70,7 +71,7 @@ class _SearchMenuState extends State<SearchMenu> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.keyboard_arrow_up, color: Colors.black54),
+                    icon: LegadoIcons.arrowDropUp(size: 24, color: Colors.black54),
                     onPressed: () => widget.controller.previousSearchResult(),
                   ),
                   Text(
@@ -78,7 +79,7 @@ class _SearchMenuState extends State<SearchMenu> {
                     style: const TextStyle(color: Colors.black87),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.keyboard_arrow_down, color: Colors.black54),
+                    icon: LegadoIcons.arrowDropDown(size: 24, color: Colors.black54),
                     onPressed: () => widget.controller.nextSearchResult(),
                   ),
                 ],

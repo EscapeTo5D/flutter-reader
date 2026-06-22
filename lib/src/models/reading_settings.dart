@@ -133,6 +133,14 @@ class ReadingSettings {
   bool showHeaderDivider;
   bool showFooterDivider;
   int textIndent;
+  bool keepScreenOn;
+  bool hideStatusBar;
+  bool hideNavigationBar;
+  bool textFullJustify;
+  bool textBottomJustify;
+  bool selectable;
+  bool showBrightnessView;
+  bool noAnimScrollPage;
 
   ReadingSettings({
     this.fontSize = 18.0,
@@ -157,6 +165,14 @@ class ReadingSettings {
     this.showHeaderDivider = true,
     this.showFooterDivider = true,
     this.textIndent = 2,
+    this.keepScreenOn = true,
+    this.hideStatusBar = false,
+    this.hideNavigationBar = false,
+    this.textFullJustify = true,
+    this.textBottomJustify = true,
+    this.selectable = true,
+    this.showBrightnessView = true,
+    this.noAnimScrollPage = false,
   });
 
   ReadingSettings copyWith({
@@ -179,6 +195,14 @@ class ReadingSettings {
     bool? showHeaderDivider,
     bool? showFooterDivider,
     int? textIndent,
+    bool? keepScreenOn,
+    bool? hideStatusBar,
+    bool? hideNavigationBar,
+    bool? textFullJustify,
+    bool? textBottomJustify,
+    bool? selectable,
+    bool? showBrightnessView,
+    bool? noAnimScrollPage,
   }) {
     return ReadingSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -199,6 +223,14 @@ class ReadingSettings {
       showHeaderDivider: showHeaderDivider ?? this.showHeaderDivider,
       showFooterDivider: showFooterDivider ?? this.showFooterDivider,
       textIndent: textIndent ?? this.textIndent,
+      keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+      hideStatusBar: hideStatusBar ?? this.hideStatusBar,
+      hideNavigationBar: hideNavigationBar ?? this.hideNavigationBar,
+      textFullJustify: textFullJustify ?? this.textFullJustify,
+      textBottomJustify: textBottomJustify ?? this.textBottomJustify,
+      selectable: selectable ?? this.selectable,
+      showBrightnessView: showBrightnessView ?? this.showBrightnessView,
+      noAnimScrollPage: noAnimScrollPage ?? this.noAnimScrollPage,
     );
   }
 }

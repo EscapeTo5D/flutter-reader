@@ -7,6 +7,8 @@ export 'src/models/bookmark.dart';
 export 'src/controller/reading_controller.dart';
 export 'src/widgets/reader_view.dart';
 export 'src/widgets/read_menu.dart';
+export 'src/widgets/chapter_list_page.dart';
+export 'src/widgets/legado_icons.dart';
 export 'src/widgets/search_menu.dart';
 export 'src/widgets/text_selection_toolbar.dart' show ReaderTextSelectionToolbar;
 export 'src/widgets/page_view.dart';
