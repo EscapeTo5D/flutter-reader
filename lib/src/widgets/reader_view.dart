@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../controller/reading_controller.dart';
 import '../models/reading_settings.dart';
 import '../models/text_page.dart';
@@ -32,6 +33,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     super.initState();
     widget.controller.addListener(_onControllerUpdate);
     _initAnimation(widget.controller.settings.pageAnimation);
+    _applySystemUI();
   }
 
   @override
@@ -39,6 +41,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     _selectionOverlay?.remove();
     widget.controller.removeListener(_onControllerUpdate);
     _pageAnimation?.dispose();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
@@ -46,6 +49,27 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     setState(() {});
     if (widget.controller.settings.pageAnimation != _currentAnimType) {
       _initAnimation(widget.controller.settings.pageAnimation);
+    }
+    _applySystemUI();
+  }
+
+  void _applySystemUI() {
+    final settings = widget.controller.settings;
+    final menuVisible = widget.controller.menuVisible;
+
+    if (menuVisible) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+          overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
+    } else if (settings.hideStatusBar && settings.hideNavigationBar) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    } else if (settings.hideStatusBar) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+          overlays: [SystemUiOverlay.bottom]);
+    } else if (settings.hideNavigationBar) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+          overlays: [SystemUiOverlay.top]);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
   }
 
@@ -73,7 +97,20 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        final settings = widget.controller.settings;
+        final systemPadding = MediaQuery.of(context).padding;
+        final showHeader = settings.hideStatusBar;
+        final topInset = showHeader ? 0.0 : systemPadding.top;
+        final bottomInset = settings.hideNavigationBar ? 0.0 : systemPadding.bottom;
+        final nonContentHeight = topInset + bottomInset
+            + (showHeader ? settings.padding.headerHeight : 0)
+            + (showHeader && settings.showHeaderDivider ? 0.5 : 0)
+            + (settings.showFooterDivider ? 0.5 : 0)
+            + settings.padding.footerHeight;
+        final size = Size(
+          constraints.maxWidth - systemPadding.left - systemPadding.right,
+          (constraints.maxHeight - nonContentHeight).clamp(0.0, constraints.maxHeight),
+        );
         WidgetsBinding.instance.addPostFrameCallback((_) {
           widget.controller.updatePageSize(size);
         });

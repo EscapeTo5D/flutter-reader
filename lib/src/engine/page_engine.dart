@@ -98,9 +98,7 @@ class PageEngine {
     final pages = <TextPage>[];
     final availableHeight = pageSize.height -
         settings.padding.top -
-        settings.padding.bottom -
-        settings.padding.headerHeight -
-        settings.padding.footerHeight;
+        settings.padding.bottom;
 
     var currentPageLines = <TextLine>[];
     var usedHeight = 0.0;
