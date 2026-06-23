@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 enum PageAnimationType { cover, slide, simulation, scroll, none }
 
-enum TipPosition { none, chapterTitle, time, battery, batteryPercent, pageNumber, progress, bookName, timeAndBattery }
+enum TipPosition { none, chapterTitle, time, battery, batteryPercent, pageNumber, progress, bookName, timeAndBattery, pageAndTotal }
 
 class HeaderFooterConfig {
   final TipPosition left;
@@ -154,11 +154,15 @@ class ReadingSettings {
     this.fontFamily,
     this.backgroundImage,
     this.pageAnimation = PageAnimationType.cover,
-    this.headerConfig = const HeaderFooterConfig(),
-    this.footerConfig = const HeaderFooterConfig(
-      left: TipPosition.time,
+    this.headerConfig = const HeaderFooterConfig(
+      left: TipPosition.chapterTitle,
       center: TipPosition.none,
-      right: TipPosition.pageNumber,
+      right: TipPosition.time,
+    ),
+    this.footerConfig = const HeaderFooterConfig(
+      left: TipPosition.bookName,
+      center: TipPosition.none,
+      right: TipPosition.pageAndTotal,
     ),
     this.padding = const ReaderPadding(),
     this.clickConfig = const ClickRegionConfig(),

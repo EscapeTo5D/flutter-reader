@@ -70,6 +70,13 @@ class ReadingController extends ChangeNotifier {
     }
   }
 
+  void setCurrentPageIndex(int page) {
+    if (page >= 0 && page < _pages.length && page != _currentPageIndex) {
+      _currentPageIndex = page;
+      notifyListeners();
+    }
+  }
+
   void nextPage() {
     if (_currentPageIndex < _pages.length - 1) {
       _currentPageIndex++;

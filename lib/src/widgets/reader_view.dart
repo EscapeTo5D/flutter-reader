@@ -13,6 +13,7 @@ import 'page_animations/cover_animation.dart';
 import 'page_animations/slide_animation.dart';
 import 'page_animations/no_animation.dart';
 import 'page_animations/simulation_animation.dart';
+import 'page_animations/scroll_mode_handler.dart';
 
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
@@ -43,6 +44,8 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   AnimationController? _simulationAnimController;
   bool _simulationDragCommitted = false;
 
+  ScrollModeHandler? _scrollHandler;
+
   @override
   void initState() {
     super.initState();
@@ -58,6 +61,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     widget.controller.removeListener(_onControllerUpdate);
     _pageAnimation?.dispose();
     _simulationAnimController?.dispose();
+    _scrollHandler?.dispose();
     _releaseImages();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -77,6 +81,9 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     if (_currentAnimType != _lastAnimType) {
       _initAnimation(_currentAnimType);
       _lastAnimType = _currentAnimType;
+    }
+    if (_currentAnimType == PageAnimationType.scroll) {
+      _scrollHandler?.onPageChangedFromController();
     }
     _applySystemUI();
   }
@@ -110,6 +117,8 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     _pageAnimation?.dispose();
     _simulationAnimController?.dispose();
     _simulationAnimController = null;
+    _scrollHandler?.dispose();
+    _scrollHandler = null;
 
     switch (type) {
       case PageAnimationType.cover:
@@ -140,6 +149,9 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
         });
         break;
       case PageAnimationType.scroll:
+        _scrollHandler = ScrollModeHandler(widget.controller);
+        _pageAnimation = NoAnimation();
+        break;
       case PageAnimationType.none:
         _pageAnimation = NoAnimation();
         break;
@@ -258,6 +270,10 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
       );
     }
 
+    if (_currentAnimType == PageAnimationType.scroll && _scrollHandler != null) {
+      return _scrollHandler!.buildContent(context, pages, _buildPage);
+    }
+
     if (_currentAnimType == PageAnimationType.simulation &&
         _pageAnimation is SimulationAnimation) {
       return _buildSimulationContent(pages, currentIndex);
@@ -358,6 +374,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   }
 
   Widget _buildPage(TextPage page, int index) {
+    final isScroll = _currentAnimType == PageAnimationType.scroll;
     return pv.PageView(
       key: ValueKey('page_${controller.currentChapterIndex}_$index'),
       page: page,
@@ -365,7 +382,10 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
       pageIndex: index,
       totalPages: widget.controller.totalPages,
       chapterTitle: widget.controller.currentChapter?.title,
+      bookName: widget.controller.book?.title,
       searchQuery: widget.controller.searchQuery.isNotEmpty ? widget.controller.searchQuery : null,
+      useSafeArea: !isScroll,
+      showChrome: !isScroll,
     );
   }
 
@@ -391,6 +411,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   }
 
   void _onDragStart(DragStartDetails details) {
+    if (_currentAnimType == PageAnimationType.scroll) return;
     if (_currentAnimType == PageAnimationType.simulation) {
       if (_simulationAnimController?.isAnimating == true) {
         _simulationAnimController!.stop();
@@ -411,6 +432,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
+    if (_currentAnimType == PageAnimationType.scroll) return;
     if (_currentAnimType == PageAnimationType.simulation) {
       _dragOffset += details.delta.dx;
 
@@ -472,6 +494,7 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   }
 
   void _onDragEnd(DragEndDetails details) {
+    if (_currentAnimType == PageAnimationType.scroll) return;
     if (_currentAnimType == PageAnimationType.simulation) {
       if (!_simulationDragCommitted || _direction == PageDirection.none) {
         _isDragging = false;

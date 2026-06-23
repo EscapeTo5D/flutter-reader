@@ -9,6 +9,11 @@ class PageView extends StatelessWidget {
   final int totalPages;
   final String? chapterTitle;
   final String? searchQuery;
+  final String? bookName;
+  final bool useSafeArea;
+  final bool showChrome;
+  final bool showFooterOnly;
+  final bool showHeaderOnly;
 
   const PageView({
     super.key,
@@ -18,28 +23,57 @@ class PageView extends StatelessWidget {
     required this.totalPages,
     this.chapterTitle,
     this.searchQuery,
+    this.bookName,
+    this.useSafeArea = true,
+    this.showChrome = true,
+    this.showFooterOnly = false,
+    this.showHeaderOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final showHeader = settings.hideStatusBar;
+    if (showHeaderOnly || showFooterOnly) {
+      return _buildChromeOnly(context);
+    }
+
+    final showHeader = settings.hideStatusBar && showChrome;
+    final content = Container(
+      decoration: _buildBackground(),
+      clipBehavior: Clip.hardEdge,
+      child: Column(
+        children: [
+          if (showHeader) _buildHeader(context),
+          if (showHeader && settings.showHeaderDivider)
+            Container(height: 0.5, color: settings.backgroundColor),
+          Expanded(child: ClipRect(child: _buildContent())),
+          if (showChrome && settings.showFooterDivider)
+            Container(height: 0.5, color: Colors.grey.shade300),
+          if (showChrome) _buildFooter(context),
+        ],
+      ),
+    );
+
+    if (!useSafeArea) return content;
     return SafeArea(
       top: !settings.hideStatusBar,
       bottom: !settings.hideNavigationBar,
-      child: Container(
-        decoration: _buildBackground(),
-        clipBehavior: Clip.hardEdge,
-        child: Column(
-          children: [
-            if (showHeader) _buildHeader(context),
-            if (showHeader && settings.showHeaderDivider)
-              Container(height: 0.5, color: Colors.grey.shade300),
-            Expanded(child: _buildContent()),
-            if (settings.showFooterDivider)
-              Container(height: 0.5, color: Colors.grey.shade300),
-            _buildFooter(context),
-          ],
-        ),
+      child: content,
+    );
+  }
+
+  Widget _buildChromeOnly(BuildContext context) {
+    final cfg = showHeaderOnly ? settings.headerConfig : settings.footerConfig;
+    final vertPadding = showHeaderOnly
+        ? EdgeInsets.only(left: settings.padding.left, right: settings.padding.right)
+        : EdgeInsets.only(left: settings.padding.left, right: settings.padding.right, top: 6, bottom: 6);
+    return Padding(
+      padding: vertPadding,
+      child: Row(
+        children: [
+          Expanded(child: _buildTip(cfg.left, context, Alignment.centerLeft)),
+          Expanded(child: _buildTip(cfg.center, context, Alignment.center)),
+          Expanded(child: _buildTip(cfg.right, context, Alignment.centerRight)),
+        ],
       ),
     );
   }
@@ -104,9 +138,12 @@ class PageView extends StatelessWidget {
         final percent = totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
         text = '$percent%';
       case TipPosition.bookName:
-        text = '';
+        text = bookName ?? '';
       case TipPosition.timeAndBattery:
         text = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      case TipPosition.pageAndTotal:
+        final percent = totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
+        text = '${pageIndex + 1}/$totalPages $percent%';
     }
     return Align(
       alignment: alignment,
