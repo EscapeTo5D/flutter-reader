@@ -162,7 +162,7 @@ class ReadingSettings {
     ),
     this.padding = const ReaderPadding(),
     this.clickConfig = const ClickRegionConfig(),
-    this.showHeaderDivider = true,
+    this.showHeaderDivider = false,
     this.showFooterDivider = true,
     this.textIndent = 2,
     this.keepScreenOn = true,

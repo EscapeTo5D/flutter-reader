@@ -22,18 +22,24 @@ class PageView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: _buildBackground(),
-      child: Column(
-        children: [
-          _buildHeader(context),
-          if (settings.showHeaderDivider)
-            Divider(height: 1, color: settings.tipColor.withValues(alpha: 0.3)),
-          Expanded(child: _buildContent()),
-          if (settings.showFooterDivider)
-            Divider(height: 1, color: settings.tipColor.withValues(alpha: 0.3)),
-          _buildFooter(context),
-        ],
+    final showHeader = settings.hideStatusBar;
+    return SafeArea(
+      top: !settings.hideStatusBar,
+      bottom: !settings.hideNavigationBar,
+      child: Container(
+        decoration: _buildBackground(),
+        clipBehavior: Clip.hardEdge,
+        child: Column(
+          children: [
+            if (showHeader) _buildHeader(context),
+            if (showHeader && settings.showHeaderDivider)
+              Container(height: 0.5, color: Colors.grey.shade300),
+            Expanded(child: _buildContent()),
+            if (settings.showFooterDivider)
+              Container(height: 0.5, color: Colors.grey.shade300),
+            _buildFooter(context),
+          ],
+        ),
       ),
     );
   }
@@ -42,7 +48,10 @@ class PageView extends StatelessWidget {
     return SizedBox(
       height: settings.padding.headerHeight,
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: settings.padding.left),
+        padding: EdgeInsets.only(
+          left: settings.padding.left,
+          right: settings.padding.right,
+        ),
         child: Row(
           children: [
             Expanded(child: _buildTip(settings.headerConfig.left, context, Alignment.centerLeft)),
@@ -58,7 +67,12 @@ class PageView extends StatelessWidget {
     return SizedBox(
       height: settings.padding.footerHeight,
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: settings.padding.left),
+        padding: EdgeInsets.only(
+          left: settings.padding.left,
+          right: settings.padding.right,
+          top: 6,
+          bottom: 6,
+        ),
         child: Row(
           children: [
             Expanded(child: _buildTip(settings.footerConfig.left, context, Alignment.centerLeft)),
