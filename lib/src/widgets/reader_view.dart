@@ -1,4 +1,6 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import '../controller/reading_controller.dart';
 import '../models/reading_settings.dart';
@@ -10,6 +12,7 @@ import 'page_animations/page_animation.dart';
 import 'page_animations/cover_animation.dart';
 import 'page_animations/slide_animation.dart';
 import 'page_animations/no_animation.dart';
+import 'page_animations/simulation_animation.dart';
 
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
@@ -27,12 +30,25 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   double _dragOffset = 0;
   Offset? _tapDownPosition;
   OverlayEntry? _selectionOverlay;
+  PageAnimationType? _lastAnimType;
+
+  final GlobalKey _curPageKey = GlobalKey();
+  final GlobalKey _nextPageKey = GlobalKey();
+  final GlobalKey _prevPageKey = GlobalKey();
+
+  ui.Image? _curImage;
+  ui.Image? _nextImage;
+  ui.Image? _prevImage;
+  Offset _simulationTouchPoint = Offset.zero;
+  AnimationController? _simulationAnimController;
+  bool _simulationDragCommitted = false;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerUpdate);
-    _initAnimation(widget.controller.settings.pageAnimation);
+    _lastAnimType = _currentAnimType;
+    _initAnimation(_currentAnimType);
     _applySystemUI();
   }
 
@@ -41,14 +57,26 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     _selectionOverlay?.remove();
     widget.controller.removeListener(_onControllerUpdate);
     _pageAnimation?.dispose();
+    _simulationAnimController?.dispose();
+    _releaseImages();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
+  void _releaseImages() {
+    _curImage?.dispose();
+    _curImage = null;
+    _nextImage?.dispose();
+    _nextImage = null;
+    _prevImage?.dispose();
+    _prevImage = null;
+  }
+
   void _onControllerUpdate() {
     setState(() {});
-    if (widget.controller.settings.pageAnimation != _currentAnimType) {
-      _initAnimation(widget.controller.settings.pageAnimation);
+    if (_currentAnimType != _lastAnimType) {
+      _initAnimation(_currentAnimType);
+      _lastAnimType = _currentAnimType;
     }
     _applySystemUI();
   }
@@ -73,17 +101,43 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
     }
   }
 
-  PageAnimationType get _currentAnimType => widget.controller.settings.pageAnimation;
+  PageAnimationType get _currentAnimType {
+    if (widget.controller.settings.noAnimScrollPage) return PageAnimationType.none;
+    return widget.controller.settings.pageAnimation;
+  }
 
   void _initAnimation(PageAnimationType type) {
     _pageAnimation?.dispose();
+    _simulationAnimController?.dispose();
+    _simulationAnimController = null;
+
     switch (type) {
       case PageAnimationType.cover:
         _pageAnimation = CoverAnimation();
         break;
       case PageAnimationType.slide:
-      case PageAnimationType.simulation:
         _pageAnimation = SlideAnimation();
+        break;
+      case PageAnimationType.simulation:
+        _pageAnimation = SimulationAnimation();
+        _simulationAnimController = AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 300),
+        );
+        _simulationAnimController!.addListener(() {
+          final start = _simulationTouchPoint;
+          final end = _simulationAnimTarget;
+          _simulationAnimCurrentPoint = Offset(
+            start.dx + (end.dx - start.dx) * _simulationAnimController!.value,
+            start.dy + (end.dy - start.dy) * _simulationAnimController!.value,
+          );
+          setState(() {});
+        });
+        _simulationAnimController!.addStatusListener((status) {
+          if (status == AnimationStatus.completed) {
+            _onSimulationAnimStop();
+          }
+        });
         break;
       case PageAnimationType.scroll:
       case PageAnimationType.none:
@@ -91,6 +145,44 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
         break;
     }
     _pageAnimation!.init(this);
+  }
+
+  Offset _simulationAnimTarget = Offset.zero;
+  Offset _simulationAnimCurrentPoint = Offset.zero;
+  bool _simulationAnimStarted = false;
+
+  void _onSimulationAnimStop() {
+    if (!_simulationAnimStarted) return;
+    _simulationAnimStarted = false;
+    final direction = _direction;
+    _direction = PageDirection.none;
+    _isDragging = false;
+    _simulationDragCommitted = false;
+    _releaseImages();
+    if (direction == PageDirection.next && widget.controller.canGoNext) {
+      widget.controller.nextPage();
+    } else if (direction == PageDirection.prev && widget.controller.canGoPrevious) {
+      widget.controller.previousPage();
+    }
+    setState(() {});
+  }
+
+  Future<ui.Image?> _capturePage(GlobalKey key) async {
+    try {
+      final boundary =
+          key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null || !boundary.hasSize) return null;
+      return await boundary.toImage(pixelRatio: MediaQuery.of(context).devicePixelRatio);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _startSimulationAnimation(Offset target) {
+    _simulationAnimTarget = target;
+    _simulationAnimStarted = true;
+    _simulationAnimController?.reset();
+    _simulationAnimController?.forward();
   }
 
   @override
@@ -118,9 +210,9 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
         return GestureDetector(
           onTapDown: _onTapDown,
           onTapUp: _onTapUp,
-          onHorizontalDragStart: _onDragStart,
-          onHorizontalDragUpdate: _onDragUpdate,
-          onHorizontalDragEnd: _onDragEnd,
+          onPanStart: _onDragStart,
+          onPanUpdate: _onDragUpdate,
+          onPanEnd: _onDragEnd,
           child: Stack(
             children: [
               _buildPageContent(),
@@ -166,6 +258,72 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
       );
     }
 
+    if (_currentAnimType == PageAnimationType.simulation &&
+        _pageAnimation is SimulationAnimation) {
+      return _buildSimulationContent(pages, currentIndex);
+    }
+
+    return _buildStandardContent(pages, currentIndex);
+  }
+
+  Widget _buildSimulationContent(List<TextPage> pages, int currentIndex) {
+    final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
+    final viewSize = MediaQuery.of(context).size;
+
+    return Stack(
+      children: [
+        Offstage(
+          offstage: true,
+          child: RepaintBoundary(
+            key: _curPageKey,
+            child: ClipRect(
+              child: _buildPage(pages[currentIndex], currentIndex),
+            ),
+          ),
+        ),
+        if (currentIndex < pages.length - 1)
+          Offstage(
+            offstage: true,
+            child: RepaintBoundary(
+              key: _nextPageKey,
+              child: ClipRect(
+                child: _buildPage(pages[currentIndex + 1], currentIndex + 1),
+              ),
+            ),
+          ),
+        if (currentIndex > 0)
+          Offstage(
+            offstage: true,
+            child: RepaintBoundary(
+              key: _prevPageKey,
+              child: ClipRect(
+                child: _buildPage(pages[currentIndex - 1], currentIndex - 1),
+              ),
+            ),
+          ),
+        if (_isDragging &&
+            _direction != PageDirection.none &&
+            _curImage != null)
+          Positioned.fill(
+            child: (_pageAnimation! as SimulationAnimation).buildWithImages(
+              context: context,
+              curImage: _curImage,
+              nextImage: _nextImage,
+              prevImage: _prevImage,
+              direction: _direction,
+              touchPoint: _simulationAnimCurrentPoint,
+              viewSize: viewSize,
+              isCancel: false,
+              devicePixelRatio: devicePixelRatio,
+            ),
+          )
+        else
+          _buildPage(pages[currentIndex], currentIndex),
+      ],
+    );
+  }
+
+  Widget _buildStandardContent(List<TextPage> pages, int currentIndex) {
     final currentPage = _buildPage(
       pages[currentIndex],
       currentIndex,
@@ -187,6 +345,10 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
         direction: _direction,
         dragProgress: _dragOffset / MediaQuery.of(context).size.width,
       );
+    }
+
+    if (_pageAnimation is NoAnimation) {
+      return currentPage;
     }
 
     return AnimatedSwitcher(
@@ -215,8 +377,12 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
 
   void _onTapUp(TapUpDetails details) {
     if (_tapDownPosition == null) return;
-
     if (controller.menuVisible) return;
+
+    if (_currentAnimType == PageAnimationType.simulation) {
+      _tapDownPosition = null;
+      return;
+    }
 
     final size = MediaQuery.of(context).size;
     final action = controller.getClickAction(details.localPosition, size);
@@ -225,22 +391,131 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   }
 
   void _onDragStart(DragStartDetails details) {
-    _isDragging = true;
-    _dragOffset = 0;
-    _direction = PageDirection.none;
+    if (_currentAnimType == PageAnimationType.simulation) {
+      if (_simulationAnimController?.isAnimating == true) {
+        _simulationAnimController!.stop();
+      }
+      _simulationAnimStarted = false;
+      _releaseImages();
+      _isDragging = true;
+      _dragOffset = 0;
+      _direction = PageDirection.none;
+      _simulationDragCommitted = false;
+      _simulationTouchPoint = details.localPosition;
+      _simulationAnimCurrentPoint = details.localPosition;
+    } else {
+      _isDragging = true;
+      _dragOffset = 0;
+      _direction = PageDirection.none;
+    }
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
-    _dragOffset += details.delta.dx;
-    if (_dragOffset < 0) {
-      _direction = PageDirection.next;
-    } else if (_dragOffset > 0) {
-      _direction = PageDirection.prev;
+    if (_currentAnimType == PageAnimationType.simulation) {
+      _dragOffset += details.delta.dx;
+
+      if (!_simulationDragCommitted) {
+        final slop = 8.0;
+        if (_dragOffset.abs() > slop) {
+          _simulationDragCommitted = true;
+          if (_dragOffset < 0) {
+            _direction = PageDirection.next;
+          } else {
+            _direction = PageDirection.prev;
+          }
+          _captureSimulationImages();
+        }
+      }
+
+      if (_simulationDragCommitted) {
+        _simulationTouchPoint = details.localPosition;
+        _simulationAnimCurrentPoint = details.localPosition;
+        setState(() {});
+      }
+    } else {
+      _dragOffset += details.delta.dx;
+      if (_dragOffset < 0) {
+        _direction = PageDirection.next;
+      } else if (_dragOffset > 0) {
+        _direction = PageDirection.prev;
+      }
+      setState(() {});
     }
+  }
+
+  Future<void> _captureSimulationImages() async {
+    final pages = controller.pages;
+    final currentIndex = controller.currentPageIndex;
+
+    final curImg = await _capturePage(_curPageKey);
+    if (curImg != null) {
+      _curImage?.dispose();
+      _curImage = curImg;
+    }
+
+    if (_direction == PageDirection.next &&
+        currentIndex < pages.length - 1) {
+      final nextImg = await _capturePage(_nextPageKey);
+      if (nextImg != null) {
+        _nextImage?.dispose();
+        _nextImage = nextImg;
+      }
+    } else if (_direction == PageDirection.prev && currentIndex > 0) {
+      final prevImg = await _capturePage(_prevPageKey);
+      if (prevImg != null) {
+        _prevImage?.dispose();
+        _prevImage = prevImg;
+      }
+    }
+
     setState(() {});
   }
 
   void _onDragEnd(DragEndDetails details) {
+    if (_currentAnimType == PageAnimationType.simulation) {
+      if (!_simulationDragCommitted || _direction == PageDirection.none) {
+        _isDragging = false;
+        _dragOffset = 0;
+        _direction = PageDirection.none;
+        _simulationDragCommitted = false;
+        _releaseImages();
+        setState(() {});
+        return;
+      }
+
+      final viewW = MediaQuery.of(context).size.width;
+      double targetX;
+      double targetY;
+
+      targetY = _cornerY.toDouble();
+
+      if (_direction == PageDirection.next) {
+        targetX = _cornerX > 0 ? -0.1 : viewW + 0.1;
+      } else {
+        targetX = _cornerX > 0 ? viewW + 0.1 : -0.1;
+      }
+
+      _startSimulationAnimation(Offset(targetX, targetY));
+    } else {
+      _handleNonSimulationDragEnd();
+    }
+  }
+
+  int get _cornerX {
+    final x = _simulationTouchPoint.dx;
+    return x <= MediaQuery.of(context).size.width / 2
+        ? 0
+        : MediaQuery.of(context).size.width.toInt();
+  }
+
+  int get _cornerY {
+    final y = _simulationTouchPoint.dy;
+    return y <= MediaQuery.of(context).size.height / 2
+        ? 0
+        : MediaQuery.of(context).size.height.toInt();
+  }
+
+  void _handleNonSimulationDragEnd() {
     final threshold = MediaQuery.of(context).size.width * 0.25;
     if (_dragOffset.abs() > threshold) {
       if (_direction == PageDirection.next && controller.canGoNext) {

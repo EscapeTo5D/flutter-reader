@@ -248,6 +248,7 @@ class _StyleDialogState extends State<_StyleDialog> {
   late Color textColor;
   late String? bgImage;
   late PageAnimationType pageAnim;
+  late bool noAnimScrollPage;
   bool _clearBgImage = false;
 
   static const _stylePresets = [
@@ -271,6 +272,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     textColor = s.textColor;
     bgImage = s.backgroundImage;
     pageAnim = s.pageAnimation;
+    noAnimScrollPage = s.noAnimScrollPage;
   }
 
   void _apply() {
@@ -286,6 +288,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         backgroundImage: bgImage,
         clearBackgroundImage: _clearBgImage,
         pageAnimation: pageAnim,
+        noAnimScrollPage: noAnimScrollPage,
       ),
     );
   }
@@ -503,11 +506,14 @@ class _StyleDialogState extends State<_StyleDialog> {
   }
 
   Widget _buildAnimChip(String label, PageAnimationType type) {
-    final selected = pageAnim == type;
+    final selected = pageAnim == type || (type == PageAnimationType.none && noAnimScrollPage);
     return Expanded(
       child: OutlinedButton(
         onPressed: () {
-          setState(() => pageAnim = type);
+          setState(() {
+            pageAnim = type;
+            noAnimScrollPage = (type == PageAnimationType.none);
+          });
           _apply();
         },
         style: OutlinedButton.styleFrom(
@@ -711,6 +717,7 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
         selectable: selectable,
         showBrightnessView: showBrightnessView,
         noAnimScrollPage: noAnimScrollPage,
+        pageAnimation: noAnimScrollPage ? PageAnimationType.none : null,
         showHeaderDivider: showHeaderDivider,
         showFooterDivider: showFooterDivider,
       ),
@@ -747,7 +754,10 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
                 _buildSwitch('文字底部对齐', textBottomJustify, (v) => setState(() { textBottomJustify = v; _apply(); })),
                 _buildSwitch('允许选择文字', selectable, (v) => setState(() { selectable = v; _apply(); })),
                 _buildSwitch('显示亮度调节', showBrightnessView, (v) => setState(() { showBrightnessView = v; _apply(); })),
-                _buildSwitch('无动画翻页', noAnimScrollPage, (v) => setState(() { noAnimScrollPage = v; _apply(); })),
+                _buildSwitch('无动画翻页', noAnimScrollPage, (v) => setState(() {
+                  noAnimScrollPage = v;
+                  _apply();
+                })),
                 _buildSwitch('页头分割线', showHeaderDivider, (v) => setState(() { showHeaderDivider = v; _apply(); })),
                 _buildSwitch('页尾分割线', showFooterDivider, (v) => setState(() { showFooterDivider = v; _apply(); })),
               ],
