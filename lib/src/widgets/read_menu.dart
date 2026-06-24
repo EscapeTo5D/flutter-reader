@@ -252,11 +252,13 @@ class _StyleDialogState extends State<_StyleDialog> {
   bool _clearBgImage = false;
 
   static const _stylePresets = [
-    _StylePreset('默认', Color(0xFFF5F5F5), Color(0xFF333333)),
-    _StylePreset('护眼', Color(0xFFD5E8D4), Color(0xFF2D4A22)),
-    _StylePreset('羊皮纸', Color(0xFFE8E0D0), Color(0xFF5B4636)),
-    _StylePreset('深色', Color(0xFF2C2C2C), Color(0xFFCCCCCC)),
-    _StylePreset('夜间', Color(0xFF1A1A2E), Color(0xFFC8C8D0)),
+    _StylePreset('微信读书', Color(0xFFC0EDC6), Color(0xFF0B0B0B),
+      fontSize: 24, letterSpacing: 0, lineHeight: 1.15, paragraphSpacing: 0.6),
+    _StylePreset('预设1', Color(0xFFFFFFFF), Color(0xFF000000)),
+    _StylePreset('预设2', Color(0xFFDDC090), Color(0xFF3E3422)),
+    _StylePreset('预设3', Color(0xFFC2D8AA), Color(0xFF596C44)),
+    _StylePreset('预设4', Color(0xFFDBB8E2), Color(0xFF68516C)),
+    _StylePreset('预设5', Color(0xFFABCEE0), Color(0xFF3D4C54)),
   ];
 
   @override
@@ -265,7 +267,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     final s = widget.controller.settings;
     _fontSizeProgress = s.fontSize.toInt() - 5;
     _letterSpacingProgress = (s.letterSpacing * 100).toInt() + 50;
-    _lineHeightProgress = (s.lineHeight * 10).toInt() + 10;
+    _lineHeightProgress = ((s.lineHeight - 1.0) / 0.015).round();
     _paragraphSpacingProgress = (s.paragraphSpacing * 10).toInt();
     textIndent = s.textIndent;
     bgColor = s.backgroundColor;
@@ -279,7 +281,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     widget.controller.updateSettings(
       widget.controller.settings.copyWith(
         fontSize: (_fontSizeProgress + 5).toDouble(),
-        lineHeight: (_lineHeightProgress - 10) / 10.0,
+        lineHeight: 1.0 + _lineHeightProgress * 0.015,
         paragraphSpacing: _paragraphSpacingProgress / 10.0,
         letterSpacing: (_letterSpacingProgress - 50) / 100.0,
         textIndent: textIndent,
@@ -386,14 +388,14 @@ class _StyleDialogState extends State<_StyleDialog> {
             onChanged: (v) { setState(() => _fontSizeProgress = v); _apply(); },
           ),
           _buildSeekBar(
-            title: '字间距',
+            title: '字距',
             progress: _letterSpacingProgress,
             max: 100,
             display: ((_letterSpacingProgress - 50) / 100.0).toStringAsFixed(2),
             onChanged: (v) { setState(() => _letterSpacingProgress = v); _apply(); },
           ),
           _buildSeekBar(
-            title: '行高',
+            title: '行距',
             progress: _lineHeightProgress,
             max: 20,
             display: ((_lineHeightProgress - 10) / 10.0).toStringAsFixed(1),
@@ -587,6 +589,18 @@ class _StyleDialogState extends State<_StyleDialog> {
                           textColor = preset.text;
                           bgImage = null;
                           _clearBgImage = true;
+                          if (preset.fontSize != null) {
+                            _fontSizeProgress = preset.fontSize!.toInt() - 5;
+                          }
+                          if (preset.letterSpacing != null) {
+                            _letterSpacingProgress = (preset.letterSpacing! * 100).toInt() + 50;
+                          }
+                          if (preset.lineHeight != null) {
+                            _lineHeightProgress = ((preset.lineHeight! - 1.0) / 0.015).round();
+                          }
+                          if (preset.paragraphSpacing != null) {
+                            _paragraphSpacingProgress = (preset.paragraphSpacing! * 10).toInt();
+                          }
                         });
                         _apply();
                       },
@@ -667,7 +681,16 @@ class _StylePreset {
   final String label;
   final Color bg;
   final Color text;
-  const _StylePreset(this.label, this.bg, this.text);
+  final double? fontSize;
+  final double? letterSpacing;
+  final double? lineHeight;
+  final double? paragraphSpacing;
+  const _StylePreset(this.label, this.bg, this.text, {
+    this.fontSize,
+    this.letterSpacing,
+    this.lineHeight,
+    this.paragraphSpacing,
+  });
 }
 
 class _MoreSettingsSheet extends StatefulWidget {

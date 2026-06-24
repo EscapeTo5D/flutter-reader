@@ -48,7 +48,11 @@ class PageView extends StatelessWidget {
           Expanded(child: ClipRect(child: _buildContent())),
           if (showChrome && settings.showFooterDivider)
             Container(height: 0.5, color: Colors.grey.shade300),
-          if (showChrome) _buildFooter(context),
+          if (showChrome)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 4),
+              child: _buildFooter(context),
+            ),
         ],
       ),
     );
@@ -65,7 +69,7 @@ class PageView extends StatelessWidget {
     final cfg = showHeaderOnly ? settings.headerConfig : settings.footerConfig;
     final vertPadding = showHeaderOnly
         ? EdgeInsets.only(left: settings.padding.left, right: settings.padding.right)
-        : EdgeInsets.only(left: settings.padding.left, right: settings.padding.right, top: 6, bottom: 6);
+        : EdgeInsets.only(left: settings.padding.left, right: settings.padding.right, top: 2, bottom: 6);
     return Padding(
       padding: vertPadding,
       child: Row(
@@ -98,22 +102,19 @@ class PageView extends StatelessWidget {
   }
 
   Widget _buildFooter(BuildContext context) {
-    return SizedBox(
-      height: settings.padding.footerHeight,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: settings.padding.left,
-          right: settings.padding.right,
-          top: 6,
-          bottom: 6,
-        ),
-        child: Row(
-          children: [
-            Expanded(child: _buildTip(settings.footerConfig.left, context, Alignment.centerLeft)),
-            Expanded(child: _buildTip(settings.footerConfig.center, context, Alignment.center)),
-            Expanded(child: _buildTip(settings.footerConfig.right, context, Alignment.centerRight)),
-          ],
-        ),
+    return Padding(
+      padding: EdgeInsets.only(
+        left: settings.padding.left,
+        right: settings.padding.right,
+        top: 2,
+        bottom: 6,
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _buildTip(settings.footerConfig.left, context, Alignment.centerLeft)),
+          Expanded(child: _buildTip(settings.footerConfig.center, context, Alignment.center)),
+          Expanded(child: _buildTip(settings.footerConfig.right, context, Alignment.centerRight)),
+        ],
       ),
     );
   }
@@ -171,9 +172,13 @@ class PageView extends StatelessWidget {
         top: settings.padding.top,
         bottom: settings.padding.bottom,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: page!.lines.map((line) => _buildLine(line)).toList(),
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
+        clipBehavior: Clip.hardEdge,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: page!.lines.map((line) => _buildLine(line)).toList(),
+        ),
       ),
     );
   }
