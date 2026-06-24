@@ -77,14 +77,16 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
   }
 
   void _onControllerUpdate() {
-    setState(() {});
     if (_currentAnimType != _lastAnimType) {
       _initAnimation(_currentAnimType);
       _lastAnimType = _currentAnimType;
     }
     if (_currentAnimType == PageAnimationType.scroll) {
       _scrollHandler?.onPageChangedFromController();
+      _applySystemUI();
+      return;
     }
+    setState(() {});
     _applySystemUI();
   }
 
@@ -150,6 +152,9 @@ class _ReaderViewState extends State<ReaderView> with TickerProviderStateMixin {
         break;
       case PageAnimationType.scroll:
         _scrollHandler = ScrollModeHandler(widget.controller);
+        _scrollHandler!.onStateChanged = () {
+          if (mounted) setState(() {});
+        };
         _pageAnimation = NoAnimation();
         break;
       case PageAnimationType.none:

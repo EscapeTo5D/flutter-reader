@@ -37,6 +37,12 @@ android {
     }
 
     signingConfigs {
+        getByName("debug") {
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+        }
         if (keystorePropertiesFile.exists() && keystoreProperties["keyAlias"] != null) {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
@@ -48,6 +54,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             if (keystorePropertiesFile.exists() && keystoreProperties["keyAlias"] != null) {
                 signingConfig = signingConfigs.getByName("release")

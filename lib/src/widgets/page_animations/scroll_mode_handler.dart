@@ -9,109 +9,211 @@ typedef PageBuilder = Widget Function(TextPage page, int index);
 class ScrollModeHandler {
   final ScrollController scrollController = ScrollController();
   final ReadingController controller;
-  int scrollPageIdx = 0;
-  int _targetPageIdx = -1;
-  bool _isUserScrolling = false;
-  int _previousChapterIndex;
+  VoidCallback? onStateChanged;
+
+  int _chapterIndex;
+  List<TextPage> _prevPages = [];
+  List<TextPage> _currentPages = [];
+  List<TextPage> _nextPages = [];
+  bool _switchingChapter = false;
+  bool _justSwitched = false;
+
+  bool _loadingPages = false;
 
   ScrollModeHandler(this.controller)
-      : _previousChapterIndex = controller.currentChapterIndex,
-        scrollPageIdx = controller.currentPageIndex {
-    scrollController.addListener(_onScrollUpdate);
+      : _chapterIndex = controller.currentChapterIndex {
+    _currentPages = List.from(controller.pages);
+    _loadAdjacentPagesAsync();
   }
 
   void dispose() {
-    scrollController.removeListener(_onScrollUpdate);
     scrollController.dispose();
   }
 
-  void onPageChangedFromController() {
-    final ci = controller.currentPageIndex;
-    if (ci == scrollPageIdx) return;
+  List<TextPage> get _combinedPages => [..._prevPages, ..._currentPages, ..._nextPages];
 
-    if (controller.currentChapterIndex != _previousChapterIndex) {
-      _previousChapterIndex = controller.currentChapterIndex;
-      if (_switchingToPrevious && controller.pages.isNotEmpty) {
-        scrollPageIdx = controller.pages.length - 1;
-        _switchingToPrevious = false;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (scrollController.hasClients) {
-            scrollController.jumpTo(scrollController.position.maxScrollExtent);
-          }
-        });
-      } else {
-        scrollPageIdx = 0;
-        if (scrollController.hasClients) scrollController.jumpTo(0);
-      }
-      return;
+  int get _currentChapterStart => _prevPages.length;
+  int get _currentChapterEnd => _prevPages.length + _currentPages.length;
+
+  void _loadAdjacentPages() {
+    if (_currentPages.isEmpty && controller.pages.isNotEmpty) {
+      _currentPages = List.from(controller.pages);
     }
-    _scrollToPage(ci);
+    if (_chapterIndex > 0) {
+      _prevPages = controller.paginateChapter(_chapterIndex - 1);
+    } else {
+      _prevPages = [];
+    }
+    if (_chapterIndex < controller.totalChapters - 1) {
+      _nextPages = controller.paginateChapter(_chapterIndex + 1);
+    } else {
+      _nextPages = [];
+    }
   }
 
-  bool _handleChapterSwitch = false;
-  bool _switchingToPrevious = false;
+  void _loadAdjacentPagesAsync() {
+    if (_loadingPages) return;
+    _loadingPages = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadingPages = false;
+      if (_currentPages.isEmpty && controller.pages.isNotEmpty) {
+        _currentPages = List.from(controller.pages);
+      }
+      _loadAdjacentPages();
+      onStateChanged?.call();
+    });
+  }
+
+  void onPageChangedFromController() {
+    final ci = controller.currentChapterIndex;
+    if (ci != _chapterIndex) {
+      _chapterIndex = ci;
+      _currentPages = List.from(controller.pages);
+      _loadAdjacentPages();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (scrollController.hasClients) {
+          scrollController.jumpTo(0);
+        }
+      });
+      onStateChanged?.call();
+    } else if (controller.pages.isNotEmpty &&
+        !identical(controller.pages, _currentPages) &&
+        controller.pages.length != _currentPages.length) {
+      _currentPages = List.from(controller.pages);
+      _loadAdjacentPagesAsync();
+      onStateChanged?.call();
+    }
+  }
 
   bool handleScrollNotification(ScrollNotification notification) {
     if (notification is ScrollStartNotification) {
       if (notification.dragDetails != null) {
-        _isUserScrolling = true;
-        _targetPageIdx = -1;
-        _handleChapterSwitch = false;
+        _switchingChapter = false;
       }
       return false;
     }
 
-    if (!_isUserScrolling) return false;
-
     if (notification is ScrollUpdateNotification) {
-      final metrics = notification.metrics;
-      if (metrics.pixels >= metrics.maxScrollExtent &&
-          controller.canGoNext) {
-        _handleChapterSwitch = true;
-      } else if (metrics.pixels <= 0 && controller.canGoPrevious) {
-        _handleChapterSwitch = true;
-      }
-      final page = _computePage();
-      if (page != scrollPageIdx) {
-        scrollPageIdx = page;
-        controller.setCurrentPageIndex(page);
-      }
+      _checkChapterBoundary(notification.metrics);
+      _syncCurrentPage();
     }
 
     if (notification is ScrollEndNotification) {
-      _isUserScrolling = false;
-      if (_handleChapterSwitch) {
-        _handleChapterSwitch = false;
-        final metrics = notification.metrics;
-        if (metrics.pixels >= metrics.maxScrollExtent && controller.canGoNext) {
-          _switchingToPrevious = false;
-          controller.nextChapter();
-          return true;
-        } else if (metrics.pixels <= 0 && controller.canGoPrevious) {
-          _switchingToPrevious = true;
-          controller.previousChapter();
-          return true;
-        }
-      }
-      final page = _computePage();
-      if (page != scrollPageIdx) {
-        scrollPageIdx = page;
-        controller.setCurrentPageIndex(page);
-      }
+      _justSwitched = false;
+      _syncCurrentPage();
     }
     return false;
   }
+
+  void _checkChapterBoundary(ScrollMetrics metrics) {
+    if (_switchingChapter || _justSwitched) return;
+
+    final threshold = metrics.viewportDimension * 0.3;
+
+    if (metrics.pixels >= metrics.maxScrollExtent - threshold) {
+      _appendNextChapter();
+    } else if (metrics.pixels <= threshold && _prevPages.isNotEmpty) {
+      _prependPrevChapter();
+    }
+  }
+
+  void _appendNextChapter() {
+    final nextChapterIdx = _chapterIndex + 1;
+    if (nextChapterIdx >= controller.totalChapters) return;
+    if (_nextPages.isEmpty) return;
+
+    _switchingChapter = true;
+    _justSwitched = true;
+    _chapterIndex = nextChapterIdx;
+    _currentPages = _nextPages;
+
+    if (nextChapterIdx < controller.totalChapters - 1) {
+      _nextPages = controller.paginateChapter(nextChapterIdx + 1);
+    } else {
+      _nextPages = [];
+    }
+
+    _prevPages = controller.paginateChapter(_chapterIndex - 1);
+    _updateControllerSilent(_chapterIndex, 0);
+    onStateChanged?.call();
+  }
+
+  void _prependPrevChapter() {
+    final prevChapterIdx = _chapterIndex - 1;
+    if (prevChapterIdx < 0) return;
+    if (_prevPages.isEmpty) return;
+
+    _switchingChapter = true;
+    _justSwitched = true;
+    final prependedHeight = _prevPages.length * _pageHeight + (_prevPages.length) * 0.5;
+
+    _chapterIndex = prevChapterIdx;
+    _currentPages = _prevPages;
+
+    if (prevChapterIdx > 0) {
+      _prevPages = controller.paginateChapter(prevChapterIdx - 1);
+    } else {
+      _prevPages = [];
+    }
+
+    _nextPages = controller.paginateChapter(_chapterIndex + 1);
+    _updateControllerSilent(_chapterIndex, _currentPages.length - 1);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (scrollController.hasClients) {
+        scrollController.jumpTo(scrollController.offset + prependedHeight);
+      }
+      _switchingChapter = false;
+      onStateChanged?.call();
+    });
+  }
+
+  void _updateControllerSilent(int chapterIndex, int pageIndex) {
+    controller.setCurrentChapterIndex(chapterIndex);
+    controller.setCurrentPageIndex(pageIndex);
+  }
+
+  void _syncCurrentPage() {
+    if (!scrollController.hasClients) return;
+    final offset = scrollController.offset;
+    final combined = _combinedPages;
+    if (combined.isEmpty) return;
+
+    final pageIdx = _offsetToPage(offset);
+    if (pageIdx < 0 || pageIdx >= combined.length) return;
+
+    if (pageIdx >= _currentChapterStart && pageIdx < _currentChapterEnd) {
+      final relIdx = pageIdx - _currentChapterStart;
+      controller.setCurrentPageIndex(relIdx);
+    }
+  }
+
+  int _offsetToPage(double offset) {
+    if (_pageHeight <= 0) return 0;
+    return (offset / (_pageHeight + 0.5)).floor().clamp(0, _combinedPages.length - 1);
+  }
+
+  double _pageHeight = 0;
 
   Widget buildContent(
     BuildContext context,
     List<TextPage> pages,
     PageBuilder buildPage,
   ) {
+    if (_chapterIndex != controller.currentChapterIndex) {
+      _chapterIndex = controller.currentChapterIndex;
+      _currentPages = List.from(pages);
+      _loadAdjacentPages();
+    } else if (_currentPages.isEmpty && pages.isNotEmpty) {
+      _currentPages = List.from(pages);
+      _loadAdjacentPagesAsync();
+    }
+
+    final combined = _combinedPages;
     final settings = controller.settings;
     final padding = MediaQuery.of(context).padding;
     final showHeader = settings.hideStatusBar;
     final topInset = showHeader ? 0.0 : padding.top;
-    final bottomInset = settings.hideNavigationBar ? 0.0 : padding.bottom;
 
     return Container(
       color: settings.backgroundColor,
@@ -121,14 +223,14 @@ class ScrollModeHandler {
           if (showHeader)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: _buildChrome(context, settings, header: true),
+              child: _buildChrome(context, settings),
             ),
           if (showHeader && settings.showHeaderDivider)
             Container(height: 0.5, color: settings.backgroundColor),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final h = constraints.maxHeight;
+                _pageHeight = constraints.maxHeight;
                 return NotificationListener<ScrollNotification>(
                   onNotification: handleScrollNotification,
                   child: SingleChildScrollView(
@@ -136,9 +238,12 @@ class ScrollModeHandler {
                     physics: const ClampingScrollPhysics(),
                     child: Column(
                       children: [
-                        for (var i = 0; i < pages.length; i++) ...[
-                          SizedBox(height: h, child: buildPage(pages[i], i)),
-                          if (i < pages.length - 1)
+                        for (var i = 0; i < combined.length; i++) ...[
+                          SizedBox(
+                            height: _pageHeight,
+                            child: buildPage(combined[i], i),
+                          ),
+                          if (i < combined.length - 1)
                             Container(
                               height: 0.5,
                               color: settings.backgroundColor,
@@ -151,66 +256,21 @@ class ScrollModeHandler {
               },
             ),
           ),
-          if (settings.showFooterDivider)
-            Container(height: 0.5, color: Colors.grey.shade300),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: _buildChrome(context, settings, header: false),
-          ),
-          if (bottomInset > 0) SizedBox(height: bottomInset),
         ],
       ),
     );
   }
 
-  Widget _buildChrome(
-    BuildContext context,
-    ReadingSettings settings, {
-    required bool header,
-  }) {
+  Widget _buildChrome(BuildContext context, ReadingSettings settings) {
     return pv.PageView(
       page: null,
       settings: settings,
-      pageIndex: scrollPageIdx,
+      pageIndex: controller.currentPageIndex,
       totalPages: controller.totalPages,
       chapterTitle: controller.currentChapter?.title,
       bookName: controller.book?.title,
       useSafeArea: false,
-      showHeaderOnly: header,
-      showFooterOnly: !header,
+      showHeaderOnly: true,
     );
-  }
-
-  void _onScrollUpdate() {
-    if (!scrollController.hasClients || _targetPageIdx < 0) return;
-    if (!scrollController.position.isScrollingNotifier.value &&
-        _computePage() == _targetPageIdx) {
-      scrollPageIdx = _targetPageIdx;
-      _targetPageIdx = -1;
-    }
-  }
-
-  int _computePage() {
-    if (!scrollController.hasClients) return scrollPageIdx;
-    final ph = scrollController.position.viewportDimension;
-    if (ph <= 0) return scrollPageIdx;
-    return (scrollController.offset / ph)
-        .round()
-        .clamp(0, controller.pages.length - 1);
-  }
-
-  void _scrollToPage(int pageIdx) {
-    if (!scrollController.hasClients) return;
-    final ph = scrollController.position.viewportDimension;
-    if (ph <= 0) return;
-    final target = pageIdx * ph;
-    if (controller.settings.noAnimScrollPage) {
-      scrollController.jumpTo(target);
-      scrollPageIdx = pageIdx;
-    } else {
-      _targetPageIdx = pageIdx;
-      scrollController.animateTo(target,
-          duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-    }
   }
 }

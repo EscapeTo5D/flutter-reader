@@ -77,6 +77,12 @@ class ReadingController extends ChangeNotifier {
     }
   }
 
+  void setCurrentChapterIndex(int index) {
+    if (index >= 0 && index < totalChapters) {
+      _currentChapterIndex = index;
+    }
+  }
+
   void nextPage() {
     if (_currentPageIndex < _pages.length - 1) {
       _currentPageIndex++;
@@ -259,6 +265,23 @@ class ReadingController extends ChangeNotifier {
         break;
     }
   }
+
+  List<TextPage> paginateChapter(int chapterIndex) {
+    if (_book == null || _pageSize == Size.zero) return [];
+    if (chapterIndex < 0 || chapterIndex >= _book!.chapters.length) return [];
+    return _pageEngine.paginate(
+      content: _book!.chapters[chapterIndex].content,
+      pageSize: _pageSize,
+      settings: _settings,
+    );
+  }
+
+  Chapter? getChapter(int index) {
+    if (_book == null || index < 0 || index >= _book!.chapters.length) return null;
+    return _book!.chapters[index];
+  }
+
+  int get totalChapters => _book?.chapters.length ?? 0;
 
   void _rePaginate() {
     if (_book == null || _pageSize == Size.zero) return;
