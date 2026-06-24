@@ -31,27 +31,68 @@ class ScrollModeHandler {
 
     if (controller.currentChapterIndex != _previousChapterIndex) {
       _previousChapterIndex = controller.currentChapterIndex;
-      scrollPageIdx = 0;
-      if (scrollController.hasClients) scrollController.jumpTo(0);
+      if (_switchingToPrevious && controller.pages.isNotEmpty) {
+        scrollPageIdx = controller.pages.length - 1;
+        _switchingToPrevious = false;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (scrollController.hasClients) {
+            scrollController.jumpTo(scrollController.position.maxScrollExtent);
+          }
+        });
+      } else {
+        scrollPageIdx = 0;
+        if (scrollController.hasClients) scrollController.jumpTo(0);
+      }
       return;
     }
     _scrollToPage(ci);
   }
+
+  bool _handleChapterSwitch = false;
+  bool _switchingToPrevious = false;
 
   bool handleScrollNotification(ScrollNotification notification) {
     if (notification is ScrollStartNotification) {
       if (notification.dragDetails != null) {
         _isUserScrolling = true;
         _targetPageIdx = -1;
+        _handleChapterSwitch = false;
       }
       return false;
     }
 
     if (!_isUserScrolling) return false;
 
-    if (notification is ScrollUpdateNotification ||
-        notification is ScrollEndNotification) {
-      if (notification is ScrollEndNotification) _isUserScrolling = false;
+    if (notification is ScrollUpdateNotification) {
+      final metrics = notification.metrics;
+      if (metrics.pixels >= metrics.maxScrollExtent &&
+          controller.canGoNext) {
+        _handleChapterSwitch = true;
+      } else if (metrics.pixels <= 0 && controller.canGoPrevious) {
+        _handleChapterSwitch = true;
+      }
+      final page = _computePage();
+      if (page != scrollPageIdx) {
+        scrollPageIdx = page;
+        controller.setCurrentPageIndex(page);
+      }
+    }
+
+    if (notification is ScrollEndNotification) {
+      _isUserScrolling = false;
+      if (_handleChapterSwitch) {
+        _handleChapterSwitch = false;
+        final metrics = notification.metrics;
+        if (metrics.pixels >= metrics.maxScrollExtent && controller.canGoNext) {
+          _switchingToPrevious = false;
+          controller.nextChapter();
+          return true;
+        } else if (metrics.pixels <= 0 && controller.canGoPrevious) {
+          _switchingToPrevious = true;
+          controller.previousChapter();
+          return true;
+        }
+      }
       final page = _computePage();
       if (page != scrollPageIdx) {
         scrollPageIdx = page;
