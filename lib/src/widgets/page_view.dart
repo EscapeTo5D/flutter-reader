@@ -68,8 +68,13 @@ class PageView extends StatelessWidget {
   Widget _buildChromeOnly(BuildContext context) {
     final cfg = showHeaderOnly ? settings.headerConfig : settings.footerConfig;
     final vertPadding = showHeaderOnly
-        ? EdgeInsets.only(left: settings.padding.left, right: settings.padding.right)
-        : EdgeInsets.only(left: settings.padding.left, right: settings.padding.right, top: 2, bottom: 6);
+        ? EdgeInsets.only(
+            left: settings.padding.left, right: settings.padding.right)
+        : EdgeInsets.only(
+            left: settings.padding.left,
+            right: settings.padding.right,
+            top: 2,
+            bottom: 6);
     return Padding(
       padding: vertPadding,
       child: Row(
@@ -92,9 +97,15 @@ class PageView extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Expanded(child: _buildTip(settings.headerConfig.left, context, Alignment.centerLeft)),
-            Expanded(child: _buildTip(settings.headerConfig.center, context, Alignment.center)),
-            Expanded(child: _buildTip(settings.headerConfig.right, context, Alignment.centerRight)),
+            Expanded(
+                child: _buildTip(
+                    settings.headerConfig.left, context, Alignment.centerLeft)),
+            Expanded(
+                child: _buildTip(settings.headerConfig.center, context,
+                    Alignment.center)),
+            Expanded(
+                child: _buildTip(settings.headerConfig.right, context,
+                    Alignment.centerRight)),
           ],
         ),
       ),
@@ -111,15 +122,22 @@ class PageView extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(child: _buildTip(settings.footerConfig.left, context, Alignment.centerLeft)),
-          Expanded(child: _buildTip(settings.footerConfig.center, context, Alignment.center)),
-          Expanded(child: _buildTip(settings.footerConfig.right, context, Alignment.centerRight)),
+          Expanded(
+              child: _buildTip(
+                  settings.footerConfig.left, context, Alignment.centerLeft)),
+          Expanded(
+              child: _buildTip(
+                  settings.footerConfig.center, context, Alignment.center)),
+          Expanded(
+              child: _buildTip(
+                  settings.footerConfig.right, context, Alignment.centerRight)),
         ],
       ),
     );
   }
 
-  Widget _buildTip(TipPosition position, BuildContext context, Alignment alignment) {
+  Widget _buildTip(
+      TipPosition position, BuildContext context, Alignment alignment) {
     final now = DateTime.now();
     String text;
     switch (position) {
@@ -128,7 +146,8 @@ class PageView extends StatelessWidget {
       case TipPosition.chapterTitle:
         text = chapterTitle ?? '';
       case TipPosition.time:
-        text = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+        text =
+            '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
       case TipPosition.battery:
         text = '';
       case TipPosition.batteryPercent:
@@ -136,14 +155,17 @@ class PageView extends StatelessWidget {
       case TipPosition.pageNumber:
         text = '${pageIndex + 1}/$totalPages';
       case TipPosition.progress:
-        final percent = totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
+        final percent =
+            totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
         text = '$percent%';
       case TipPosition.bookName:
         text = bookName ?? '';
       case TipPosition.timeAndBattery:
-        text = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+        text =
+            '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
       case TipPosition.pageAndTotal:
-        final percent = totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
+        final percent =
+            totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
         text = '${pageIndex + 1}/$totalPages $percent%';
     }
     return Align(
@@ -175,16 +197,40 @@ class PageView extends StatelessWidget {
       child: SingleChildScrollView(
         physics: const NeverScrollableScrollPhysics(),
         clipBehavior: Clip.hardEdge,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: page!.lines.map((line) => _buildLine(line)).toList(),
-        ),
+        child: _buildLines(),
       ),
     );
   }
 
+  /// 构建所有行, 处理底部对齐的额外间距
+  Widget _buildLines() {
+    final lines = page!.lines;
+    final children = <Widget>[];
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+
+      // 底部对齐: 在行前插入额外间距
+      if (i > 0 && line.lineTop > 0) {
+        final prevLineTop = lines[i - 1].lineTop;
+        final extraSpacing = line.lineTop - prevLineTop;
+        if (extraSpacing > 0) {
+          children.add(SizedBox(height: extraSpacing));
+        }
+      }
+
+      children.add(_buildLine(line));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+
   Widget _buildLine(TextLine line) {
-    if (line.text.isEmpty && line.isParagraphEnd) {
+    // 空段落行: 只显示段间距
+    if (line.isEmptyParagraph) {
       return SizedBox(height: settings.paragraphSpacing);
     }
 
@@ -198,12 +244,33 @@ class PageView extends StatelessWidget {
       fontFamily: settings.fontFamily,
     );
 
-    if (searchQuery != null && searchQuery!.isNotEmpty && line.text.contains(searchQuery!)) {
+    // 搜索高亮行: 用 RichText 实现(保持兼容)
+    if (searchQuery != null &&
+        searchQuery!.isNotEmpty &&
+        line.text.contains(searchQuery!)) {
       return _buildHighlightedLine(line.text, style);
     }
 
+    final lineHeight = line.height * settings.lineHeight;
+
+    // 有字符级排版数据: 用 CustomPainter 逐字符绘制
+    if (line.hasCharData) {
+      return SizedBox(
+        height: lineHeight,
+        child: CustomPaint(
+          size: Size(double.infinity, lineHeight),
+          painter: _TextLinePainter(
+            line: line,
+            style: style,
+            fontSize: isTitle ? settings.fontSize + 2 : settings.fontSize,
+          ),
+        ),
+      );
+    }
+
+    // 降级: 用 Text Widget
     return SizedBox(
-      height: line.height * settings.lineHeight,
+      height: lineHeight,
       child: Text(line.text, style: style),
     );
   }
@@ -236,14 +303,90 @@ class PageView extends StatelessWidget {
   }
 
   BoxDecoration _buildBackground() {
-    if (settings.backgroundImage != null && settings.backgroundImage!.isNotEmpty) {
+    if (settings.backgroundImage != null &&
+        settings.backgroundImage!.isNotEmpty) {
       return BoxDecoration(
         image: DecorationImage(
-          image: AssetImage(settings.backgroundImage!, package: 'flutter_reader'),
+          image: AssetImage(settings.backgroundImage!,
+              package: 'flutter_reader'),
           fit: BoxFit.cover,
         ),
       );
     }
     return BoxDecoration(color: settings.backgroundColor);
+  }
+}
+
+/// 逐字符绘制 TextLine 的 CustomPainter
+///
+/// 支持:
+/// - 两端对齐(中文字符间隙均匀分布 / 英文空格间距分布)
+/// - 首行缩进
+/// - 自然排列(末行、标题)
+class _TextLinePainter extends CustomPainter {
+  final TextLine line;
+  final TextStyle style;
+  final double fontSize;
+
+  _TextLinePainter({
+    required this.line,
+    required this.style,
+    required this.fontSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (line.text.isEmpty) return;
+
+    final hasIndent = line.indentSize > 0;
+
+    if (hasIndent) {
+      // 分两段绘制: 缩进部分 + 剩余部分
+      _drawIndentPart(canvas);
+      _drawRemainingPart(canvas, line.indentWidth);
+    } else {
+      // 整行绘制
+      _drawRemainingPart(canvas, 0);
+    }
+  }
+
+  /// 绘制缩进部分(全角空格, 自然间距)
+  void _drawIndentPart(Canvas canvas) {
+    final indentText = line.text.substring(0, line.indentSize);
+    final painter = TextPainter(
+      text: TextSpan(text: indentText, style: style),
+      textDirection: TextDirection.ltr,
+    );
+    painter.layout();
+    painter.paint(canvas, Offset.zero);
+  }
+
+  /// 绘制剩余部分(可能带两端对齐)
+  void _drawRemainingPart(Canvas canvas, double startX) {
+    final remainingText = line.text.substring(line.indentSize);
+    if (remainingText.isEmpty) return;
+
+    TextStyle drawStyle;
+    if (line.isJustified) {
+      // 两端对齐: 添加额外字间距
+      drawStyle = style.copyWith(
+        letterSpacing: (style.letterSpacing ?? 0) + line.extraLetterSpacing,
+        wordSpacing: line.wordSpacing > 0 ? line.wordSpacing : null,
+      );
+    } else {
+      drawStyle = style;
+    }
+
+    final painter = TextPainter(
+      text: TextSpan(text: remainingText, style: drawStyle),
+      textDirection: TextDirection.ltr,
+    );
+    painter.layout();
+    painter.paint(canvas, Offset(startX, 0));
+  }
+
+  @override
+  bool shouldRepaint(_TextLinePainter oldDelegate) {
+    return oldDelegate.line != line || oldDelegate.style != style;
   }
 }
