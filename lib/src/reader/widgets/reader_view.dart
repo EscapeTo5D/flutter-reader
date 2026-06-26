@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../controller/reading_controller.dart';
-import '../models/text_page.dart';
+import '../../core/controller/reading_controller.dart';
+import '../entities/text_page.dart';
 import 'page_view.dart' as pv;
 import 'read_menu.dart';
 import 'search_menu.dart';
@@ -152,6 +152,8 @@ class _ReaderViewState extends State<ReaderView> {
       settings: widget.controller.settings,
       pageIndex: index,
       totalPages: widget.controller.totalPages,
+      chapterIndex: controller.currentChapterIndex,
+      chapterSize: controller.totalChapters,
       chapterTitle: widget.controller.currentChapter?.title,
       bookName: widget.controller.book?.title,
       searchQuery: widget.controller.searchQuery.isNotEmpty

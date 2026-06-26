@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../controller/reading_controller.dart';
+import '../../core/controller/reading_controller.dart';
 import 'legado_icons.dart';
 
 class ChapterListPage extends StatefulWidget {

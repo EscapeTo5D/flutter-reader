@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../models/reading_settings.dart';
-import '../models/text_page.dart';
+import '../../reader/entities/text_page.dart';
 import '../models/bookmark.dart';
-import '../engine/page_engine.dart';
+import '../../reader/engine/page_engine.dart';
 
 class ReadingController extends ChangeNotifier {
   Book? _book;

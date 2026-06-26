@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../models/text_page.dart';
-import '../models/column.dart';
-import '../models/reading_settings.dart';
+import '../entities/text_page.dart';
+import '../entities/column.dart';
+import '../../core/models/reading_settings.dart';
 
 class PageEngine {
   List<TextPage> paginate({

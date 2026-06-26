@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import '../controller/reading_controller.dart';
-import '../models/reading_settings.dart';
+import '../../core/controller/reading_controller.dart';
 import 'chapter_list_page.dart';
 import 'legado_icons.dart';
 

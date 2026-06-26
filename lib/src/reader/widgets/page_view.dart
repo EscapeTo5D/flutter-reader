@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
-import '../models/text_page.dart';
-import '../models/column.dart';
-import '../models/reading_settings.dart';
+import '../entities/text_page.dart';
+import '../entities/column.dart';
+import '../../core/models/reading_settings.dart';
 
 class PageView extends StatelessWidget {
   final TextPage? page;
   final ReadingSettings settings;
   final int pageIndex;
   final int totalPages;
+  final int chapterIndex;
+  final int chapterSize;
   final String? chapterTitle;
   final String? searchQuery;
   final String? bookName;
+  final int? batteryLevel;
   final bool useSafeArea;
   final bool showChrome;
   final bool showFooterOnly;
@@ -22,9 +25,12 @@ class PageView extends StatelessWidget {
     required this.settings,
     required this.pageIndex,
     required this.totalPages,
+    this.chapterIndex = 0,
+    this.chapterSize = 0,
     this.chapterTitle,
     this.searchQuery,
     this.bookName,
+    this.batteryLevel,
     this.useSafeArea = true,
     this.showChrome = true,
     this.showFooterOnly = false,
@@ -150,24 +156,47 @@ class PageView extends StatelessWidget {
         text =
             '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
       case TipPosition.battery:
+        if (batteryLevel != null) {
+          return Align(
+            alignment: alignment,
+            child: _BatteryIcon(level: batteryLevel!, color: settings.tipColor),
+          );
+        }
         text = '';
       case TipPosition.batteryPercent:
-        text = '';
+        text = batteryLevel != null ? '$batteryLevel%' : '';
       case TipPosition.pageNumber:
         text = '${pageIndex + 1}/$totalPages';
       case TipPosition.progress:
-        final percent =
-            totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
-        text = '$percent%';
+        text = _calcProgress();
       case TipPosition.bookName:
         text = bookName ?? '';
       case TipPosition.timeAndBattery:
-        text =
+        final time =
             '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+        if (batteryLevel != null) {
+          return Align(
+            alignment: alignment,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  time,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: settings.tipColor,
+                    fontFamily: settings.fontFamily,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                _BatteryIcon(level: batteryLevel!, color: settings.tipColor, size: 16),
+              ],
+            ),
+          );
+        }
+        text = time;
       case TipPosition.pageAndTotal:
-        final percent =
-            totalPages > 0 ? ((pageIndex + 1) / totalPages * 100).toInt() : 0;
-        text = '${pageIndex + 1}/$totalPages $percent%';
+        text = '${pageIndex + 1}/$totalPages  ${_calcProgress()}';
     }
     return Align(
       alignment: alignment,
@@ -181,6 +210,23 @@ class PageView extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       ),
     );
+  }
+
+  /// 计算全书阅读进度，与原生 Legado TextPage.readProgress 一致
+  String _calcProgress() {
+    if (chapterSize == 0 || (totalPages == 0 && chapterIndex == 0)) {
+      return '0.0%';
+    } else if (totalPages == 0) {
+      return '${((chapterIndex + 1) / chapterSize * 100).toStringAsFixed(1)}%';
+    }
+    final percent = chapterIndex / chapterSize +
+        (pageIndex + 1) / totalPages / chapterSize;
+    var result = (percent * 100).toStringAsFixed(1);
+    if (result == '100.0%' &&
+        (chapterIndex + 1 != chapterSize || pageIndex + 1 != totalPages)) {
+      result = '99.9';
+    }
+    return '$result%';
   }
 
   Widget _buildContent() {
@@ -334,5 +380,82 @@ class _TextLinePainter extends CustomPainter {
   @override
   bool shouldRepaint(_TextLinePainter oldDelegate) {
     return oldDelegate.line != line || oldDelegate.style != style;
+  }
+}
+
+/// 电池图标 Widget，用 Canvas 绘制原生风格的电池图标
+class _BatteryIcon extends StatelessWidget {
+  final int level;
+  final Color color;
+  final double size;
+
+  const _BatteryIcon({
+    required this.level,
+    required this.color,
+    this.size = 18,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(size, size * 0.6),
+      painter: _BatteryPainter(level: level.clamp(0, 100), color: color),
+    );
+  }
+}
+
+class _BatteryPainter extends CustomPainter {
+  final int level;
+  final Color color;
+
+  _BatteryPainter({required this.level, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = color;
+
+    final bodyWidth = size.width * 0.85;
+    final bodyHeight = size.height;
+    final bodyLeft = 0.0;
+    final bodyTop = 0.0;
+    final cornerRadius = size.height * 0.15;
+
+    final bodyRect = RRect.fromLTRBR(
+      bodyLeft, bodyTop, bodyLeft + bodyWidth, bodyTop + bodyHeight,
+      Radius.circular(cornerRadius),
+    );
+    canvas.drawRRect(bodyRect, paint);
+
+    final tipWidth = size.width * 0.1;
+    final tipHeight = size.height * 0.4;
+    final tipLeft = bodyLeft + bodyWidth;
+    final tipTop = (bodyHeight - tipHeight) / 2;
+    final tipRect = RRect.fromLTRBR(
+      tipLeft, tipTop, tipLeft + tipWidth, tipTop + tipHeight,
+      Radius.circular(cornerRadius * 0.5),
+    );
+    canvas.drawRRect(tipRect, paint);
+
+    final fillPadding = 2.0;
+    final fillWidth = (bodyWidth - fillPadding * 2) * level / 100;
+    final fillRect = RRect.fromLTRBR(
+      bodyLeft + fillPadding,
+      bodyTop + fillPadding,
+      bodyLeft + fillPadding + fillWidth,
+      bodyTop + bodyHeight - fillPadding,
+      Radius.circular(cornerRadius * 0.5),
+    );
+    final fillPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = level <= 20 ? color.withValues(alpha: 0.5) : color;
+    canvas.drawRRect(fillRect, fillPaint);
+  }
+
+  @override
+  bool shouldRepaint(_BatteryPainter oldDelegate) {
+    return oldDelegate.level != level || oldDelegate.color != color;
   }
 }
