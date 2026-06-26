@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/text_page.dart';
+import '../models/column.dart';
 import '../models/reading_settings.dart';
 
 class PageView extends StatelessWidget {
@@ -235,34 +236,24 @@ class PageView extends StatelessWidget {
     }
 
     final isTitle = line.isTitle;
-    final style = TextStyle(
-      fontSize: isTitle ? settings.fontSize + 2 : settings.fontSize,
-      fontWeight: isTitle ? FontWeight.bold : settings.fontWeight,
-      height: settings.lineHeight,
-      letterSpacing: settings.letterSpacing,
-      color: settings.textColor,
-      fontFamily: settings.fontFamily,
-    );
+    final style = _lineStyle(isTitle);
 
-    // 搜索高亮行: 用 RichText 实现(保持兼容)
-    if (searchQuery != null &&
-        searchQuery!.isNotEmpty &&
-        line.text.contains(searchQuery!)) {
-      return _buildHighlightedLine(line.text, style);
+    // 搜索高亮: 标记匹配的 Column
+    if (searchQuery != null && searchQuery!.isNotEmpty) {
+      _markSearchResults(line, searchQuery!);
     }
 
-    final lineHeight = line.height * settings.lineHeight;
+    final lineHeight = line.height;
 
-    // 有字符级排版数据: 用 CustomPainter 逐字符绘制
+    // 有 Column 数据: 用 CustomPainter 逐字符绘制
     if (line.hasCharData) {
       return SizedBox(
-        height: lineHeight,
+        height: lineHeight+15,
         child: CustomPaint(
           size: Size(double.infinity, lineHeight),
           painter: _TextLinePainter(
             line: line,
             style: style,
-            fontSize: isTitle ? settings.fontSize + 2 : settings.fontSize,
           ),
         ),
       );
@@ -275,31 +266,31 @@ class PageView extends StatelessWidget {
     );
   }
 
-  Widget _buildHighlightedLine(String text, TextStyle style) {
-    final spans = <TextSpan>[];
+  TextStyle _lineStyle(bool isTitle) {
+    return TextStyle(
+      fontSize: isTitle ? settings.fontSize + 2 : settings.fontSize,
+      fontWeight: isTitle ? FontWeight.bold : settings.fontWeight,
+      height: settings.lineHeight,
+      letterSpacing: settings.letterSpacing,
+      color: settings.textColor,
+      fontFamily: settings.fontFamily,
+    );
+  }
+
+  /// 标记搜索结果: 遍历 Column 列表，将匹配的字符标记为 isSearchResult
+  void _markSearchResults(TextLine line, String query) {
+    final text = line.text;
     int start = 0;
-    final query = searchQuery!;
     while (true) {
       final index = text.indexOf(query, start);
-      if (index < 0) {
-        if (start < text.length) {
-          spans.add(TextSpan(text: text.substring(start)));
+      if (index < 0) break;
+      for (var i = index; i < index + query.length && i < line.columns.length; i++) {
+        if (line.columns[i] is TextColumn) {
+          (line.columns[i] as TextColumn).isSearchResult = true;
         }
-        break;
       }
-      if (index > start) {
-        spans.add(TextSpan(text: text.substring(start, index)));
-      }
-      spans.add(TextSpan(
-        text: query,
-        style: const TextStyle(backgroundColor: Colors.yellow),
-      ));
       start = index + query.length;
     }
-
-    return RichText(
-      text: TextSpan(style: style, children: spans),
-    );
   }
 
   BoxDecoration _buildBackground() {
@@ -319,70 +310,25 @@ class PageView extends StatelessWidget {
 
 /// 逐字符绘制 TextLine 的 CustomPainter
 ///
-/// 支持:
-/// - 两端对齐(中文字符间隙均匀分布 / 英文空格间距分布)
-/// - 首行缩进
-/// - 自然排列(末行、标题)
+/// 遍历 line.columns，对每个 Column 调用 draw()，
+/// 每个字符有独立的像素坐标，实现精确的逐字绘制。
 class _TextLinePainter extends CustomPainter {
   final TextLine line;
   final TextStyle style;
-  final double fontSize;
 
   _TextLinePainter({
     required this.line,
     required this.style,
-    required this.fontSize,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (line.text.isEmpty) return;
+    if (line.columns.isEmpty) return;
 
-    final hasIndent = line.indentSize > 0;
-
-    if (hasIndent) {
-      // 分两段绘制: 缩进部分 + 剩余部分
-      _drawIndentPart(canvas);
-      _drawRemainingPart(canvas, line.indentWidth);
-    } else {
-      // 整行绘制
-      _drawRemainingPart(canvas, 0);
+    for (final column in line.columns) {
+      column.draw(canvas, style, line.lineBase);
     }
-  }
-
-  /// 绘制缩进部分(全角空格, 自然间距)
-  void _drawIndentPart(Canvas canvas) {
-    final indentText = line.text.substring(0, line.indentSize);
-    final painter = TextPainter(
-      text: TextSpan(text: indentText, style: style),
-      textDirection: TextDirection.ltr,
-    );
-    painter.layout();
-    painter.paint(canvas, Offset.zero);
-  }
-
-  /// 绘制剩余部分(可能带两端对齐)
-  void _drawRemainingPart(Canvas canvas, double startX) {
-    final remainingText = line.text.substring(line.indentSize);
-    if (remainingText.isEmpty) return;
-
-    TextStyle drawStyle;
-    if (line.isJustified) {
-      // 两端对齐: 添加额外字间距
-      drawStyle = style.copyWith(
-        letterSpacing: (style.letterSpacing ?? 0) + line.extraLetterSpacing,
-        wordSpacing: line.wordSpacing > 0 ? line.wordSpacing : null,
-      );
-    } else {
-      drawStyle = style;
-    }
-
-    final painter = TextPainter(
-      text: TextSpan(text: remainingText, style: drawStyle),
-      textDirection: TextDirection.ltr,
-    );
-    painter.layout();
-    painter.paint(canvas, Offset(startX, 0));
   }
 
   @override

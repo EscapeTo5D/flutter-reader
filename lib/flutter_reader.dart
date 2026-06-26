@@ -3,6 +3,7 @@ library flutter_reader;
 export 'src/models/book.dart';
 export 'src/models/reading_settings.dart';
 export 'src/models/text_page.dart';
+export 'src/models/column.dart';
 export 'src/models/bookmark.dart';
 export 'src/controller/reading_controller.dart';
 export 'src/widgets/reader_view.dart';

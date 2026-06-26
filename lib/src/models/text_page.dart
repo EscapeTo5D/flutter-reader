@@ -1,3 +1,5 @@
+import 'column.dart';
+
 class TextPage {
   final List<TextLine> lines;
   final int pageIndex;
@@ -17,47 +19,51 @@ class TextLine {
   final String text;
   final bool isTitle;
   final bool isParagraphEnd;
-  final double height; // TextPainter 原始行高(不含 lineHeight 倍数)
+  final double height; // TextPainter 原始行高(含 lineHeight 倍数)
 
-  // --- 字符级排版信息 ---
-  /// 每个字符的原始宽度(由 TextPainter 测量)
-  final List<double> charWidths;
+  // --- 字符级排版信息(逐字符 Column) ---
+  /// 每个字符的 Column 对象，持有精确的 start/end 像素坐标
+  final List<BaseColumn> columns;
 
   /// 缩进宽度(像素)
   final double indentWidth;
 
-  /// 缩进字符数(用于绘制时跳过缩进字符)
+  /// 缩进字符数
   final int indentSize;
-
-  /// 两端对齐时的额外字间距(比率, 需乘以 fontSize 使用)
-  final double extraLetterSpacing;
-
-  /// 两端对齐时的词间距(像素, 用于有空格的英文文本)
-  final double wordSpacing;
-
-  /// 是否需要两端对齐(多行段落的中间行)
-  final bool isJustified;
 
   /// 该行在页面中的绝对 Y 坐标(由底部对齐算法计算后设置)
   final double lineTop;
+
+  /// 行基线 Y 坐标(相对于行顶部)
+  final double lineBase;
+
+  /// 行底部 Y 坐标(相对于行顶部)
+  final double lineBottom;
+
+  /// 段落编号(用于段评等功能)
+  final int paragraphNum;
+
+  /// 该行在章节中的起始字符位置
+  final int chapterPosition;
 
   const TextLine({
     required this.text,
     this.isTitle = false,
     this.isParagraphEnd = false,
     required this.height,
-    this.charWidths = const [],
+    this.columns = const [],
     this.indentWidth = 0.0,
     this.indentSize = 0,
-    this.extraLetterSpacing = 0.0,
-    this.wordSpacing = 0.0,
-    this.isJustified = false,
     this.lineTop = 0.0,
+    this.lineBase = 0.0,
+    this.lineBottom = 0.0,
+    this.paragraphNum = 0,
+    this.chapterPosition = 0,
   });
 
   /// 是否为空段落行(用于渲染段间距)
   bool get isEmptyParagraph => text.isEmpty && isParagraphEnd;
 
-  /// 是否包含字符级排版数据
-  bool get hasCharData => charWidths.isNotEmpty;
+  /// 是否包含字符级排版数据(Column 列表)
+  bool get hasCharData => columns.isNotEmpty;
 }

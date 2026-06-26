@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/text_page.dart';
+import '../models/column.dart';
 import '../models/reading_settings.dart';
 
 class PageEngine {
@@ -16,6 +17,8 @@ class PageEngine {
     for (var i = 0; i < paragraphs.length; i++) {
       final para = paragraphs[i];
       if (para.trim().isEmpty) {
+        // 空段落行: 直接承载段间距, 不再叠加 lineHeight 倍数,
+        // 与渲染层 SizedBox(height: paragraphSpacing) 的口径保持一致。
         lines.add(TextLine(
           text: '',
           height: settings.paragraphSpacing,
@@ -48,7 +51,7 @@ class PageEngine {
     );
   }
 
-  /// 核心换行逻辑: 逐字符测量 + 两端对齐计算
+  /// 核心换行逻辑: 逐字符测量 + 生成 Column 对象
   List<TextLine> _wrapText({
     required String text,
     required TextStyle style,
@@ -129,45 +132,95 @@ class PageEngine {
         indentSize = 0;
       }
 
-      // 计算两端对齐参数
-      double extraLetterSpacing = 0.0;
-      double wordSpacing = 0.0;
-      if (shouldJustify && charWidths.isNotEmpty) {
-        final naturalWidth = charWidths.fold(0.0, (a, b) => a + b);
-        final residualWidth = maxWidth - naturalWidth;
-
-        if (residualWidth > 0) {
-          // 统计空格数量
-          final spaceCount = ' '.allMatches(lineText).length;
-          // 排除缩进后的字符间隙数
-          final gapCount = lineText.length - 1 - indentSize;
-
-          if (spaceCount > 1) {
-            // 策略A: 有多个空格 → 分配到空格上
-            wordSpacing = residualWidth / spaceCount;
-          } else if (gapCount > 0) {
-            // 策略B: 无空格(中文) → 分配到字符间隙上
-            extraLetterSpacing = residualWidth / gapCount;
-          }
-        }
-      }
+      // 生成 Column 列表(含两端对齐的坐标计算)
+      final columns = _buildColumns(
+        lineText: lineText,
+        charWidths: charWidths,
+        indentSize: indentSize,
+        indentWidth: indentWidth,
+        maxWidth: maxWidth,
+        shouldJustify: shouldJustify,
+      );
 
       result.add(TextLine(
         text: lineText,
         height: metric.height,
         isParagraphEnd: isLastLine,
         isTitle: isTitle,
-        charWidths: charWidths,
+        columns: columns,
         indentWidth: indentWidth,
         indentSize: indentSize,
-        extraLetterSpacing: extraLetterSpacing,
-        wordSpacing: wordSpacing,
-        isJustified: shouldJustify,
+        lineBase: metric.baseline,
+        lineBottom: metric.height,
       ));
       offset = endOffset;
     }
 
     return result;
+  }
+
+  /// 生成 Column 列表，计算每个字符的绝对 start/end 坐标
+  ///
+  /// 对应原生 Android 的 addCharsToLineFirst / addCharsToLineMiddle / addCharsToLineNatural
+  List<TextColumn> _buildColumns({
+    required String lineText,
+    required List<double> charWidths,
+    required int indentSize,
+    required double indentWidth,
+    required double maxWidth,
+    required bool shouldJustify,
+  }) {
+    final columns = <TextColumn>[];
+    if (lineText.isEmpty) return columns;
+
+    // 计算自然排列时的总宽度
+    final naturalWidth = charWidths.fold(0.0, (a, b) => a + b);
+
+    // 两端对齐: 计算需要分配的额外间距
+    double perCharExtra = 0.0; // 每个字符间隙的额外间距
+    double perWordExtra = 0.0; // 每个空格的额外间距
+    if (shouldJustify && charWidths.isNotEmpty) {
+      final residualWidth = maxWidth - naturalWidth;
+      if (residualWidth > 0) {
+        final spaceCount = ' '.allMatches(lineText).length;
+        final gapCount = lineText.length - 1 - indentSize;
+
+        if (spaceCount > 1) {
+          // 英文: 额外间距分配到空格上
+          perWordExtra = residualWidth / spaceCount;
+        } else if (gapCount > 0) {
+          // 中文: 额外间距分配到字符间隙上
+          perCharExtra = residualWidth / gapCount;
+        }
+      }
+    }
+
+    // 遍历字符，计算每个 Column 的 start/end 坐标
+    double x = 0.0;
+    for (var i = 0; i < lineText.length; i++) {
+      final charStart = x;
+      final charWidth = charWidths[i];
+      final charEnd = charStart + charWidth;
+
+      columns.add(TextColumn(
+        charData: lineText[i],
+        start: charStart,
+        end: charEnd,
+      ));
+
+      // 推进 x 坐标: 字符宽度 + 基础字间距 + 两端对齐额外间距
+      x = charEnd;
+      if (i < lineText.length - 1) {
+        // 添加字符间隙的额外间距(两端对齐)
+        x += perCharExtra;
+        // 如果当前字符是空格，添加词间距
+        if (lineText[i] == ' ') {
+          x += perWordExtra;
+        }
+      }
+    }
+
+    return columns;
   }
 
   /// 测量每个字符的宽度
@@ -209,12 +262,10 @@ class PageEngine {
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final lineSpacing = line.height * (settings.lineHeight - 1.0);
-      final totalLineHeight = line.height + lineSpacing;
+      final totalLineHeight = line.height;
 
       if (usedHeight + totalLineHeight > availableHeight &&
           currentPageLines.isNotEmpty) {
-        // 当前页已满, 应用底部对齐后保存
         _applyBottomJustify(
           currentPageLines,
           availableHeight,
@@ -250,8 +301,6 @@ class PageEngine {
   }
 
   /// 底部对齐: 将剩余空间均匀分配到各行之间
-  ///
-  /// 对应 Android 版 TextPage.upLinesPosition()
   void _applyBottomJustify(
     List<TextLine> lines,
     double availableHeight,
@@ -261,44 +310,38 @@ class PageEngine {
     if (!settings.textBottomJustify) return;
     if (lines.length <= 1) return;
 
-    // 跳过空段落行(只统计实际文本行)
     final textLineCount = lines.where((l) => !l.isEmptyParagraph).length;
     if (textLineCount <= 1) return;
 
     final surplus = availableHeight - usedHeight;
-    // 如果剩余空间超过一行高度, 说明是页面内容太少, 不做底部对齐
     if (surplus <= 0 || surplus >= lines.first.height) return;
 
-    // 均匀分配剩余空间
     final tj = surplus / (textLineCount - 1);
     var yOffset = 0.0;
     var textLineIndex = 0;
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      if (line.isEmptyParagraph) {
-        // 空段落行不参与偏移计算
-        continue;
-      }
+      if (line.isEmptyParagraph) continue;
 
       if (textLineIndex > 0) {
         yOffset = tj * textLineIndex;
       }
       textLineIndex++;
 
-      // 创建新的 TextLine 带上 lineTop
       lines[i] = TextLine(
         text: line.text,
         isTitle: line.isTitle,
         isParagraphEnd: line.isParagraphEnd,
         height: line.height,
-        charWidths: line.charWidths,
+        columns: line.columns,
         indentWidth: line.indentWidth,
         indentSize: line.indentSize,
-        extraLetterSpacing: line.extraLetterSpacing,
-        wordSpacing: line.wordSpacing,
-        isJustified: line.isJustified,
         lineTop: yOffset,
+        lineBase: line.lineBase,
+        lineBottom: line.lineBottom,
+        paragraphNum: line.paragraphNum,
+        chapterPosition: line.chapterPosition,
       );
     }
   }

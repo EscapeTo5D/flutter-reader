@@ -247,8 +247,6 @@ class _StyleDialogState extends State<_StyleDialog> {
   late Color bgColor;
   late Color textColor;
   late String? bgImage;
-  late PageAnimationType pageAnim;
-  late bool noAnimScrollPage;
   bool _clearBgImage = false;
 
   static const _stylePresets = [
@@ -273,8 +271,6 @@ class _StyleDialogState extends State<_StyleDialog> {
     bgColor = s.backgroundColor;
     textColor = s.textColor;
     bgImage = s.backgroundImage;
-    pageAnim = s.pageAnimation;
-    noAnimScrollPage = s.noAnimScrollPage;
   }
 
   void _apply() {
@@ -289,8 +285,6 @@ class _StyleDialogState extends State<_StyleDialog> {
         textColor: textColor,
         backgroundImage: bgImage,
         clearBackgroundImage: _clearBgImage,
-        pageAnimation: pageAnim,
-        noAnimScrollPage: noAnimScrollPage,
       ),
     );
   }
@@ -309,8 +303,6 @@ class _StyleDialogState extends State<_StyleDialog> {
           _buildDragHandle(),
           _buildTopButtons(),
           _buildSeekBars(),
-          _buildDivider(),
-          _buildPageAnimSection(),
           _buildDivider(),
           _buildStyleSection(),
           SizedBox(height: bottomPadding),
@@ -475,69 +467,6 @@ class _StyleDialogState extends State<_StyleDialog> {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       height: 0.8,
       color: Colors.grey.shade200,
-    );
-  }
-
-  Widget _buildPageAnimSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '翻页动画',
-            style: TextStyle(fontSize: 12, color: Colors.black54),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _buildAnimChip('覆盖', PageAnimationType.cover),
-              const SizedBox(width: 8),
-              _buildAnimChip('滑动', PageAnimationType.slide),
-              const SizedBox(width: 8),
-              _buildAnimChip('仿真', PageAnimationType.simulation),
-              const SizedBox(width: 8),
-              _buildAnimChip('滚动', PageAnimationType.scroll),
-              const SizedBox(width: 8),
-              _buildAnimChip('无动画', PageAnimationType.none),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAnimChip(String label, PageAnimationType type) {
-    final selected = pageAnim == type || (type == PageAnimationType.none && noAnimScrollPage);
-    return Expanded(
-      child: OutlinedButton(
-        onPressed: () {
-          setState(() {
-            pageAnim = type;
-            noAnimScrollPage = (type == PageAnimationType.none);
-          });
-          _apply();
-        },
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          side: BorderSide(
-            color: selected ? Theme.of(context).colorScheme.primary : Colors.grey.shade300,
-          ),
-          backgroundColor: selected
-              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
-              : null,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: selected ? Theme.of(context).colorScheme.primary : Colors.black87,
-          ),
-        ),
-      ),
     );
   }
 
@@ -709,7 +638,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   late bool textBottomJustify;
   late bool selectable;
   late bool showBrightnessView;
-  late bool noAnimScrollPage;
   late bool showHeaderDivider;
   late bool showFooterDivider;
 
@@ -724,7 +652,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
     textBottomJustify = s.textBottomJustify;
     selectable = s.selectable;
     showBrightnessView = s.showBrightnessView;
-    noAnimScrollPage = s.noAnimScrollPage;
     showHeaderDivider = s.showHeaderDivider;
     showFooterDivider = s.showFooterDivider;
   }
@@ -739,8 +666,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
         textBottomJustify: textBottomJustify,
         selectable: selectable,
         showBrightnessView: showBrightnessView,
-        noAnimScrollPage: noAnimScrollPage,
-        pageAnimation: noAnimScrollPage ? PageAnimationType.none : null,
         showHeaderDivider: showHeaderDivider,
         showFooterDivider: showFooterDivider,
       ),
@@ -777,10 +702,6 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
                 _buildSwitch('文字底部对齐', textBottomJustify, (v) => setState(() { textBottomJustify = v; _apply(); })),
                 _buildSwitch('允许选择文字', selectable, (v) => setState(() { selectable = v; _apply(); })),
                 _buildSwitch('显示亮度调节', showBrightnessView, (v) => setState(() { showBrightnessView = v; _apply(); })),
-                _buildSwitch('无动画翻页', noAnimScrollPage, (v) => setState(() {
-                  noAnimScrollPage = v;
-                  _apply();
-                })),
                 _buildSwitch('页头分割线', showHeaderDivider, (v) => setState(() { showHeaderDivider = v; _apply(); })),
                 _buildSwitch('页尾分割线', showFooterDivider, (v) => setState(() { showFooterDivider = v; _apply(); })),
               ],

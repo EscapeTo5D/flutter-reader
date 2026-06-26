@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-enum PageAnimationType { cover, slide, simulation, scroll, none }
-
 enum TipPosition { none, chapterTitle, time, battery, batteryPercent, pageNumber, progress, bookName, timeAndBattery, pageAndTotal }
 
 class HeaderFooterConfig {
@@ -125,7 +123,6 @@ class ReadingSettings {
   Color tipColor;
   String? fontFamily;
   String? backgroundImage;
-  PageAnimationType pageAnimation;
   HeaderFooterConfig headerConfig;
   HeaderFooterConfig footerConfig;
   ReaderPadding padding;
@@ -140,7 +137,6 @@ class ReadingSettings {
   bool textBottomJustify;
   bool selectable;
   bool showBrightnessView;
-  bool noAnimScrollPage;
 
   ReadingSettings({
     this.fontSize = 18.0,
@@ -153,7 +149,6 @@ class ReadingSettings {
     this.tipColor = const Color(0xFF999999),
     this.fontFamily,
     this.backgroundImage,
-    this.pageAnimation = PageAnimationType.cover,
     this.headerConfig = const HeaderFooterConfig(
       left: TipPosition.chapterTitle,
       center: TipPosition.none,
@@ -176,7 +171,6 @@ class ReadingSettings {
     this.textBottomJustify = true,
     this.selectable = true,
     this.showBrightnessView = true,
-    this.noAnimScrollPage = false,
   });
 
   ReadingSettings copyWith({
@@ -191,7 +185,6 @@ class ReadingSettings {
     String? fontFamily,
     String? backgroundImage,
     bool clearBackgroundImage = false,
-    PageAnimationType? pageAnimation,
     HeaderFooterConfig? headerConfig,
     HeaderFooterConfig? footerConfig,
     ReaderPadding? padding,
@@ -206,7 +199,6 @@ class ReadingSettings {
     bool? textBottomJustify,
     bool? selectable,
     bool? showBrightnessView,
-    bool? noAnimScrollPage,
   }) {
     return ReadingSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -219,7 +211,6 @@ class ReadingSettings {
       tipColor: tipColor ?? this.tipColor,
       fontFamily: fontFamily ?? this.fontFamily,
       backgroundImage: clearBackgroundImage ? null : (backgroundImage ?? this.backgroundImage),
-      pageAnimation: pageAnimation ?? this.pageAnimation,
       headerConfig: headerConfig ?? this.headerConfig,
       footerConfig: footerConfig ?? this.footerConfig,
       padding: padding ?? this.padding,
@@ -234,7 +225,6 @@ class ReadingSettings {
       textBottomJustify: textBottomJustify ?? this.textBottomJustify,
       selectable: selectable ?? this.selectable,
       showBrightnessView: showBrightnessView ?? this.showBrightnessView,
-      noAnimScrollPage: noAnimScrollPage ?? this.noAnimScrollPage,
     );
   }
 }
