@@ -89,8 +89,12 @@ class PageEngine {
     required bool textFullJustify,
   }) {
     final result = <TextLine>[];
+    // 对齐原生 legado: 缩进是"替换"而非"叠加"。源文本段落通常自带全角/半角空格
+    // 缩进, 先剥离首部空白字符, 再用标准缩进(indent 个全角空格)统一填充, 避免双重缩进。
+    // 原生 addCharsToLineFirst 用 words.subList(bodyIndent.length, ...) 跳过源文本前 N 字符。
+    final body = indent > 0 ? text.replaceFirst(RegExp(r'^[\s\u3000]+'), '') : text;
     final indentStr = indent > 0 ? '\u3000' * indent : '';
-    final displayText = '$indentStr$text';
+    final displayText = '$indentStr$body';
 
     // 用 TextPainter 排版整段
     final painter = TextPainter(
