@@ -19,12 +19,7 @@ class TextLine {
   final String text;
   final bool isTitle;
   final bool isParagraphEnd;
-  final double height; // TextPainter 原始行高(含 lineHeight 倍数), 用于渲染 SizedBox
-
-  /// 纯字高(ascent + descent, 不含行距留白)。
-  /// 对齐原生 legado 的 textHeight 语义: 分页放行判断用纯字高, 让末行的行距
-  /// 留白允许溢出页底(被 ClipRect 裁掉留白, 不裁字)。为 0 时退回用 [height]。
-  final double textHeight;
+  final double height; // TextPainter 原始行高(含 lineHeight 倍数)
 
   // --- 字符级排版信息(逐字符 Column) ---
   /// 每个字符的 Column 对象，持有精确的 start/end 像素坐标
@@ -56,7 +51,6 @@ class TextLine {
     this.isTitle = false,
     this.isParagraphEnd = false,
     required this.height,
-    this.textHeight = 0.0,
     this.columns = const [],
     this.indentWidth = 0.0,
     this.indentSize = 0,
