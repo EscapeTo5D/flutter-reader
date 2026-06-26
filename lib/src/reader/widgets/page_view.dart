@@ -257,16 +257,22 @@ class PageView extends StatelessWidget {
     final lines = page!.lines;
     final children = <Widget>[];
 
+    // prevLineTop 必须取上一个【文字行】的 lineTop, 而非 lines[i-1]。
+    // 因为 _applyBottomJustify 只给文字行设 lineTop, 段距行(空段落)的 lineTop=0。
+    // 若用段距行的 0 做 prev, 会让紧随其后的文字行 extraSpacing 被错误放大,
+    // 渲染总高溢出 availableHeight, 末行被 Clip.hardEdge 裁掉。
+    double prevLineTop = 0.0;
+
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
 
       // 底部对齐: 在行前插入额外间距
-      if (i > 0 && line.lineTop > 0) {
-        final prevLineTop = lines[i - 1].lineTop;
+      if (line.lineTop > 0) {
         final extraSpacing = line.lineTop - prevLineTop;
         if (extraSpacing > 0) {
           children.add(SizedBox(height: extraSpacing));
         }
+        prevLineTop = line.lineTop;
       }
 
       children.add(_buildLine(line));
