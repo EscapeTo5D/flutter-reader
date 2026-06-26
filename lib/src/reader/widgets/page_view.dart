@@ -54,7 +54,7 @@ class PageView extends StatelessWidget {
         children: [
           if (showHeader) _buildHeader(context),
           if (showHeader && settings.showHeaderDivider)
-            Container(height: 0.5, color: settings.backgroundColor),
+            Container(height: 0.5, color: Colors.grey.shade300),
           Expanded(child: ClipRect(child: _buildContent())),
           if (showFooter && settings.showFooterDivider)
             Container(height: 0.5, color: Colors.grey.shade300),
@@ -295,9 +295,11 @@ class PageView extends StatelessWidget {
     final lineHeight = line.height;
 
     // 有 Column 数据: 用 CustomPainter 逐字符绘制
+    // 行高必须与排版引擎预算(line.height = metric.height)一致, 否则逐行累积的
+    // 差值会把最后一行挤出 availableHeight, 被 ClipRect 裁掉。
     if (line.hasCharData) {
       return SizedBox(
-        height: lineHeight+15,
+        height: lineHeight,
         child: CustomPaint(
           size: Size(double.infinity, lineHeight),
           painter: _TextLinePainter(
