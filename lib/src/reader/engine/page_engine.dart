@@ -240,11 +240,18 @@ class PageEngine {
       // 推进 x 坐标: 字符宽度 + 基础字间距 + 两端对齐额外间距
       x = charEnd;
       if (i < lineText.length - 1) {
-        // 添加字符间隙的额外间距(两端对齐)
-        x += perCharExtra;
-        // 如果当前字符是空格，添加词间距
-        if (lineText[i] == ' ') {
-          x += perWordExtra;
+        // 两端对齐间距只施加到「正文字符之间」的间隙, 跳过缩进字符
+        // (i < indentSize 的间隙), 对齐原生 legado addCharsToLineFirst:
+        // 缩进字符用固定 indentCharWidth 排列, 不参与两端对齐; 仅对
+        // 缩进之后的字符子列调 addCharsToLineMiddle 分配 residualWidth。
+        // 否则 perCharExtra 会被多施加 indentSize 个间隙, 末列 end 超出
+        // maxWidth, 缩进行的末字被裁。
+        if (i >= indentSize) {
+          x += perCharExtra;
+          // 如果当前字符是空格，添加词间距
+          if (lineText[i] == ' ') {
+            x += perWordExtra;
+          }
         }
       }
     }
