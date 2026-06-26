@@ -170,6 +170,7 @@ class PageEngine {
       result.add(TextLine(
         text: lineText,
         height: metric.height,
+        textHeight: metric.ascent + metric.descent,
         isParagraphEnd: isLastLine,
         isTitle: isTitle,
         columns: columns,
@@ -287,9 +288,12 @@ class PageEngine {
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final totalLineHeight = line.height;
+      // 放行判断用纯字高(textHeight), 对齐原生 legado: 末行的行距留白允许溢出
+      // 页底(被 ClipRect 裁掉留白, 不裁字)。游标 usedHeight 仍按全高 height 累加,
+      // 以保持页面内容总高统计正确(用于 _applyBottomJustify)。
+      final budgetHeight = line.textHeight > 0 ? line.textHeight : line.height;
 
-      if (usedHeight + totalLineHeight > availableHeight &&
+      if (usedHeight + budgetHeight > availableHeight &&
           currentPageLines.isNotEmpty) {
         _applyBottomJustify(
           currentPageLines,
@@ -306,7 +310,7 @@ class PageEngine {
       }
 
       currentPageLines.add(line);
-      usedHeight += totalLineHeight;
+      usedHeight += line.height;
     }
 
     if (currentPageLines.isNotEmpty) {
@@ -359,6 +363,7 @@ class PageEngine {
         isTitle: line.isTitle,
         isParagraphEnd: line.isParagraphEnd,
         height: line.height,
+        textHeight: line.textHeight,
         columns: line.columns,
         indentWidth: line.indentWidth,
         indentSize: line.indentSize,
