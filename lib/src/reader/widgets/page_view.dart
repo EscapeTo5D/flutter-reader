@@ -43,7 +43,10 @@ class PageView extends StatelessWidget {
       return _buildChromeOnly(context);
     }
 
-    final showHeader = settings.hideStatusBar && showChrome;
+    // 页眉/页脚的显隐只由各自配置的 hidden 决定, 与翻页模式(scroll 或其它)无关,
+    // 对齐原生 legado: 翻页模式只改变翻页方式, 不影响 chrome 是否显示。
+    final showHeader = settings.hideStatusBar && !settings.headerConfig.hidden;
+    final showFooter = !settings.footerConfig.hidden;
     final content = Container(
       decoration: _buildBackground(),
       clipBehavior: Clip.hardEdge,
@@ -53,9 +56,9 @@ class PageView extends StatelessWidget {
           if (showHeader && settings.showHeaderDivider)
             Container(height: 0.5, color: settings.backgroundColor),
           Expanded(child: ClipRect(child: _buildContent())),
-          if (showChrome && settings.showFooterDivider)
+          if (showFooter && settings.showFooterDivider)
             Container(height: 0.5, color: Colors.grey.shade300),
-          if (showChrome)
+          if (showFooter)
             Padding(
               padding: const EdgeInsets.only(top: 2, bottom: 4),
               child: _buildFooter(context),

@@ -7,21 +7,28 @@ class HeaderFooterConfig {
   final TipPosition center;
   final TipPosition right;
 
+  /// 整体显示/隐藏开关, 对应原生 legado 的 headerMode/footerMode。
+  /// false(默认)=显示; true=隐藏整个区域(高度归零, 不占排版空间)。
+  final bool hidden;
+
   const HeaderFooterConfig({
     this.left = TipPosition.chapterTitle,
     this.center = TipPosition.none,
     this.right = TipPosition.pageNumber,
+    this.hidden = false,
   });
 
   HeaderFooterConfig copyWith({
     TipPosition? left,
     TipPosition? center,
     TipPosition? right,
+    bool? hidden,
   }) {
     return HeaderFooterConfig(
       left: left ?? this.left,
       center: center ?? this.center,
       right: right ?? this.right,
+      hidden: hidden ?? this.hidden,
     );
   }
 }

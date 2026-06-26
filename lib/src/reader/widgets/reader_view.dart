@@ -72,16 +72,22 @@ class _ReaderViewState extends State<ReaderView> {
       builder: (context, constraints) {
         final settings = widget.controller.settings;
         final systemPadding = MediaQuery.of(context).padding;
-        final showHeader = settings.hideStatusBar;
+        // 页眉/页脚显隐条件必须与 page_view.build() 完全一致, 否则预算高度
+        // (喂给排版引擎的可用高度) 与实际渲染占用会错位, 导致正文与页脚重叠/留白。
+        final showHeader =
+            settings.hideStatusBar && !settings.headerConfig.hidden;
+        final showFooter = !settings.footerConfig.hidden;
         final topInset = showHeader ? 0.0 : systemPadding.top;
         final bottomInset =
             settings.hideNavigationBar ? 0.0 : systemPadding.bottom;
+        // footer 外层 Padding(top:2 + bottom:4) 来自 page_view._buildFooter
+        final footerPadding = showFooter ? 6.0 : 0.0;
         final nonContentHeight = topInset +
             bottomInset +
             (showHeader ? settings.padding.headerHeight : 0) +
             (showHeader && settings.showHeaderDivider ? 0.5 : 0) +
-            (settings.showFooterDivider ? 0.5 : 0) +
-            settings.padding.footerHeight;
+            (showFooter && settings.showFooterDivider ? 0.5 : 0) +
+            (showFooter ? settings.padding.footerHeight + footerPadding : 0);
         final size = Size(
           constraints.maxWidth - systemPadding.left - systemPadding.right,
           (constraints.maxHeight - nonContentHeight)
