@@ -13,12 +13,11 @@ class PageEngine {
 
     final paragraphs = content.split('\n');
     final lines = <TextLine>[];
+    var titleAdded = false;
 
     for (var i = 0; i < paragraphs.length; i++) {
       final para = paragraphs[i];
       if (para.trim().isEmpty) {
-        // 空段落行: 直接承载段间距, 不再叠加 lineHeight 倍数,
-        // 与渲染层 SizedBox(height: paragraphSpacing) 的口径保持一致。
         lines.add(TextLine(
           text: '',
           height: settings.paragraphSpacing,
@@ -26,22 +25,48 @@ class PageEngine {
         ));
         continue;
       }
-      final isTitle = _isTitle(para);
+      final isTitle = _isTitle(para) && i == 0; // 只有首段可能是标题
+
+      // titleMode == 2 时隐藏标题
+      if (isTitle && settings.titleMode == 2) continue;
+
       final style = _textStyle(settings, isTitle: isTitle);
       final maxWidth =
           pageSize.width - settings.padding.left - settings.padding.right;
+
+      // 标题上方间距
+      if (isTitle && !titleAdded) {
+        lines.add(TextLine(
+          text: '',
+          height: settings.titleTopSpacing,
+          isParagraphEnd: false,
+        ));
+        titleAdded = true;
+      }
+
       final textLines = _wrapText(
         text: para,
         style: style,
         maxWidth: maxWidth,
         indent: isTitle ? 0 : settings.textIndent,
         letterSpacing: settings.letterSpacing,
-        fontSize: isTitle ? settings.fontSize + 2 : settings.fontSize,
+        fontSize: isTitle
+            ? settings.fontSize + settings.titleSize
+            : settings.fontSize,
         isTitle: isTitle,
-        isMiddleTitle: false, // TODO: 从配置读取
+        isMiddleTitle: settings.isMiddleTitle || settings.titleMode == 1,
         textFullJustify: settings.textFullJustify,
       );
       lines.addAll(textLines);
+
+      // 标题下方间距
+      if (isTitle) {
+        lines.add(TextLine(
+          text: '',
+          height: settings.titleBottomSpacing,
+          isParagraphEnd: false,
+        ));
+      }
     }
 
     return _splitIntoPages(

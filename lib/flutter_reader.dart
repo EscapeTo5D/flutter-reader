@@ -4,6 +4,7 @@ export 'src/core/models/book.dart';
 export 'src/core/models/reading_settings.dart';
 export 'src/core/models/bookmark.dart';
 export 'src/core/controller/reading_controller.dart';
+export 'src/core/content_processor.dart';
 export 'src/reader/entities/text_page.dart';
 export 'src/reader/entities/column.dart';
 export 'src/reader/engine/page_engine.dart';

@@ -243,6 +243,7 @@ class _StyleDialogState extends State<_StyleDialog> {
   late int _lineHeightProgress;
   late int _paragraphSpacingProgress;
   late int textIndent;
+  late int titleMode;
   late Color bgColor;
   late Color textColor;
   late String? bgImage;
@@ -267,6 +268,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     _lineHeightProgress = ((s.lineHeight - 1.0) / 0.015).round();
     _paragraphSpacingProgress = (s.paragraphSpacing * 10).toInt();
     textIndent = s.textIndent;
+    titleMode = s.titleMode;
     bgColor = s.backgroundColor;
     textColor = s.textColor;
     bgImage = s.backgroundImage;
@@ -280,6 +282,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         paragraphSpacing: _paragraphSpacingProgress / 10.0,
         letterSpacing: (_letterSpacingProgress - 50) / 100.0,
         textIndent: textIndent,
+        titleMode: titleMode,
         backgroundColor: bgColor,
         textColor: textColor,
         backgroundImage: bgImage,
@@ -343,7 +346,7 @@ class _StyleDialogState extends State<_StyleDialog> {
           const SizedBox(width: 6),
           Expanded(child: _buildTextButton('内边距', () {})),
           const SizedBox(width: 6),
-          Expanded(child: _buildTextButton('信息', () {})),
+          Expanded(child: _buildTextButton('信息', () => _showTipConfig())),
         ],
       ),
     );
@@ -603,6 +606,37 @@ class _StyleDialogState extends State<_StyleDialog> {
       ),
     );
   }
+
+  void _showTipConfig() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _TipConfigDialog(
+        titleMode: titleMode,
+        titleSize: widget.controller.settings.titleSize,
+        titleTopSpacing: widget.controller.settings.titleTopSpacing,
+        titleBottomSpacing: widget.controller.settings.titleBottomSpacing,
+        onTitleModeChanged: (v) {
+          setState(() => titleMode = v);
+          _apply();
+        },
+        onTitleSizeChanged: (v) {
+          widget.controller.updateSettings(
+            widget.controller.settings.copyWith(titleSize: v),
+          );
+        },
+        onTitleTopSpacingChanged: (v) {
+          widget.controller.updateSettings(
+            widget.controller.settings.copyWith(titleTopSpacing: v),
+          );
+        },
+        onTitleBottomSpacingChanged: (v) {
+          widget.controller.updateSettings(
+            widget.controller.settings.copyWith(titleBottomSpacing: v),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _StylePreset {
@@ -718,6 +752,144 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
       onChanged: onChanged,
       activeThumbColor: Colors.blue,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+    );
+  }
+}
+
+class _TipConfigDialog extends StatelessWidget {
+  final int titleMode;
+  final double titleSize;
+  final double titleTopSpacing;
+  final double titleBottomSpacing;
+  final ValueChanged<int> onTitleModeChanged;
+  final ValueChanged<double> onTitleSizeChanged;
+  final ValueChanged<double> onTitleTopSpacingChanged;
+  final ValueChanged<double> onTitleBottomSpacingChanged;
+
+  const _TipConfigDialog({
+    required this.titleMode,
+    required this.titleSize,
+    required this.titleTopSpacing,
+    required this.titleBottomSpacing,
+    required this.onTitleModeChanged,
+    required this.onTitleSizeChanged,
+    required this.onTitleTopSpacingChanged,
+    required this.onTitleBottomSpacingChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+          maxWidth: 340,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 正文标题
+              const Text('正文标题', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              _buildTitleModeSelector(),
+              _buildSeekBar('标题字号', titleSize, 20, onTitleSizeChanged),
+              _buildSeekBar('上间距', titleTopSpacing, 100, onTitleTopSpacingChanged),
+              _buildSeekBar('下间距', titleBottomSpacing, 100, onTitleBottomSpacingChanged),
+              const Divider(),
+              // 页头
+              const Text('页头', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              _buildTipRow('显示', '跟随状态栏'),
+              _buildTipRow('左', '章节标题'),
+              _buildTipRow('中', '无'),
+              _buildTipRow('右', '时间'),
+              const Divider(),
+              // 页尾
+              const Text('页尾', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              _buildTipRow('显示', '显示'),
+              _buildTipRow('左', '书名'),
+              _buildTipRow('中', '无'),
+              _buildTipRow('右', '页码/总进度'),
+              const Divider(),
+              // 页头页尾
+              const Text('页头页尾', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              _buildTipRow('提示颜色', '跟随文字'),
+              _buildTipRow('分割线颜色', '跟随文字'),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTitleModeSelector() {
+    const options = ['居左', '居中', '隐藏'];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('标题模式', style: TextStyle(fontSize: 14)),
+          const SizedBox(height: 4),
+          SegmentedButton<int>(
+            segments: List.generate(3, (i) =>
+              ButtonSegment(value: i, label: Text(options[i])),
+            ),
+            selected: {titleMode},
+            onSelectionChanged: (set) => onTitleModeChanged(set.first),
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSeekBar(String label, double value, int max, ValueChanged<double> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(width: 60, child: Text(label, style: const TextStyle(fontSize: 13))),
+          Expanded(
+            child: Slider(
+              value: value.clamp(0, max.toDouble()),
+              min: 0,
+              max: max.toDouble(),
+              divisions: max,
+              label: value.toStringAsFixed(0),
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            child: Text(value.toStringAsFixed(0), textAlign: TextAlign.right, style: const TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTipRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
+          Text(value, style: const TextStyle(fontSize: 14, color: Colors.grey)),
+        ],
+      ),
     );
   }
 }

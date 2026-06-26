@@ -4,6 +4,7 @@ import '../models/reading_settings.dart';
 import '../../reader/entities/text_page.dart';
 import '../models/bookmark.dart';
 import '../../reader/engine/page_engine.dart';
+import '../content_processor.dart';
 
 class ReadingController extends ChangeNotifier {
   Book? _book;
@@ -290,8 +291,15 @@ class ReadingController extends ChangeNotifier {
       _pages = [];
       return;
     }
-    _pages = _pageEngine.paginate(
+    final bookContent = ContentProcessor.getContent(
+      title: chapter.title,
       content: chapter.content,
+      bookName: _book!.title,
+      textIndent: _settings.textIndent,
+    );
+    final processedContent = bookContent.textList.join('\n');
+    _pages = _pageEngine.paginate(
+      content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
     );

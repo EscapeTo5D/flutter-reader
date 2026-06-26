@@ -137,6 +137,11 @@ class ReadingSettings {
   bool textBottomJustify;
   bool selectable;
   bool showBrightnessView;
+  int titleMode;       // 0:居左, 1:居中, 2:隐藏
+  bool isMiddleTitle;  // 强制所有标题居中
+  double titleSize;    // 标题字号偏移量
+  double titleTopSpacing;    // 标题上方间距
+  double titleBottomSpacing; // 标题下方间距
 
   ReadingSettings({
     this.fontSize = 18.0,
@@ -171,6 +176,11 @@ class ReadingSettings {
     this.textBottomJustify = true,
     this.selectable = true,
     this.showBrightnessView = true,
+    this.titleMode = 0,
+    this.isMiddleTitle = false,
+    this.titleSize = 2.0,
+    this.titleTopSpacing = 12.0,
+    this.titleBottomSpacing = 8.0,
   });
 
   ReadingSettings copyWith({
@@ -199,6 +209,11 @@ class ReadingSettings {
     bool? textBottomJustify,
     bool? selectable,
     bool? showBrightnessView,
+    int? titleMode,
+    bool? isMiddleTitle,
+    double? titleSize,
+    double? titleTopSpacing,
+    double? titleBottomSpacing,
   }) {
     return ReadingSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -225,6 +240,11 @@ class ReadingSettings {
       textBottomJustify: textBottomJustify ?? this.textBottomJustify,
       selectable: selectable ?? this.selectable,
       showBrightnessView: showBrightnessView ?? this.showBrightnessView,
+      titleMode: titleMode ?? this.titleMode,
+      isMiddleTitle: isMiddleTitle ?? this.isMiddleTitle,
+      titleSize: titleSize ?? this.titleSize,
+      titleTopSpacing: titleTopSpacing ?? this.titleTopSpacing,
+      titleBottomSpacing: titleBottomSpacing ?? this.titleBottomSpacing,
     );
   }
 }
