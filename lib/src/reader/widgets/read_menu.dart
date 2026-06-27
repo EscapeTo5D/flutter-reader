@@ -397,12 +397,13 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
-  /// 翻页动画模式选择(对齐原生 legado menu_page_anim → showPageAnimConfig)。
+  /// 翻页动画模式选择, 复刻原生 legado ReadStyleDialog 的 RadioGroup
+  /// (dialog_read_book_style.xml:183-256 + ThemeRadioNoButton)。
   ///
-  /// 5 段对应 PageAnimMode, 全部可选并存入配置。运行时仅 slide 生效,
-  /// 其余模式动画尚未实现, 下方小字标注避免误导用户。
+  /// 5 个带边框圆角按钮水平等宽排列, 选中态填充主题强调色(对齐原生 accentColor)。
+  /// 运行时仅 slide 生效, 其余模式动画尚未实现, 但配置照存(原生 5 个均可用)。
   Widget _buildPageAnimSelector() {
-    const labels = ['覆盖', '滑动', '仿真', '滚动', '无'];
+    const labels = ['覆盖', '滑动', '仿真', '滚动', '无动画'];
     const modes = [
       PageAnimMode.cover,
       PageAnimMode.slide,
@@ -410,36 +411,76 @@ class _StyleDialogState extends State<_StyleDialog> {
       PageAnimMode.scroll,
       PageAnimMode.none,
     ];
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('翻页动画', style: TextStyle(fontSize: 14, color: Colors.black54)),
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<PageAnimMode>(
-              segments: List.generate(5, (i) =>
-                ButtonSegment(value: modes[i], label: Text(labels[i])),
-              ),
-              selected: {pageAnimMode},
-              onSelectionChanged: (set) {
-                setState(() => pageAnimMode = set.first);
-                _apply();
-              },
-              style: const ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 标题: 12sp, alpha 0.75 (对齐 tv_page_anim: alpha=0.75, textSize=12sp)。
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: Text(
+            '翻页动画',
+            style: TextStyle(fontSize: 12, color: Colors.black54.withValues(alpha: 0.75)),
+          ),
+        ),
+        // RadioGroup: marginHorizontal=11dp, 等宽 5 份。
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          child: Row(
+            children: List.generate(5, (i) {
+              final selected = pageAnimMode == modes[i];
+              return Expanded(
+                child: Container(
+                  // margin 4dp (对齐 layout_margin=4dp)。
+                  margin: const EdgeInsets.all(4),
+                  child: _buildAnimRadio(labels[i], selected, () {
+                    if (!selected) {
+                      setState(() => pageAnimMode = modes[i]);
+                      _apply();
+                    }
+                  }),
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 单个翻页动画按钮, 复刻 ThemeRadioNoButton 选中态:
+  /// 默认=透明底+文字色边框+文字色字; 选中=强调色底+强调色边框+白/黑字。
+  /// 圆角 2dp, 边框 2dp, padding 5dp (对齐 ThemeRadioNoButton.cornerRadius/strokeWidth=2dp,
+  /// padding=5dp)。选中字色按强调色亮暗取黑/白(对齐 ColorUtils.isColorLight)。
+  Widget _buildAnimRadio(String label, bool selected, VoidCallback onTap) {
+    final accent = Theme.of(context).colorScheme.primary;
+    final isLightAccent = ThemeData.estimateBrightnessForColor(accent) == Brightness.light;
+    final textColor = Colors.black87;
+    final checkedTextColor = isLightAccent ? Colors.black : Colors.white;
+    return Material(
+      color: selected ? accent : Colors.transparent,
+      borderRadius: BorderRadius.circular(2),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(2),
+        child: Container(
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(
+              color: selected ? accent : textColor,
+              width: 2,
             ),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            '覆盖/仿真/滚动/无动画开发中，当前仅滑动可用',
-            style: TextStyle(fontSize: 11, color: Colors.black54),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            style: TextStyle(
+              fontSize: 13,
+              color: selected ? checkedTextColor : textColor,
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
