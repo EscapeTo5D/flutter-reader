@@ -348,8 +348,8 @@ class _StyleDialogState extends State<_StyleDialog> {
         children: [
           _buildDragHandle(),
           _buildTopButtons(),
-          _buildPageAnimSelector(),
           _buildSeekBars(),
+          _buildPageAnimSelector(),
           _buildDivider(),
           _buildStyleSection(),
           SizedBox(height: bottomPadding),
@@ -398,10 +398,11 @@ class _StyleDialogState extends State<_StyleDialog> {
   }
 
   /// 翻页动画模式选择, 复刻原生 legado ReadStyleDialog 的 RadioGroup
-  /// (dialog_read_book_style.xml:183-256 + ThemeRadioNoButton)。
+  /// (dialog_read_book_style.xml:165-256 + ThemeRadioNoButton)。
   ///
+  /// 位于段距滑块之后、底色预设之前, 顶部带 0.8dp 分割线(对齐原生 vw_bg_fg)。
   /// 5 个带边框圆角按钮水平等宽排列, 选中态填充主题强调色(对齐原生 accentColor)。
-  /// 运行时仅 slide 生效, 其余模式动画尚未实现, 但配置照存(原生 5 个均可用)。
+  /// 运行时 slide/none 生效; cover/simulation/scroll 动画尚未实现, 配置照存。
   Widget _buildPageAnimSelector() {
     const labels = ['覆盖', '滑动', '仿真', '滚动', '无动画'];
     const modes = [
@@ -414,6 +415,12 @@ class _StyleDialogState extends State<_StyleDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 分割线 0.8dp, 水平边距 16, 垂直边距 8 (对齐 vw_bg_fg)。
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          height: 0.8,
+          color: Colors.grey.shade200,
+        ),
         // 标题: 12sp, alpha 0.75 (对齐 tv_page_anim: alpha=0.75, textSize=12sp)。
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),

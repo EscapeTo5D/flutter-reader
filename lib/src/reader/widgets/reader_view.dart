@@ -30,7 +30,7 @@ const int _pageAnimSpeedMs = 300;
 /// - 点击翻页: 程序化启动 300ms 全宽滑动动画。
 /// - 拖拽: 跟手(实时偏移), 松手后按阈值补完或回弹(匀速 300ms)。
 /// - 动画中触摸: 中断并提交当前方向(对齐原生 HorizontalPageDelegate.abortAnim)。
-/// 动画类型由 `ReadingSettings.pageAnimMode` 决定; 本实现先支持 slide, 其余后续。
+/// 动画类型由 `ReadingSettings.pageAnimMode` 决定; slide/none 已实现, cover/simulation/scroll 后续。
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
 
@@ -441,6 +441,8 @@ class _ReaderViewState extends State<ReaderView>
   /// 程序化翻页(点击触发)。对齐原生 ReadView.kt:444-445 nextPageByAnim/prevPageByAnim。
   ///
   /// peek 目标页 → 设方向 → 启动 0→1 全宽动画 → onAnimStop 提交。
+  /// none 模式下不播动画, 直接 peek + commitTurn(对齐原生 NoAnimPageDelegate.onAnimStart:
+  /// `fillPage(direction)` 后 `stopScroll`, onDraw/onAnimStop 全空)。
   void _turnByAnim(_PageDirection dir) {
     if (_animDir != _PageDirection.none) return; // 动画/拖拽进行中, 忽略
     if (dir == _PageDirection.next && !controller.canGoNext) return;
@@ -448,6 +450,11 @@ class _ReaderViewState extends State<ReaderView>
     final target =
         dir == _PageDirection.next ? controller.peekNext() : controller.peekPrev();
     if (target == null) return;
+    // 无动画模式: 直接提交, 不进入叠加态也不启动动画。
+    if (controller.settings.pageAnimMode == PageAnimMode.none) {
+      controller.commitTurn(target);
+      return;
+    }
     _animDir = dir;
     _isCancel = false;
     _isDragging = false;
@@ -537,6 +544,20 @@ class _ReaderViewState extends State<ReaderView>
     final beyondThreshold = _dragOffset.abs() > threshold;
     // 翻页条件: 超阈值 且 非取消。否则回弹。
     final shouldCommit = beyondThreshold && !_isCancel;
+
+    // 无动画模式: 拖拽过阈值直接提交, 不播滑入/回弹动画
+    // (对齐原生 NoAnimPageDelegate, 拖拽与点击共用同一 delegate)。
+    if (controller.settings.pageAnimMode == PageAnimMode.none) {
+      final target = _animDir == _PageDirection.next ? _nextCache : _prevCache;
+      _resetAnimState();
+      if (shouldCommit && target != null) {
+        controller.commitTurn(target);
+      } else if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
+
     final toProgress = shouldCommit ? 1.0 : 0.0;
     _startPageAnim(from: fromProgress, to: toProgress);
   }
