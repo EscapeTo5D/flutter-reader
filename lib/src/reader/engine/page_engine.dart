@@ -400,20 +400,23 @@ class PageEngine {
     }
 
     if (currentPageLines.isNotEmpty) {
-      // 末页追加 endPadding 留白行, 对齐原生 ChapterProvider 末尾
-      // (TextChapterLayout.kt:499-505): 末页内容顶部对齐、底部加 20dp,
-      // 不强制撑满 visibleHeight。末页本就留白, 追加不触发分页溢出。
-      currentPageLines.add(TextLine(
-        text: '',
-        height: _endPadding,
-        isEndPadding: true,
-      ));
-      _applyBottomJustify(
-        currentPageLines,
-        availableHeight,
-        usedHeight,
-        settings,
-      );
+      // 末页追加 endPadding 留白, 对齐原生 ChapterProvider 末尾
+      // (TextChapterLayout.kt:499-505): 末页内容顶部对齐、底部加 20dp。
+      //
+      // ⚠️ 末页【跳过底部对齐(撑满)】。原生末页虽 upLinesPosition 撑满后再
+      // height += endPadding(页面逻辑高度可 > visibleHeight), 但 Flutter 渲染是
+      // ClipRect 固定 availableHeight, 撑满后 endPadding 行无处安放会被裁 → 截断。
+      // 末页内容本就少, 不撑满(顶对齐 + 底部留白)视觉效果与原生接近, 且避免溢出。
+      // 仅当末页底部剩余 >= endPadding 时追加留白行。
+      final lastSurplus = availableHeight - usedHeight;
+      if (lastSurplus >= _endPadding) {
+        currentPageLines.add(TextLine(
+          text: '',
+          height: _endPadding,
+          isEndPadding: true,
+        ));
+      }
+      // 注意: 末页不调 _applyBottomJustify, 保持顶对齐。
       pages.add(TextPage(
         lines: currentPageLines,
         pageIndex: pages.length,
