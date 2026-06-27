@@ -14,13 +14,18 @@ class PageEngine {
     final paragraphs = content.split('\n');
     final lines = <TextLine>[];
     var titleAdded = false;
+    // 上一行文字的纯字体度量, 用于段距计算(段距行无文字, 借用邻近文字行 textHeight)。
+    // 对齐原生: 段距 = textHeight * paragraphSpacing / 10。
+    var lastTextHeight = settings.fontSize; // 初始用字号近似(无前文时)
 
     for (var i = 0; i < paragraphs.length; i++) {
       final para = paragraphs[i];
       if (para.trim().isEmpty) {
+        final spacing = lastTextHeight * settings.paragraphSpacing / 10.0;
         lines.add(TextLine(
           text: '',
-          height: settings.paragraphSpacing,
+          height: spacing,
+          textHeight: lastTextHeight,
           isParagraphEnd: true,
         ));
         continue;
@@ -58,6 +63,23 @@ class PageEngine {
         textFullJustify: settings.textFullJustify,
       );
       lines.addAll(textLines);
+      // 更新纯字体度量, 供后续段距行借用
+      if (textLines.isNotEmpty) {
+        lastTextHeight = textLines.last.textHeight;
+      }
+
+      // 段后间距: 对齐原生 TextChapterLayout.kt:1026
+      // `durY += textHeight * paragraphSpacing / 10f`, 在每个正文段落末尾追加。
+      // 标题段有独立的 titleBottomSpacing, 不走这里。
+      if (!isTitle) {
+        final spacing = lastTextHeight * settings.paragraphSpacing / 10.0;
+        lines.add(TextLine(
+          text: '',
+          height: spacing,
+          textHeight: lastTextHeight,
+          isParagraphEnd: true,
+        ));
+      }
 
       // 标题下方间距
       if (isTitle) {
@@ -174,6 +196,7 @@ class PageEngine {
       result.add(TextLine(
         text: lineText,
         height: metric.height,
+        textHeight: metric.height / (style.height ?? 1.0),
         isParagraphEnd: isLastLine,
         isTitle: isTitle,
         columns: columns,
@@ -370,6 +393,7 @@ class PageEngine {
         isTitle: line.isTitle,
         isParagraphEnd: line.isParagraphEnd,
         height: line.height,
+        textHeight: line.textHeight,
         columns: line.columns,
         indentWidth: line.indentWidth,
         indentSize: line.indentSize,

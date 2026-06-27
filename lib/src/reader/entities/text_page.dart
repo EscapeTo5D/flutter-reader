@@ -19,7 +19,13 @@ class TextLine {
   final String text;
   final bool isTitle;
   final bool isParagraphEnd;
-  final double height; // TextPainter 原始行高(含 lineHeight 倍数)
+  final double height; // 渲染行高 = textHeight * lineSpacingExtra(对齐原生 durY 累加)
+
+  /// 纯字体度量(不含行距倍数), 对应原生 ChapterProvider 的
+  /// `textHeight = descent - ascent + leading`。用于段距计算:
+  /// `段距 = textHeight * paragraphSpacing / 10`(对齐原生公式)。
+  /// 由 `metric.height / style.height` 反推(Flutter 把 leading 摊进 height)。
+  final double textHeight;
 
   // --- 字符级排版信息(逐字符 Column) ---
   /// 每个字符的 Column 对象，持有精确的 start/end 像素坐标
@@ -51,6 +57,7 @@ class TextLine {
     this.isTitle = false,
     this.isParagraphEnd = false,
     required this.height,
+    this.textHeight = 0.0,
     this.columns = const [],
     this.indentWidth = 0.0,
     this.indentSize = 0,

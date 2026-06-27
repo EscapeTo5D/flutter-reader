@@ -285,9 +285,9 @@ class PageView extends StatelessWidget {
   }
 
   Widget _buildLine(TextLine line) {
-    // 空段落行: 只显示段间距
+    // 空段落行: 高度即段距(排版引擎已算为 textHeight * paragraphSpacing / 10)
     if (line.isEmptyParagraph) {
-      return SizedBox(height: settings.paragraphSpacing);
+      return SizedBox(height: line.height);
     }
 
     final isTitle = line.isTitle;

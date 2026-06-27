@@ -122,7 +122,12 @@ class ClickRegionConfig {
 class ReadingSettings {
   double fontSize;
   FontWeight fontWeight;
+  /// 行距倍数, 对应原生 ReadBookConfig.lineSpacingExtra/10(默认 config=12 → 1.2)。
+  /// 渲染行高 = 纯字体度量 textHeight × lineHeight。同时作为 TextPainter 的
+  /// style.height 用于换行测量(贴合原生换行点)。
   double lineHeight;
+  /// 段落间距系数, 对应原生 ReadBookConfig.paragraphSpacing(默认 2, 整数)。
+  /// 段距 = textHeight × paragraphSpacing / 10(对齐原生公式, 非固定 px)。
   double paragraphSpacing;
   double letterSpacing;
   Color backgroundColor;
@@ -153,8 +158,8 @@ class ReadingSettings {
   ReadingSettings({
     this.fontSize = 18.0,
     this.fontWeight = FontWeight.normal,
-    this.lineHeight = 1.5,
-    this.paragraphSpacing = 8.0,
+    this.lineHeight = 1.2,
+    this.paragraphSpacing = 2.0,
     this.letterSpacing = 0.0,
     this.backgroundColor = const Color(0xFFF5F5F5),
     this.textColor = const Color(0xFF333333),
