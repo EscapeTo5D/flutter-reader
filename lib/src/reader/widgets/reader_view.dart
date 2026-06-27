@@ -103,25 +103,28 @@ class _ReaderViewState extends State<ReaderView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final settings = widget.controller.settings;
-        final systemPadding = MediaQuery.of(context).padding;
         // 页眉/页脚显隐条件必须与 page_view.build() 完全一致, 否则预算高度
         // (喂给排版引擎的可用高度) 与实际渲染占用会错位, 导致正文与页脚重叠/留白。
         final showHeader =
             settings.hideStatusBar && !settings.headerConfig.hidden;
         final showFooter = !settings.footerConfig.hidden;
-        final topInset = showHeader ? 0.0 : systemPadding.top;
-        final bottomInset =
-            settings.hideNavigationBar ? 0.0 : systemPadding.bottom;
+        // ⚠️ 这里不读 MediaQuery.padding。状态栏/导航栏的显隐(翻菜单时由
+        // _applySystemUI 触发)会改变 MediaQuery.padding, 若这里读了它, padding
+        // 一变 → 本 build 重算 size → updatePageSize → _rePaginate 重新分页整章,
+        // 表现为状态栏切换时 ~1 秒重排延迟。
+        // 状态栏/导航栏的物理避让交给 page_view 内部 SafeArea(只依赖
+        // hideStatusBar/hideNavigationBar 配置, 不随菜单抖动), 本处只算"纯 chrome 高度"。
+        // 对齐原生 legado: vw_status_bar 占位由 hideStatusBar 配置决定, 不随系统栏
+        // 实际显隐变, 内容布局稳定。
         // footer 外层 Padding(top:2 + bottom:4) 来自 page_view._buildFooter
         final footerPadding = showFooter ? 6.0 : 0.0;
-        final nonContentHeight = topInset +
-            bottomInset +
+        final nonContentHeight =
             (showHeader ? settings.padding.headerHeight : 0) +
             (showHeader && settings.showHeaderDivider ? 0.5 : 0) +
             (showFooter && settings.showFooterDivider ? 0.5 : 0) +
             (showFooter ? settings.padding.footerHeight + footerPadding : 0);
         final size = Size(
-          constraints.maxWidth - systemPadding.left - systemPadding.right,
+          constraints.maxWidth,
           (constraints.maxHeight - nonContentHeight)
               .clamp(0.0, constraints.maxHeight),
         );
