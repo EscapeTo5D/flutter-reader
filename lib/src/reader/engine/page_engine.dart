@@ -183,6 +183,18 @@ class PageEngine {
         indentSize = 0;
       }
 
+      // 标题居中: 对齐原生 addCharsToLineNatural 的
+      // startX = (visibleWidth - desiredWidth) / 2。仅 isMiddleTitle 开启时居中
+      // (原生还含 emptyContent/isVolumeTitle/imgStyleSingle, Flutter 暂不建模这些)。
+      // 标题行不缩进、不两端对齐, naturalWidth 即 desiredWidth。
+      final double centerOffset;
+      if (isTitle && isMiddleTitle) {
+        final naturalWidth = charWidths.fold(0.0, (a, b) => a + b);
+        centerOffset = ((maxWidth - naturalWidth) / 2).clamp(0.0, double.infinity);
+      } else {
+        centerOffset = 0.0;
+      }
+
       // 生成 Column 列表(含两端对齐的坐标计算)
       final columns = _buildColumns(
         lineText: lineText,
@@ -191,6 +203,7 @@ class PageEngine {
         indentWidth: indentWidth,
         maxWidth: maxWidth,
         shouldJustify: shouldJustify,
+        startOffset: centerOffset,
       );
 
       result.add(TextLine(
@@ -221,6 +234,7 @@ class PageEngine {
     required double indentWidth,
     required double maxWidth,
     required bool shouldJustify,
+    double startOffset = 0.0,
   }) {
     final columns = <TextColumn>[];
     if (lineText.isEmpty) return columns;
@@ -248,7 +262,9 @@ class PageEngine {
     }
 
     // 遍历字符，计算每个 Column 的 start/end 坐标
-    double x = 0.0;
+    // 居中标题(startOffset>0): 对齐原生 addCharsToLineNatural
+    // startX = (visibleWidth - desiredWidth) / 2, 整行右移 startOffset。
+    double x = startOffset;
     for (var i = 0; i < lineText.length; i++) {
       final charStart = x;
       final charWidth = charWidths[i];
