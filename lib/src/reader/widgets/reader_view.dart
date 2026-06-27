@@ -106,17 +106,22 @@ class _ReaderViewState extends State<ReaderView> {
         final showHeader =
             settings.hideStatusBar && !settings.headerConfig.hidden;
         final showFooter = !settings.footerConfig.hidden;
-        // ⚠️ 这里不读 MediaQuery.padding。状态栏/导航栏的显隐(翻菜单时由
-        // _applySystemUI 触发)会改变 MediaQuery.padding, 若这里读了它, padding
-        // 一变 → 本 build 重算 size → updatePageSize → _rePaginate 重新分页整章,
-        // 表现为状态栏切换时 ~1 秒重排延迟。
-        // 状态栏/导航栏的物理避让交给 page_view 内部 SafeArea(只依赖
-        // hideStatusBar/hideNavigationBar 配置, 不随菜单抖动), 本处只算"纯 chrome 高度"。
-        // 对齐原生 legado: vw_status_bar 占位由 hideStatusBar 配置决定, 不随系统栏
-        // 实际显隐变, 内容布局稳定。
+        // ⚠️ 这里用 viewPadding(物理固定值, 不随系统栏显隐变化), 不能用 padding
+        // (padding 会随翻菜单时 _applySystemUI 显隐系统栏而变 → 重排延迟, 见 9565e06)。
+        // viewPadding 始终报告状态栏/导航栏的物理高度。
+        //
+        // ⚠️ 必须把系统栏高度计入 nonContentHeight! page_view 内部 SafeArea
+        // (top: !hideStatusBar, bottom: !hideNavigationBar) 会从内容区扣除系统栏高度,
+        // 若排版引擎不扣同样的高度, 引擎会多排一行, 末行溢出被 ClipRect 裁 → 露头。
+        // (这是 9565e06 删 systemPadding 引入的回归, 原生 legado 用独立占位 View
+        // vw_status_bar 处理, 高度由 hideStatusBar 决定。)
+        final viewPadding = MediaQuery.of(context).viewPadding;
+        final statusBarH = showHeader ? 0.0 : viewPadding.top;
+        final navBarH = settings.hideNavigationBar ? 0.0 : viewPadding.bottom;
         // footer 外层 Padding(top:2 + bottom:4) 来自 page_view._buildFooter
         final footerPadding = showFooter ? 6.0 : 0.0;
-        final nonContentHeight =
+        final nonContentHeight = statusBarH +
+            navBarH +
             (showHeader ? settings.padding.headerHeight : 0) +
             (showHeader && settings.showHeaderDivider ? 0.5 : 0) +
             (showFooter && settings.showFooterDivider ? 0.5 : 0) +
