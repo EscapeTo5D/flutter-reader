@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/controller/reading_controller.dart';
+import '../../core/models/reading_settings.dart';
 import 'chapter_list_page.dart';
 import 'legado_icons.dart';
 
@@ -288,6 +289,7 @@ class _StyleDialogState extends State<_StyleDialog> {
   late Color textColor;
   late String? bgImage;
   bool _clearBgImage = false;
+  late PageAnimMode pageAnimMode;
 
   static const _stylePresets = [
     _StylePreset('微信读书', Color(0xFFC0EDC6), Color(0xFF0B0B0B),
@@ -312,6 +314,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     bgColor = s.backgroundColor;
     textColor = s.textColor;
     bgImage = s.backgroundImage;
+    pageAnimMode = s.pageAnimMode;
   }
 
   void _apply() {
@@ -327,6 +330,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         textColor: textColor,
         backgroundImage: bgImage,
         clearBackgroundImage: _clearBgImage,
+        pageAnimMode: pageAnimMode,
       ),
     );
   }
@@ -344,6 +348,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         children: [
           _buildDragHandle(),
           _buildTopButtons(),
+          _buildPageAnimSelector(),
           _buildSeekBars(),
           _buildDivider(),
           _buildStyleSection(),
@@ -387,6 +392,53 @@ class _StyleDialogState extends State<_StyleDialog> {
           Expanded(child: _buildTextButton('内边距', () {})),
           const SizedBox(width: 6),
           Expanded(child: _buildTextButton('信息', () => _showTipConfig())),
+        ],
+      ),
+    );
+  }
+
+  /// 翻页动画模式选择(对齐原生 legado menu_page_anim → showPageAnimConfig)。
+  ///
+  /// 5 段对应 PageAnimMode, 全部可选并存入配置。运行时仅 slide 生效,
+  /// 其余模式动画尚未实现, 下方小字标注避免误导用户。
+  Widget _buildPageAnimSelector() {
+    const labels = ['覆盖', '滑动', '仿真', '滚动', '无'];
+    const modes = [
+      PageAnimMode.cover,
+      PageAnimMode.slide,
+      PageAnimMode.simulation,
+      PageAnimMode.scroll,
+      PageAnimMode.none,
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('翻页动画', style: TextStyle(fontSize: 14, color: Colors.black54)),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<PageAnimMode>(
+              segments: List.generate(5, (i) =>
+                ButtonSegment(value: modes[i], label: Text(labels[i])),
+              ),
+              selected: {pageAnimMode},
+              onSelectionChanged: (set) {
+                setState(() => pageAnimMode = set.first);
+                _apply();
+              },
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            '覆盖/仿真/滚动/无动画开发中，当前仅滑动可用',
+            style: TextStyle(fontSize: 11, color: Colors.black54),
+          ),
         ],
       ),
     );
