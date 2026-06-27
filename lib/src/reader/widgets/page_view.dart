@@ -47,30 +47,35 @@ class PageView extends StatelessWidget {
     // 对齐原生 legado: 翻页模式只改变翻页方式, 不影响 chrome 是否显示。
     final showHeader = settings.hideStatusBar && !settings.headerConfig.hidden;
     final showFooter = !settings.footerConfig.hidden;
-    final content = Container(
-      decoration: _buildBackground(),
-      clipBehavior: Clip.hardEdge,
-      child: Column(
-        children: [
-          if (showHeader) _buildHeader(context),
-          if (showHeader && settings.showHeaderDivider)
-            Container(height: 0.5, color: Colors.grey.shade300),
-          Expanded(child: ClipRect(child: _buildContent())),
-          if (showFooter && settings.showFooterDivider)
-            Container(height: 0.5, color: Colors.grey.shade300),
-          if (showFooter)
-            Padding(
-              padding: const EdgeInsets.only(top: 2, bottom: 4),
-              child: _buildFooter(context),
-            ),
-        ],
-      ),
+    // 背景(底色/背景图)提到 SafeArea 外层, 覆盖整页(含状态栏/导航栏区域),
+    // 对齐原生 legado: 根 ConstraintLayout 带 android:background, 整页统一背景色,
+    // 避免状态栏区域出现 Scaffold 主题色与页眉背景色不一致的色差。
+    final body = Column(
+      children: [
+        if (showHeader) _buildHeader(context),
+        if (showHeader && settings.showHeaderDivider)
+          Container(height: 0.5, color: Colors.grey.shade300),
+        Expanded(child: ClipRect(child: _buildContent())),
+        if (showFooter && settings.showFooterDivider)
+          Container(height: 0.5, color: Colors.grey.shade300),
+        if (showFooter)
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 4),
+            child: _buildFooter(context),
+          ),
+      ],
     );
 
-    if (!useSafeArea) return content;
-    return SafeArea(
-      top: !settings.hideStatusBar,
-      bottom: !settings.hideNavigationBar,
+    final content = useSafeArea
+        ? SafeArea(
+            top: !settings.hideStatusBar,
+            bottom: !settings.hideNavigationBar,
+            child: body,
+          )
+        : body;
+
+    return DecoratedBox(
+      decoration: _buildBackground(),
       child: content,
     );
   }
