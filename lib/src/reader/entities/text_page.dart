@@ -19,6 +19,7 @@ class TextLine {
   final String text;
   final bool isTitle;
   final bool isParagraphEnd;
+  final bool isEndPadding; // 末页尾部留白行(对齐原生 endPadding=20dp), 不含文字
   final double height; // 渲染行高 = textHeight * lineSpacingExtra(对齐原生 durY 累加)
 
   /// 纯字体度量(不含行距倍数), 对应原生 ChapterProvider 的
@@ -56,6 +57,7 @@ class TextLine {
     required this.text,
     this.isTitle = false,
     this.isParagraphEnd = false,
+    this.isEndPadding = false,
     required this.height,
     this.textHeight = 0.0,
     this.columns = const [],
@@ -68,8 +70,8 @@ class TextLine {
     this.chapterPosition = 0,
   });
 
-  /// 是否为空段落行(用于渲染段间距)
-  bool get isEmptyParagraph => text.isEmpty && isParagraphEnd;
+  /// 是否为空段落行(段间距/末页留白, 渲染时不绘制文字、底部对齐时跳过)
+  bool get isEmptyParagraph => (text.isEmpty && isParagraphEnd) || isEndPadding;
 
   /// 是否包含字符级排版数据(Column 列表)
   bool get hasCharData => columns.isNotEmpty;

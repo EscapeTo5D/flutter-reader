@@ -63,6 +63,8 @@ void main() {
     double? paraSpacingH;
     for (final page in pages) {
       for (final line in page.lines) {
+        // 跳过末页留白行(isEndPadding), 它不是段距
+        if (line.isEndPadding) continue;
         if (line.isEmptyParagraph) {
           paraSpacingH = line.height;
         } else if (line.hasCharData && textHeight == null) {
@@ -89,6 +91,7 @@ void main() {
           content: content, pageSize: pageSize, settings: settings);
       for (final page in pages) {
         for (final line in page.lines) {
+          if (line.isEndPadding) continue; // 跳过末页留白
           if (line.isEmptyParagraph) return line.height;
         }
       }

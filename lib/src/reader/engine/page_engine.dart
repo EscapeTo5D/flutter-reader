@@ -4,6 +4,9 @@ import '../entities/column.dart';
 import '../../core/models/reading_settings.dart';
 
 class PageEngine {
+  /// 末页尾部留白, 对齐原生 legado 的 `endPadding = 20.dp`(20 逻辑像素)。
+  static const double _endPadding = 20.0;
+
   List<TextPage> paginate({
     required String content,
     required Size pageSize,
@@ -360,6 +363,14 @@ class PageEngine {
     }
 
     if (currentPageLines.isNotEmpty) {
+      // 末页追加 endPadding 留白行, 对齐原生 ChapterProvider 末尾
+      // (TextChapterLayout.kt:499-505): 末页内容顶部对齐、底部加 20dp,
+      // 不强制撑满 visibleHeight。末页本就留白, 追加不触发分页溢出。
+      currentPageLines.add(TextLine(
+        text: '',
+        height: _endPadding,
+        isEndPadding: true,
+      ));
       _applyBottomJustify(
         currentPageLines,
         availableHeight,
