@@ -6,22 +6,62 @@ import 'legado_icons.dart';
 class ReadMenu extends StatefulWidget {
   final ReadingController controller;
 
-  const ReadMenu({super.key, required this.controller});
+  /// 菜单是否可见(驱动顶栏/底栏/浮动按钮的滑入滑出动画)。
+  ///
+  /// 由 reader_view 的 _menuMounted 保证挂载, 本字段控制显隐方向:
+  /// true → 滑入(Offset.zero + 不透明), false → 滑出(顶栏向上/底栏向下 + 透明)。
+  /// 默认 true 保持向后兼容。
+  final bool visible;
+
+  const ReadMenu({
+    super.key,
+    required this.controller,
+    this.visible = true,
+  });
 
   @override
   State<ReadMenu> createState() => _ReadMenuState();
 }
 
 class _ReadMenuState extends State<ReadMenu> {
+  // 对齐 reader_view._menuAnimDuration, 两处必须一致。
+  static const Duration _animDuration = Duration(milliseconds: 220);
+
   @override
   Widget build(BuildContext context) {
+    final visible = widget.visible;
     return Column(
       mainAxisSize: MainAxisSize.max,
       children: [
-        _buildTopBar(context),
+        // 顶栏: 从顶部滑入/向上滑出。
+        AnimatedSlide(
+          offset: visible ? Offset.zero : const Offset(0, -1),
+          duration: _animDuration,
+          curve: Curves.easeOut,
+          child: AnimatedOpacity(
+            opacity: visible ? 1.0 : 0.0,
+            duration: _animDuration,
+            child: _buildTopBar(context),
+          ),
+        ),
         const Spacer(),
-        _buildFloatingButtons(context),
-        _buildBottomBar(context),
+        // 浮动按钮: 仅淡入淡出。
+        AnimatedOpacity(
+          opacity: visible ? 1.0 : 0.0,
+          duration: _animDuration,
+          child: _buildFloatingButtons(context),
+        ),
+        // 底栏: 从底部滑入/向下滑出。
+        AnimatedSlide(
+          offset: visible ? Offset.zero : const Offset(0, 1),
+          duration: _animDuration,
+          curve: Curves.easeOut,
+          child: AnimatedOpacity(
+            opacity: visible ? 1.0 : 0.0,
+            duration: _animDuration,
+            child: _buildBottomBar(context),
+          ),
+        ),
       ],
     );
   }
