@@ -105,11 +105,31 @@ batteryPercentage=10 totalProgress1=11
 
 ## Flutter 端对应实现
 
-- 配置模型: `lib/src/models/reading_settings.dart`
+- 配置模型: `lib/src/core/models/reading_settings.dart`
   - `HeaderFooterConfig { left, center, right, hidden }`（比原生多中槽，是兼容超集；`hidden` 对应原生 headerMode/footerMode 整体显隐）
   - `TipPosition` 枚举
-- 渲染: `lib/src/widgets/page_view.dart` 的 `_buildFooter()` / `_buildTip()`
+- 渲染: `lib/src/reader/widgets/page_view.dart` 的 `_buildFooter()` / `_buildTip()`
 - 默认 footer: 左=bookName, 中=none, 右=pageAndTotal
+
+## 行距/段距模型对齐（2026-06-26，commit 9cee39c）
+
+原生 legado 用「纯字体度量 `textHeight` × 系数」模型（`ChapterProvider`/`TextChapterLayout`）：
+```
+textHeight        = descent - ascent + leading   // 纯字体度量(≈fontSize)
+lineSpacingExtra  = ReadBookConfig.lineSpacingExtra / 10   // 默认 config=12 → 1.2
+paragraphSpacing  = ReadBookConfig.paragraphSpacing         // 默认 config=2(整数)
+行距 durY += textHeight * lineSpacingExtra            // 每行后
+段距 durY += textHeight * paragraphSpacing / 10f      // 每段末尾追加(TextChapterLayout.kt:1026)
+```
+
+Flutter 端（`page_engine.dart` + `reading_settings.dart`）已对齐：
+- `lineHeight`(默认 **1.2**)：行距倍数 = 原生 lineSpacingExtra。同时作为 TextPainter 的 `style.height` 用于换行测量。
+- `paragraphSpacing`(默认 **2.0**)：段距系数，公式 `段距 = textHeight * paragraphSpacing / 10`，**非固定 px**。
+- `TextLine.textHeight`（纯字体度量）：由 `metric.height / style.height` 反推（Flutter 把 leading 摊进 height，故除回去）。
+- 渲染行高 `line.height = textHeight * lineHeight = metric.height`（与 paint 时 style.height 一致）。
+- **段距注入**：`paginate` 在每个正文段落末尾插入一个 `isEmptyParagraph` 行（height=段距），对齐原生 `setTypeText` 段末 `durY` 累加。标题段用独立的 `titleBottomSpacing`，不走这里。
+- UI 滑块（`read_menu.dart`）：行距/段距滑块已是倍数/系数语义，无需改。
+- ⚠️ `ContentProcessor` 跳过源文本空行（`if (paragraph.isEmpty) continue`），故实际管线里段距只来自引擎注入，不会双重；直接调 `paginate` 带 `\n\n` 的 caller 会对每个空行也加段距行（对齐原生同样跳过空行）。
 
 ## 页脚尺寸计算（已修复 2026-06-26）
 
