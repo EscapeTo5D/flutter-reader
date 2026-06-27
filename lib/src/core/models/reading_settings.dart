@@ -166,13 +166,15 @@ class ReadingSettings {
     this.tipColor = const Color(0xFF999999),
     this.fontFamily,
     this.backgroundImage,
+    // 对齐原生 legado ReadBookConfig.kt:585-590 默认值:
+    // 页眉 左=time 中=none 右=battery; 页脚 左=chapterTitle 中=none 右=pageAndTotal。
     this.headerConfig = const HeaderFooterConfig(
-      left: TipPosition.chapterTitle,
+      left: TipPosition.time,
       center: TipPosition.none,
-      right: TipPosition.time,
+      right: TipPosition.battery,
     ),
     this.footerConfig = const HeaderFooterConfig(
-      left: TipPosition.bookName,
+      left: TipPosition.chapterTitle,
       center: TipPosition.none,
       right: TipPosition.pageAndTotal,
     ),
