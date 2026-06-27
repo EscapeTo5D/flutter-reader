@@ -21,8 +21,7 @@ class MainActivity : FlutterActivity() {
                     "setSystemBars" -> {
                         val showStatus = call.argument<Boolean>("showStatusBar") ?: true
                         val showNav = call.argument<Boolean>("showNavBar") ?: true
-                        setSystemBars(showStatus, showNav)
-                        result.success(null)
+                        result.success(setSystemBars(showStatus, showNav))
                     }
                     else -> result.notImplemented()
                 }
@@ -38,11 +37,13 @@ class MainActivity : FlutterActivity() {
      *
      * BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE: 从边缘滑动临时唤出后自动收回,
      * 对齐原生 IMMERSIVE_STICKY 语义。
+     *
+     * @return true=已由原生处理(API 30+); false=不支持(API < 30), Dart 端应回退 SystemChrome。
      */
-    private fun setSystemBars(showStatusBar: Boolean, showNavBar: Boolean) {
+    private fun setSystemBars(showStatusBar: Boolean, showNavBar: Boolean): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            // API < 30 不处理, 让 Dart 端回退 SystemChrome。
-            return
+            // API < 30 没有 WindowInsetsController, 返回 false 让 Dart 端回退 SystemChrome。
+            return false
         }
         window.decorView.windowInsetsController?.let { controller ->
             controller.systemBarsBehavior =
@@ -55,6 +56,8 @@ class MainActivity : FlutterActivity() {
             } else {
                 controller.show(WindowInsets.Type.systemBars())
             }
+            return true
         }
+        return false
     }
 }

@@ -23,24 +23,30 @@ class SystemUiController {
   /// 设置系统栏显隐。
   ///
   /// [showStatusBar]/[showNavBar] 为 true 表示显示对应系统栏, false 表示隐藏。
-  /// 优先原生 channel(即时), 不可用回退 SystemChrome(有系统延迟)。
+  /// 优先原生 channel(即时), 不可用或原生返回未处理(API<30)时回退 SystemChrome。
   static Future<void> setSystemBars({
     required bool showStatusBar,
     required bool showNavBar,
   }) async {
     if (_nativeAvailable ?? true) {
       try {
-        await _channel.invokeMethod('setSystemBars', {
+        // 原生返回 true=已处理(API 30+, 即时); false=不支持(API<30), 需回退。
+        final handled =
+            await _channel.invokeMethod<bool>('setSystemBars', {
           'showStatusBar': showStatusBar,
           'showNavBar': showNavBar,
         });
-        _nativeAvailable = true;
-        return;
+        if (handled == true) {
+          _nativeAvailable = true;
+          return;
+        }
+        // 原生注册了 channel 但 API<30 不支持 WindowInsetsController。
+        // 此时不应缓存 _nativeAvailable=false(仍想保留 channel 诊断能力),
+        // 直接回退 SystemChrome 让本次生效。
       } on MissingPluginException {
         // 宿主未注册 channel, 纯 Dart 包场景。后续直接走 SystemChrome。
         _nativeAvailable = false;
       } on PlatformException {
-        // 其它平台异常也回退。
         _nativeAvailable = false;
       }
     }
