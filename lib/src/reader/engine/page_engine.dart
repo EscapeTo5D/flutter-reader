@@ -23,6 +23,21 @@ class PageEngine {
 
     for (var i = 0; i < paragraphs.length; i++) {
       final para = paragraphs[i];
+
+      // 强制分页标记: 对齐原生 TextChapterLayout.kt:333
+      // `if (text == "[newpage]") { prepareNextPageIfNeed(); return@forEach }`
+      // 书源用 [newpage] 做卷封/场景切换的分隔, 原样显示会是脏字符。
+      // 这里插入一个零高度的 isPageBreak 行, _splitIntoPages 遇到即强制结束当前页,
+      // 该行自身不显示。
+      if (para.trim() == '[newpage]') {
+        lines.add(const TextLine(
+          text: '',
+          height: 0.0,
+          isPageBreak: true,
+        ));
+        continue;
+      }
+
       if (para.trim().isEmpty) {
         final spacing = lastTextHeight * settings.paragraphSpacing / 10.0;
         lines.add(TextLine(
@@ -340,6 +355,28 @@ class PageEngine {
 
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
+
+      // 强制分页标记(对齐原生 [newpage]): 立即结束当前页, 该行不显示不占高度。
+      // 即使当前页是空的也结束(对齐原生 prepareNextPageIfNeed 语义),
+      // 形成一张"空白页"——常见于书源卷封/留白。
+      if (line.isPageBreak) {
+        if (currentPageLines.isNotEmpty) {
+          _applyBottomJustify(
+            currentPageLines,
+            availableHeight,
+            usedHeight,
+            settings,
+          );
+        }
+        pages.add(TextPage(
+          lines: List.from(currentPageLines),
+          pageIndex: pages.length,
+        ));
+        currentPageLines = [];
+        usedHeight = 0;
+        continue; // 跳过该行, 不加入任何页
+      }
+
       final totalLineHeight = line.height;
 
       if (usedHeight + totalLineHeight > availableHeight &&
