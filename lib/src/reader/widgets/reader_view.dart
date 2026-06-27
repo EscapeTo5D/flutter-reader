@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../core/controller/reading_controller.dart';
+import '../../core/system_ui_controller.dart';
 import '../entities/text_page.dart';
 import 'page_view.dart' as pv;
 import 'read_menu.dart';
@@ -55,7 +55,11 @@ class _ReaderViewState extends State<ReaderView> {
     _menuHideTimer?.cancel();
     _selectionOverlay?.remove();
     widget.controller.removeListener(_onControllerUpdate);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // 恢复显示系统栏(离开阅读页)。
+    SystemUiController.setSystemBars(
+      showStatusBar: true,
+      showNavBar: true,
+    );
     super.dispose();
   }
 
@@ -81,21 +85,15 @@ class _ReaderViewState extends State<ReaderView> {
   void _applySystemUI() {
     final settings = widget.controller.settings;
     final menuVisible = widget.controller.menuVisible;
-
-    if (menuVisible) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
-    } else if (settings.hideStatusBar && settings.hideNavigationBar) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    } else if (settings.hideStatusBar) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.bottom]);
-    } else if (settings.hideNavigationBar) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.top]);
-    } else {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    }
+    // 菜单可见时显示系统栏(方便操作); 菜单隐藏时按配置决定。
+    // 收敛为两个布尔值交由 SystemUiController 处理(优先原生 channel 即时隐藏,
+    // 绕过 Android 15 下 SystemChrome.manual 的系统渐隐延迟)。
+    final showStatusBar = menuVisible || !settings.hideStatusBar;
+    final showNavBar = menuVisible || !settings.hideNavigationBar;
+    SystemUiController.setSystemBars(
+      showStatusBar: showStatusBar,
+      showNavBar: showNavBar,
+    );
   }
 
   @override
