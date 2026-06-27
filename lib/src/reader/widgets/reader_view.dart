@@ -50,19 +50,33 @@ class _ReaderViewState extends State<ReaderView> {
     final settings = widget.controller.settings;
     final menuVisible = widget.controller.menuVisible;
 
-    if (menuVisible) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
-    } else if (settings.hideStatusBar && settings.hideNavigationBar) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    } else if (settings.hideStatusBar) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.bottom]);
-    } else if (settings.hideNavigationBar) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
-          overlays: [SystemUiOverlay.top]);
+    void apply() {
+      if (menuVisible) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+            overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
+      } else if (settings.hideStatusBar && settings.hideNavigationBar) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else if (settings.hideStatusBar) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+            overlays: [SystemUiOverlay.bottom]);
+      } else if (settings.hideNavigationBar) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+            overlays: [SystemUiOverlay.top]);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    }
+
+    // 菜单隐藏(hideMenu)时, 状态栏/导航栏从「显示」切回「隐藏」。
+    // Flutter 通过 platform channel 异步设置, 若与菜单移除的布局变更同帧执行,
+    // Android 会因布局抖动延迟处理, 表现为状态栏几百毫秒后才消失。
+    // 延后到下一帧让菜单移除布局先稳定, 再切 SystemUI, 可显著减少该延迟。
+    // 对齐原生 legado: ReadMenu 隐藏时立即 upSystemUiVisibility(toolBarHide=true)
+    // 同步操作 decorView flag 无延迟; Flutter 受 channel 调度限制需此补偿。
+    if (!menuVisible && (settings.hideStatusBar || settings.hideNavigationBar)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => apply());
     } else {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      apply();
     }
   }
 
