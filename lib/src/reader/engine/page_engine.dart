@@ -437,7 +437,19 @@ class PageEngine {
     if (textLineCount <= 1) return;
 
     final surplus = availableHeight - usedHeight;
-    if (surplus <= 0 || surplus >= lines.first.height) return;
+    // 对齐原生 TextPage.kt:108-109 upLinesPosition 守卫:
+    //   pageHeight = lastLine.lineBottom + contentPaintTextHeight * lineSpacingExtra
+    //   if (visibleHeight - pageHeight >= lastLineHeight) return  // 不撑
+    // 守卫阈值 = 一行渲染高度 + 一行行距增量。原生分页保证剩余 < 一行高度,
+    // 故此守卫几乎总为 false → 几乎每页撑满, 末行贴底, 到页脚分割线距离恒定。
+    // 旧实现阈值仅一行高度(lines.first.height), 段距行排列使 surplus 偶尔 >= 一行
+    // → 不撑 → 各页底部留白高度不一致(肉眼可见"末行到分割线距离不固定")。
+    final firstTextLine = lines.firstWhere((l) => !l.isEmptyParagraph);
+    final lineH = firstTextLine.height; // metric.height, 含行距
+    // 行距增量 = metric.height - textHeight, 而 textHeight = metric.height / lineHeight,
+    // 故行距增量 = lineH * (1 - 1/lineHeight)。
+    final lineSpacingGap = lineH * (1.0 - 1.0 / settings.lineHeight);
+    if (surplus <= 0 || surplus >= lineH + lineSpacingGap) return;
 
     final tj = surplus / (textLineCount - 1);
     var yOffset = 0.0;
