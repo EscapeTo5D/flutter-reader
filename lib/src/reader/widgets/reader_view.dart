@@ -73,10 +73,23 @@ class _ReaderViewState extends State<ReaderView>
   /// NEXT 时右移(偏移变正)即为 cancel; PREV 时左移(偏移变负)即为 cancel。
   bool _isCancel = false;
 
-  /// 拖拽/动画期间的目标页缓存。仅在 _animDir != none 时有意义。
-  /// PREV 方向用 _prevCache; NEXT 方向用 _nextCache。
+  /// 邻接页缓存(常驻预热)。渲染层用统一 Stack[cur,prev,next] 让 peek 页
+  /// 在静止态就常驻屏外完成首次排版+绘制, 拖拽/动画时 element 复用 → 零首帧 hitch。
+  /// 对齐原生 legado HorizontalPageDelegate.setBitmap 提前把 prev/next 录成位图。
   PeekInfo? _prevCache;
   PeekInfo? _nextCache;
+
+  /// 翻页动画代际号(每次 _resetAnimState 自增)。
+  ///
+  /// 守护「推迟提交」机制: 动画完成(completion)时不立即切换状态, 而是让 progress=1.0
+  /// (目标页完全到位)那一帧先渲染一次, 下一帧再 commit。期间若用户又触发了新的翻页/
+  /// 拖拽(从而调 _resetAnimState), 代际号变化会让挂起的 _deferredCommit 自动失效,
+  /// 不会用旧状态误覆盖新动画。对齐原生 abortAnim「打断即接管」语义。
+  int _animGen = 0;
+
+  /// 预热去重标记: 仅当章/页变化才刷新 peek, 避免无谓 setState 抖动。
+  int? _peekedChapter;
+  int? _peekedPage;
 
   @override
   void initState() {
@@ -92,6 +105,9 @@ class _ReaderViewState extends State<ReaderView>
     BatteryProvider.instance.start();
     BatteryProvider.instance.addListener(_onBatteryUpdate);
     _applySystemUI();
+    // 初始预热邻接页。这里可能章节数据还没异步加载完(pages 为空)→ peek 返回 null,
+    // 后续 _onControllerUpdate(章/页变化)会重新调 _refreshPeekCaches 补上。
+    _refreshPeekCaches();
   }
 
   @override
@@ -132,7 +148,41 @@ class _ReaderViewState extends State<ReaderView>
       });
     }
     setState(() {});
+    // 章/页可能因翻页提交而变化 → 刷新预热缓存。
+    _refreshPeekCaches();
     _applySystemUI();
+    // 后台预计算相邻章分页: 用户在章内逐页阅读时, 下一/上一章已算好入缓存,
+    // 翻到末页时 peekNext 命中缓存(O(1))。放到 PostFrame 避免阻塞当前提交帧。
+    // 重排开销(~100ms)摊到「进入新章后静止阅读」时刻, 用户无感; 快速连点跨章
+    // 时 peek 直接命中缓存, 不再卡顿。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.controller.prefetchAdjacentChapters();
+    });
+  }
+
+  /// 刷新邻接页缓存(预热)。仅在章/页变化时真正调 peekNext/peekPrev,
+  /// 否则用缓存标记去重, 避免每次 setState 都重排(章内 peek 是 O(1), 但跨章
+  /// peek 会触发目标章分页, 重复调用浪费)。
+  ///
+  /// ⚠️ 若 peek 返回 null(数据未就绪, 如章未加载/末尾), **不更新**去重标记,
+  /// 这样后续章/页就绪后还能重试; 否则 initState 里 pages 为空时会把标记锁死在 0/0,
+  /// 之后真正的章/页就绪也被去重跳过 → peek 永远 null → 翻不了页。
+  void _refreshPeekCaches() {
+    final c = widget.controller;
+    if (c.currentChapterIndex == _peekedChapter &&
+        c.currentPageIndex == _peekedPage) {
+      return;
+    }
+    final next = c.peekNext();
+    final prev = c.peekPrev();
+    _nextCache = next;
+    _prevCache = prev;
+    // 仅当至少一个方向成功取到页时才更新标记; 两边都 null 说明数据未就绪,
+    // 下次再重试。
+    if (next != null || prev != null) {
+      _peekedChapter = c.currentChapterIndex;
+      _peekedPage = c.currentPageIndex;
+    }
   }
 
   void _applySystemUI() {
@@ -250,90 +300,77 @@ class _ReaderViewState extends State<ReaderView>
       );
     }
 
-    // 静止状态: 只渲染当前页。拖拽/动画期间(_animDir != none)渲染三页叠加,
-    // 用 Transform.translate 按 SlidePageDelegate.onDraw 公式偏移定位。
-    if (_animDir == _PageDirection.none) {
-      return RepaintBoundary(child: _buildPage(pages[currentIndex], currentIndex));
-    }
-    return _buildPageStack();
-  }
-
-  /// 拖拽/动画期间的三页叠加视图(对齐原生 SlidePageDelegate.onDraw)。
-  ///
-  /// Slide 偏移公式(对齐 SlidePageDelegate.kt:34-56):
-  /// - NEXT(向左翻): next 页从屏右滑入, cur 页向左滑出。
-  ///   next.translateX = progress * width; cur.translateX = progress * width - width
-  /// - PREV(向右翻): prev 页从屏左滑入, cur 页向右滑出。
-  ///   prev.translateX = progress * width - width; cur.translateX = progress * width
-  /// 其中 progress ∈ [0,1] = 当前翻页完成度(0=未动, 1=翻完)。
-  Widget _buildPageStack() {
+    // 统一三页 Stack[cur, prev, next]: widget 树结构在静止/拖拽/动画三态下完全相同,
+    // 仅 Transform offset 变化 → peek 页在静止态的空闲帧就完成首次排版+绘制(屏外),
+    // 拖拽/动画时 element 复用、layer 缓存命中 → 零首帧 hitch。
+    // 对齐原生 legado HorizontalPageDelegate.setBitmap 提前录好 prev/next 位图。
+    //
+    // 偏移矩阵(progress = 翻页完成度, none 态视为 0):
+    // | 状态      | cur.x        | next.x           | prev.x           |
+    // |----------|--------------|------------------|------------------|
+    // | none     | 0            | +width (屏外)    | -width (屏外)    |
+    // | NEXT(p)  | -p·w         | (1-p)·w          | -width (屏外)    |
+    // | PREV(p)  | +p·w         | +width (屏外)    | (p-1)·w          |
+    // none→NEXT 在 p=0 时各 offset 都等于静止态值, 过渡完全连续。
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        // progress: 拖拽时由 _dragOffset 推导, 动画时由 _pageAnim value 推导。
         final progress = _currentProgress(width);
+        final isNext = _animDir == _PageDirection.next;
+        final isPrev = _animDir == _PageDirection.prev;
 
         final curWidget = RepaintBoundary(
-          child: _buildPage(
-            widget.controller.pages[widget.controller.currentPageIndex],
-            widget.controller.currentPageIndex,
-          ),
+          child: _buildPage(pages[currentIndex], currentIndex),
         );
+        // 屏外页用 IgnorePointer 避免接收不到手势(都在屏外, 本就不会被点, 但保险)。
+        final nextWidget = _nextCache == null
+            ? const SizedBox.shrink()
+            : IgnorePointer(
+                child: RepaintBoundary(child: _buildPeekPage(_nextCache!)));
+        final prevWidget = _prevCache == null
+            ? const SizedBox.shrink()
+            : IgnorePointer(
+                child: RepaintBoundary(child: _buildPeekPage(_prevCache!)));
 
-        if (_animDir == _PageDirection.next && _nextCache != null) {
-          final nextWidget = RepaintBoundary(
-            child: _buildPeekPage(_nextCache!),
-          );
-          return Stack(children: [
-            // cur 向左滑出: 0 → -width
-            Transform.translate(
-              offset: Offset(-progress * width, 0),
-              child: curWidget,
-            ),
-            // next 从屏右滑入: width → 0
-            Transform.translate(
-              offset: Offset(width - progress * width, 0),
-              child: nextWidget,
-            ),
-          ]);
-        }
+        // cur 偏移: NEXT 向左(-p·w), PREV 向右(+p·w), none 留在原位。
+        final curOffsetX = isNext ? -progress * width
+            : isPrev ? progress * width
+            : 0.0;
+        // next 偏移: NEXT 从屏右滑入((1-p)·w → 0); 否则屏外(+width)。
+        final nextOffsetX = isNext ? width - progress * width : width;
+        // prev 偏移: PREV 从屏左滑入((p-1)·w → 0); 否则屏外(-width)。
+        final prevOffsetX = isPrev ? progress * width - width : -width;
 
-        if (_animDir == _PageDirection.prev && _prevCache != null) {
-          final prevWidget = RepaintBoundary(
-            child: _buildPeekPage(_prevCache!),
-          );
-          return Stack(children: [
-            // prev 从屏左滑入
-            Transform.translate(
-              offset: Offset(progress * width - width, 0),
-              child: prevWidget,
-            ),
-            // cur 向右滑出
-            Transform.translate(
-              offset: Offset(progress * width, 0),
-              child: curWidget,
-            ),
-          ]);
-        }
-
-        // 缓存缺失(边界): 退化为只显示当前页。
-        return curWidget;
+        // 层级 [prev, cur, next]: NEXT 时 next 在最上层覆盖 cur; PREV 时 prev 在 cur 下,
+        // 但 PREV 过程中 cur 右移露出 prev, prev 不被覆盖, 视觉正确。
+        return Stack(children: [
+          Transform.translate(offset: Offset(prevOffsetX, 0), child: prevWidget),
+          Transform.translate(offset: Offset(curOffsetX, 0), child: curWidget),
+          Transform.translate(offset: Offset(nextOffsetX, 0), child: nextWidget),
+        ]);
       },
     );
   }
 
   /// 当前翻页完成度 progress ∈ [0,1]。
-  /// 拖拽阶段 = |offset| / width; 动画阶段 = _pageAnim.value。
+  /// 拖拽阶段 = |offset| / width; 动画阶段 = _pageAnimCurved.value。
   double _currentProgress(double width) {
     if (width <= 0) return 0;
     if (_isDragging) {
       return (_dragOffset.abs() / width).clamp(0.0, 1.0);
     }
-    return _pageAnim.value.clamp(0.0, 1.0);
+    // ⚠️ 必须读 _pageAnimCurved(由 Tween(from,to) 映射的真实进度),
+    // 而非 _pageAnim.value(永远是 0→1 的原始时钟)。
+    // 拖拽补完路径 from≠0(如 from=0.8,to=1.0): 若误读原始时钟, 松手第一帧
+    // progress 会从 0.8 跳到 0(控制器被 forward(from:0) 置 0)再滑到 1,
+    // 视觉上「先弹回再重滑」, 即松手那个多余动画。
+    return (_pageAnimCurved?.value ?? _pageAnim.value).clamp(0.0, 1.0);
   }
 
   Widget _buildPage(TextPage page, int index) {
     return pv.PageView(
+      // key 与 _buildPeekPage 一致(同为 page_C_I): 动画提交后 currentPageIndex 变到目标页,
+      // 两者 key 完全相同 → Flutter 复用同一 element, 避免「松手那一帧重建」闪烁。
       key: ValueKey('page_${controller.currentChapterIndex}_$index'),
       page: page,
       settings: widget.controller.settings,
@@ -356,7 +393,10 @@ class _ReaderViewState extends State<ReaderView>
   Widget _buildPeekPage(PeekInfo info) {
     final c = widget.controller;
     return pv.PageView(
-      key: ValueKey('peek_${info.chapterIndex}_${info.pageIndex}'),
+      // key 必须与 _buildPage 一致(page_C_I, 不带 peek_ 前缀):
+      // 这样 commitTurn 后 currentPageIndex 变到本页, Flutter 视为同一 element 复用,
+      // 不再卸载重建 → 消除松手时的「页面重建」闪烁。
+      key: ValueKey('page_${info.chapterIndex}_${info.pageIndex}'),
       page: info.page,
       settings: c.settings,
       pageIndex: info.pageIndex,
@@ -381,13 +421,44 @@ class _ReaderViewState extends State<ReaderView>
   // ===================== 翻页动画核心 =====================
 
   /// 动画状态监听: 动画完成时提交翻页(对齐 SlidePageDelegate.onAnimStop)。
+  ///
+  /// ⚠️ 完成帧时序陷阱: AnimationController 在一帧的 transient 阶段把 value 推到 1.0,
+  /// 紧接着触发 status=completed。若在这里立即 _resetAnimState + commitTurn, 两个
+  /// setState(completion 回调里的 tick + 这里)会被 Flutter 合并成同一次 rebuild,
+  /// 于是 progress=1.0 那一帧根本没机会渲染 → 目标页从 ~0.97w 瞬跳到 0, 看着像
+  /// 「末尾卡顿一下、整页左偏/右偏」(NEXT 左偏、PREV 右偏)。
+  ///
+  /// 修复: completion 时**不**重置状态, 只把 progress 钉在 1.0 等当前帧画完,
+  /// 在 addPostFrameCallback 里再做状态切换 + commit。代际号 _animGen 守护:
+  /// 其间若新翻页/拖拽触发了 _resetAnimState, _animGen 自增 → 挂起的回调失效。
   void _onPageAnimStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed) return;
     if (_animDir == _PageDirection.none) return;
-    // commit 标志: 动画自然播完且非取消 → 提交; 取消(回弹) → 不提交。
+    // 记下本次提交参数, 推迟到下一帧执行。
     final shouldCommit = !_isCancel;
     final dir = _animDir;
     final target = dir == _PageDirection.next ? _nextCache : _prevCache;
+    final gen = _animGen;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _deferredCommit(
+          gen: gen,
+          shouldCommit: shouldCommit,
+          dir: dir,
+          target: target,
+        ));
+  }
+
+  /// 下一帧执行真正的状态切换(让 completion 帧 progress=1.0 先渲染)。
+  ///
+  /// 守护: 若 [gen] 与当前 _animGen 不符, 说明本帧到下一帧之间已发生了新的翻页/
+  /// 拖拽(它会 _resetAnimState 自增代际号), 本次提交作废, 不覆盖新动画。
+  void _deferredCommit({
+    required int gen,
+    required bool shouldCommit,
+    required _PageDirection dir,
+    required PeekInfo? target,
+  }) {
+    if (gen != _animGen) return; // 已被新动画接管
+    if (_animDir != dir) return; // 方向已被改变(防御)
     _resetAnimState();
     if (shouldCommit && target != null) {
       controller.commitTurn(target);
@@ -398,19 +469,24 @@ class _ReaderViewState extends State<ReaderView>
   }
 
   /// 重置动画状态到静止(none)。
+  ///
+  /// ⚠️ 不清空 _nextCache/_prevCache: 新架构下它们是常驻预热缓存,
+  /// 由 _refreshPeekCaches 统一管理(章/页变化时刷新)。
+  /// 清空会导致预热失效 → 拖拽首帧 hitch 回归 / 翻页失败。
   void _resetAnimState() {
     _animDir = _PageDirection.none;
     _isDragging = false;
     _isCancel = false;
     _dragOffset = 0;
-    _prevCache = null;
-    _nextCache = null;
     if (_pageAnimCurved != null) {
       _pageAnimCurved!.removeListener(_onAnimTick);
       _pageAnimCurved = null;
     }
     if (_pageAnim.isAnimating) _pageAnim.stop();
     _pageAnim.value = 0;
+    // 自增代际号: 使任何挂起的 _deferredCommit 失效, 避免旧动画的延迟提交
+    // 误覆盖刚启动的新翻页/拖拽状态。
+    _animGen++;
   }
 
   /// 启动翻页动画(匀速)。
@@ -438,17 +514,34 @@ class _ReaderViewState extends State<ReaderView>
     if (mounted) setState(() {});
   }
 
-  /// 程序化翻页(点击触发)。对齐原生 ReadView.kt:444-445 nextPageByAnim/prevPageByAnim。
+  /// 程序化翻页(点击触发)。对齐原生 ReadView.kt:444 nextPageByAnim/prevPageByAnim
+  /// + HorizontalPageDelegate.abortAnim。
   ///
-  /// peek 目标页 → 设方向 → 启动 0→1 全宽动画 → onAnimStop 提交。
-  /// none 模式下不播动画, 直接 peek + commitTurn(对齐原生 NoAnimPageDelegate.onAnimStart:
-  /// `fillPage(direction)` 后 `stopScroll`, onDraw/onAnimStop 全空)。
+  /// 关键(原生丝滑连点的来源): 若动画进行中再次点击, 不是忽略, 而是
+  /// abortAnim —— 中断当前动画 + 若非取消则 fillPage 提交这次翻页(跳过动画
+  /// 尾巴直接到位), 然后从新的当前页启动下一次动画。这样连点每一次都立即响应,
+  /// 不被 300ms 动画尾巴阻塞。
   void _turnByAnim(_PageDirection dir) {
-    if (_animDir != _PageDirection.none) return; // 动画/拖拽进行中, 忽略
-    if (dir == _PageDirection.next && !controller.canGoNext) return;
-    if (dir == _PageDirection.prev && !controller.canGoPrevious) return;
-    final target =
-        dir == _PageDirection.next ? controller.peekNext() : controller.peekPrev();
+    final c = controller;
+    // 动画进行中再次点击: 中断 + 提交当前翻页, 然后从新当前页继续(对齐 abortAnim)。
+    if (_animDir != _PageDirection.none) {
+      _abortAndCommit();
+    }
+    if (dir == _PageDirection.next && !c.canGoNext) return;
+    if (dir == _PageDirection.prev && !c.canGoPrevious) return;
+    // 邻接页已由 _refreshPeekCaches 预热常驻, 直接取用; 若预热失效(如数据异步
+    // 就绪晚于 initState)则即时 peek 兜底, 保证翻页不会因预热 bug 彻底失败。
+    var target = dir == _PageDirection.next ? _nextCache : _prevCache;
+    if (target == null) {
+      target = dir == _PageDirection.next
+          ? controller.peekNext()
+          : controller.peekPrev();
+      if (dir == _PageDirection.next) {
+        _nextCache = target;
+      } else {
+        _prevCache = target;
+      }
+    }
     if (target == null) return;
     // 无动画模式: 直接提交, 不进入叠加态也不启动动画。
     if (controller.settings.pageAnimMode == PageAnimMode.none) {
@@ -458,11 +551,6 @@ class _ReaderViewState extends State<ReaderView>
     _animDir = dir;
     _isCancel = false;
     _isDragging = false;
-    if (dir == _PageDirection.next) {
-      _nextCache = target;
-    } else {
-      _prevCache = target;
-    }
     setState(() {}); // 立即进入叠加态, 显示目标页
     _startPageAnim(from: 0, to: 1);
   }
@@ -506,13 +594,12 @@ class _ReaderViewState extends State<ReaderView>
     _dragOffset += details.delta.dx;
 
     // 首次确定方向(对齐原生 onScroll: 右滑>0=PREV, 左滑<0=NEXT)。
+    // 邻接页已预热常驻, 这里只设方向, 不再单独 peek(消除拖拽首帧 hitch)。
     if (_animDir == _PageDirection.none && _dragOffset.abs() > 8) {
       if (_dragOffset < 0 && controller.canGoNext) {
         _animDir = _PageDirection.next;
-        _nextCache = controller.peekNext();
       } else if (_dragOffset > 0 && controller.canGoPrevious) {
         _animDir = _PageDirection.prev;
-        _prevCache = controller.peekPrev();
       }
     }
 
@@ -559,6 +646,19 @@ class _ReaderViewState extends State<ReaderView>
     }
 
     final toProgress = shouldCommit ? 1.0 : 0.0;
+    // 边界短路: 已拉满(或已回弹到原位)时直接提交/回弹, 不启动零长度动画。
+    // 否则 _startPageAnim 会从 from=1→to=1(forward from: 0 让 value 跳 0→1),
+    // 松手时多出一个多余的动画/抖动一帧(对齐原生 Scroller 距离为 0 时立即 finish 的行为)。
+    if ((fromProgress - toProgress).abs() < 0.001) {
+      final target = _animDir == _PageDirection.next ? _nextCache : _prevCache;
+      _resetAnimState();
+      if (shouldCommit && target != null) {
+        controller.commitTurn(target);
+      } else if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
     _startPageAnim(from: fromProgress, to: toProgress);
   }
 

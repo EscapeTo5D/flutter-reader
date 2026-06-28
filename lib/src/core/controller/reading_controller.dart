@@ -6,6 +6,26 @@ import '../models/bookmark.dart';
 import '../../reader/engine/page_engine.dart';
 import '../content_processor.dart';
 
+/// 预取(peek)的翻页目标信息。
+///
+/// 翻页动画在提交前需要知道目标页(及其所属章节/页码), 以便:
+/// 1. 动画期间把目标页画到 prev/next 缓存槽;
+/// 2. 动画结束时按 [chapterIndex] 判断是章内翻页还是跨章翻页, 精确提交。
+///
+/// 对齐原生 legado ReadView 三页缓存(prev/cur/nextPage)始终持有相邻页的做法,
+/// 但 Flutter 端按需预取(仅在拖拽/动画期间持有), 避免常驻三页内存。
+class PeekInfo {
+  final TextPage page;
+  final int chapterIndex;
+  final int pageIndex;
+
+  const PeekInfo({
+    required this.page,
+    required this.chapterIndex,
+    required this.pageIndex,
+  });
+}
+
 class ReadingController extends ChangeNotifier {
   Book? _book;
   ReadingSettings _settings = ReadingSettings();
@@ -21,6 +41,18 @@ class ReadingController extends ChangeNotifier {
   Size _pageSize = Size.zero;
 
   final PageEngine _pageEngine = PageEngine();
+
+  /// 相邻章分页预计算缓存(章索引 → 分页结果)。
+  ///
+  /// 跨章 peek 时避免在翻页关键帧同步重排整章(实测一整章 100~140ms, 阻塞 6~8 帧
+  /// → 跨章卡顿)。peekNext/peekPrev/_rePaginate 都走 [_paginateChapterCached]:
+  /// 首次重排后结果入缓存, 后续 O(1) 命中。
+  ///
+  /// 缓存键 = 章索引; 整表失效条件见 [_invalidateAdjacentCache]:
+  /// `_settings` 引用变或 `_pageSize` 变(两者决定分页结果)。
+  final Map<int, List<TextPage>> _adjacentChapterCache = {};
+  ReadingSettings? _cacheSettingsRef;
+  Size _cachePageSize = Size.zero;
 
   Book? get book => _book;
   ReadingSettings get settings => _settings;
@@ -291,6 +323,36 @@ class ReadingController extends ChangeNotifier {
       _pages = [];
       return;
     }
+    _pages = _paginateChapterWithPipeline(_currentChapterIndex);
+    if (_currentPageIndex >= _pages.length) {
+      _currentPageIndex = _pages.isEmpty ? 0 : _pages.length - 1;
+    }
+  }
+
+  /// 对指定章节跑完整的内容预处理 + 排版管线, 返回分页结果。
+  ///
+  /// 抽取自原 `_rePaginate` 的内容管线(ContentProcessor → join → PageEngine.paginate),
+  /// 供「重新分页当前章」与「预取相邻章(peek)」共用, 保证两者产出的页面完全一致——
+  /// 否则 `paginateChapter()`(跳过 ContentProcessor) 与 `_rePaginate` 产出的页不同,
+  /// 翻页动画展示的页与提交后看到的页会错位。
+  ///
+  /// 不修改 `_pages`/`_currentPageIndex` 等状态, 纯函数。
+  List<TextPage> _paginateChapterWithPipeline(int chapterIndex) {
+    return _paginateChapterCached(chapterIndex);
+  }
+
+  /// 带缓存的整章重排(供 peekNext/peekPrev/_rePaginate 共用)。
+  ///
+  /// 缓存键 = chapterIndex; 失效条件 = `_settings` 引用变 / `_pageSize` 变。
+  /// 命中 → O(1) 返回; 未命中 → 同步重排(首次或失效后)。
+  List<TextPage> _paginateChapterCached(int chapterIndex) {
+    _invalidateAdjacentCacheIfNeeded();
+    if (_book == null || _pageSize == Size.zero) return [];
+    if (chapterIndex < 0 || chapterIndex >= _book!.chapters.length) return [];
+    final cached = _adjacentChapterCache[chapterIndex];
+    if (cached != null) return cached;
+
+    final chapter = _book!.chapters[chapterIndex];
     final bookContent = ContentProcessor.getContent(
       title: chapter.title,
       content: chapter.content,
@@ -298,13 +360,115 @@ class ReadingController extends ChangeNotifier {
       textIndent: _settings.textIndent,
     );
     final processedContent = bookContent.textList.join('\n');
-    _pages = _pageEngine.paginate(
+    final pages = _pageEngine.paginate(
       content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
     );
-    if (_currentPageIndex >= _pages.length) {
-      _currentPageIndex = _pages.isEmpty ? 0 : _pages.length - 1;
+    _adjacentChapterCache[chapterIndex] = pages;
+    return pages;
+  }
+
+  /// 若影响分页结果的输入(settings / pageSize)发生变化, 清空整个相邻章缓存。
+  /// `_settings` 每次 updateSettings 传入新对象, 引用比较即可判断变化。
+  void _invalidateAdjacentCacheIfNeeded() {
+    if (!identical(_settings, _cacheSettingsRef) || _pageSize != _cachePageSize) {
+      _adjacentChapterCache.clear();
+      _cacheSettingsRef = _settings;
+      _cachePageSize = _pageSize;
+    }
+  }
+
+  /// 预取下一页(无副作用: 不改变 currentPageIndex/chapterIndex/pages)。
+  ///
+  /// 章内有下一页 → 该页; 否则若存在下一章 → 下一章首页; 否则 null(无下一页)。
+  /// 翻页动画据此把目标页画到 next 缓存槽, 动画结束按 info 提交。
+  PeekInfo? peekNext() {
+    if (_book == null) return null;
+    if (_currentPageIndex < _pages.length - 1) {
+      return PeekInfo(
+        page: _pages[_currentPageIndex + 1],
+        chapterIndex: _currentChapterIndex,
+        pageIndex: _currentPageIndex + 1,
+      );
+    }
+    // 当前章末页 → 下一章首页
+    if (_currentChapterIndex < _book!.chapters.length - 1) {
+      final nextChapterPages = _paginateChapterWithPipeline(_currentChapterIndex + 1);
+      if (nextChapterPages.isNotEmpty) {
+        return PeekInfo(
+          page: nextChapterPages.first,
+          chapterIndex: _currentChapterIndex + 1,
+          pageIndex: 0,
+        );
+      }
+    }
+    return null;
+  }
+
+  /// 预取上一页(无副作用: 不改变 currentPageIndex/chapterIndex/pages)。
+  ///
+  /// 当前页 > 0 → 上一页; 否则若存在上一章 → 上一章末页; 否则 null(无上一页)。
+  PeekInfo? peekPrev() {
+    if (_book == null) return null;
+    if (_currentPageIndex > 0) {
+      return PeekInfo(
+        page: _pages[_currentPageIndex - 1],
+        chapterIndex: _currentChapterIndex,
+        pageIndex: _currentPageIndex - 1,
+      );
+    }
+    // 当前章首页 → 上一章末页
+    if (_currentChapterIndex > 0) {
+      final prevChapterPages = _paginateChapterWithPipeline(_currentChapterIndex - 1);
+      if (prevChapterPages.isNotEmpty) {
+        return PeekInfo(
+          page: prevChapterPages.last,
+          chapterIndex: _currentChapterIndex - 1,
+          pageIndex: prevChapterPages.length - 1,
+        );
+      }
+    }
+    return null;
+  }
+
+  /// 预热当前章的相邻章(±1)到分页缓存。
+  ///
+  /// 由 reader_view 在章/页变化后通过 PostFrame 调用(不阻塞当前帧):
+  /// 当用户还在章内逐页阅读时, 下一/上一章早已算好入缓存 → 翻到末页时
+  /// peekNext 命中缓存(O(1)), 跨章不再卡顿。重排开销被摊到「用户刚进入
+  /// 本章、尚未快速翻页」的时刻, 用户无感。
+  ///
+  /// 幂等: 命中缓存则跳过, 多次调用安全。
+  void prefetchAdjacentChapters() {
+    if (_book == null || _pageSize == Size.zero) return;
+    final next = _currentChapterIndex + 1;
+    final prev = _currentChapterIndex - 1;
+    _paginateChapterCached(next);
+    _paginateChapterCached(prev);
+  }
+
+  ///
+  /// 翻页动画结束时调用: 把动画展示的目标页真正落到 controller 状态。
+  /// 跨章时 goToChapter 会重排目标章(与 peek 跑的是同一管线, 页面一致),
+  /// 再用 setCurrentPageIndex 落到目标页; 章内直接 goToPage。
+  /// 对齐原生 legado `fillPage` → `moveToNext/moveToPrev`。
+  void commitTurn(PeekInfo target) {
+    if (target.chapterIndex == _currentChapterIndex) {
+      // 章内翻页
+      if (target.pageIndex != _currentPageIndex) {
+        _currentPageIndex = target.pageIndex;
+        notifyListeners();
+      }
+    } else {
+      // 跨章翻页: goToChapter 会重排目标章并落到首页, 再定位到目标页。
+      _currentChapterIndex = target.chapterIndex;
+      _currentPageIndex = 0;
+      _rePaginate();
+      if (target.pageIndex < _pages.length) {
+        _currentPageIndex = target.pageIndex;
+      }
+      notifyListeners();
     }
   }
 }

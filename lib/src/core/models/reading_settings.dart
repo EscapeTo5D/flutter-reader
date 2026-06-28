@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 
 enum TipPosition { none, chapterTitle, time, battery, batteryPercent, pageNumber, progress, bookName, timeAndBattery, pageAndTotal }
 
+/// 翻页动画类型, 对齐原生 legado `PageAnim`(`app/.../constant/PageAnim.kt`)。
+/// 枚举值与原生常量一一对应(0=cover, 1=slide, 2=simulation, 3=scroll, 4=none)。
+enum PageAnimMode {
+  cover,       // 覆盖翻页
+  slide,       // 滑动翻页(本步骤实现)
+  simulation,  // 仿真翻页(贝塞尔曲线)
+  scroll,      // 滚动翻页
+  none,        // 无动画
+}
+
 class HeaderFooterConfig {
   final TipPosition left;
   final TipPosition center;
@@ -154,6 +164,8 @@ class ReadingSettings {
   double titleSize;    // 标题字号偏移量
   double titleTopSpacing;    // 标题上方间距
   double titleBottomSpacing; // 标题下方间距
+  /// 翻页动画类型, 对齐原生 legado PageAnim。默认 slide(对齐原生默认)。
+  PageAnimMode pageAnimMode;
 
   ReadingSettings({
     this.fontSize = 18.0,
@@ -195,6 +207,7 @@ class ReadingSettings {
     this.titleSize = 2.0,
     this.titleTopSpacing = 12.0,
     this.titleBottomSpacing = 8.0,
+    this.pageAnimMode = PageAnimMode.slide,
   });
 
   ReadingSettings copyWith({
@@ -228,6 +241,7 @@ class ReadingSettings {
     double? titleSize,
     double? titleTopSpacing,
     double? titleBottomSpacing,
+    PageAnimMode? pageAnimMode,
   }) {
     return ReadingSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -259,6 +273,7 @@ class ReadingSettings {
       titleSize: titleSize ?? this.titleSize,
       titleTopSpacing: titleTopSpacing ?? this.titleTopSpacing,
       titleBottomSpacing: titleBottomSpacing ?? this.titleBottomSpacing,
+      pageAnimMode: pageAnimMode ?? this.pageAnimMode,
     );
   }
 }
