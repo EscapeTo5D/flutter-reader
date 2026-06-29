@@ -168,13 +168,18 @@ class ReadingSettings {
   PageAnimMode pageAnimMode;
 
   ReadingSettings({
-    this.fontSize = 18.0,
+    // 默认值对齐原生 legado「微信读书」预设(readConfig.json 第 0 项):
+    // textSize=24, letterSpacing=0, lineSpacingExtra=10, paragraphSpacing=6,
+    // bg=#ffc0edc6, text=#ff0b0b0b。
+    // lineSpacingExtra=10 → lineHeight = 10/10 = 1.0; paragraphSpacing 字段值即
+    // 原生 progress(6), 段距 = textHeight × 6 / 10。
+    this.fontSize = 24.0,
     this.fontWeight = FontWeight.normal,
-    this.lineHeight = 1.2,
-    this.paragraphSpacing = 2.0,
+    this.lineHeight = 1.0,
+    this.paragraphSpacing = 6.0,
     this.letterSpacing = 0.0,
-    this.backgroundColor = const Color(0xFFF5F5F5),
-    this.textColor = const Color(0xFF333333),
+    this.backgroundColor = const Color(0xFFC0EDC6),
+    this.textColor = const Color(0xFF0B0B0B),
     this.tipColor = const Color(0xFF999999),
     this.fontFamily,
     this.backgroundImage,

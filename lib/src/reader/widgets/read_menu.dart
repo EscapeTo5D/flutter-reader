@@ -291,14 +291,30 @@ class _StyleDialogState extends State<_StyleDialog> {
   bool _clearBgImage = false;
   late PageAnimMode pageAnimMode;
 
+  // 预设数据对齐原生 legado readConfig.json。
+  // - 微信读书: textSize=24, letterSpacing=0, lineSpacingExtra=10, paragraphSpacing=6,
+  //   bg=#ffc0edc6, text=#ff0b0b0b (ARGB 0xFF=完全不透明, 等价 #c0edc6/#0b0b0b)。
+  // - 预设1~5: 原生 JSON 只存颜色, 其余字段用 Config 类默认值
+  //   (textSize=20, letterSpacing=0.1, lineSpacingExtra=12, paragraphSpacing=2)。
+  //   切到这些预设时, 文字参数需重置为该默认值(而非保留当前滑块值), 对齐原生语义。
+  //
+  // lineHeight/paragraphSpacing 用「progress 语义」:
+  //   lineHeight 渲染行高 = textHeight × lineHeight;
+  //   paragraphSpacing 段距 = textHeight × paragraphSpacing / 10。
+  //   progress = lineHeight×10、progress = paragraphSpacing(字段值即 progress)。
   static const _stylePresets = [
     _StylePreset('微信读书', Color(0xFFC0EDC6), Color(0xFF0B0B0B),
-      fontSize: 24, letterSpacing: 0, lineHeight: 1.15, paragraphSpacing: 0.6),
-    _StylePreset('预设1', Color(0xFFFFFFFF), Color(0xFF000000)),
-    _StylePreset('预设2', Color(0xFFDDC090), Color(0xFF3E3422)),
-    _StylePreset('预设3', Color(0xFFC2D8AA), Color(0xFF596C44)),
-    _StylePreset('预设4', Color(0xFFDBB8E2), Color(0xFF68516C)),
-    _StylePreset('预设5', Color(0xFFABCEE0), Color(0xFF3D4C54)),
+      fontSize: 24, letterSpacing: 0, lineHeight: 1.0, paragraphSpacing: 6),
+    _StylePreset('预设1', Color(0xFFFFFFFF), Color(0xFF000000),
+      fontSize: 20, letterSpacing: 0.1, lineHeight: 1.2, paragraphSpacing: 2),
+    _StylePreset('预设2', Color(0xFFDDC090), Color(0xFF3E3422),
+      fontSize: 20, letterSpacing: 0.1, lineHeight: 1.2, paragraphSpacing: 2),
+    _StylePreset('预设3', Color(0xFFC2D8AA), Color(0xFF596C44),
+      fontSize: 20, letterSpacing: 0.1, lineHeight: 1.2, paragraphSpacing: 2),
+    _StylePreset('预设4', Color(0xFFDBB8E2), Color(0xFF68516C),
+      fontSize: 20, letterSpacing: 0.1, lineHeight: 1.2, paragraphSpacing: 2),
+    _StylePreset('预设5', Color(0xFFABCEE0), Color(0xFF3D4C54),
+      fontSize: 20, letterSpacing: 0.1, lineHeight: 1.2, paragraphSpacing: 2),
   ];
 
   @override
@@ -307,8 +323,16 @@ class _StyleDialogState extends State<_StyleDialog> {
     final s = widget.controller.settings;
     _fontSizeProgress = s.fontSize.toInt() - 5;
     _letterSpacingProgress = (s.letterSpacing * 100).toInt() + 50;
-    _lineHeightProgress = ((s.lineHeight - 1.0) / 0.015).round();
-    _paragraphSpacingProgress = (s.paragraphSpacing * 10).toInt();
+    // 行距: 字段 lineHeight 是「倍数」(= 原生 lineSpacingExtra/10)。
+    // 对齐原生 dsbLineSize(max=20, progress=lineSpacingExtra 整数):
+    // progress = lineHeight × 10, 默认 1.2 → 12。
+    // (旧实现用 /0.015 步长, 与原生 0.1 步长不符, 反推会漂移。)
+    _lineHeightProgress = (s.lineHeight * 10).round();
+    // 段距: 字段 paragraphSpacing 的值即原生 progress(默认 2)。
+    // 对齐原生 dsbParagraphSpacing(max=20, progress=paragraphSpacing 整数):
+    // progress = 字段值, 默认 2.0 → 2。渲染公式 textHeight × paragraphSpacing / 10 不变。
+    // (旧实现 ×10 把默认 2.0 推成 20 满格, 与原生 progress=2 不符。)
+    _paragraphSpacingProgress = s.paragraphSpacing.round();
     textIndent = s.textIndent;
     titleMode = s.titleMode;
     bgColor = s.backgroundColor;
@@ -320,10 +344,12 @@ class _StyleDialogState extends State<_StyleDialog> {
   void _apply() {
     widget.controller.updateSettings(
       widget.controller.settings.copyWith(
-        fontSize: (_fontSizeProgress + 5).toDouble(),
-        lineHeight: 1.0 + _lineHeightProgress * 0.015,
-        paragraphSpacing: _paragraphSpacingProgress / 10.0,
-        letterSpacing: (_letterSpacingProgress - 50) / 100.0,
+      fontSize: (_fontSizeProgress + 5).toDouble(),
+      // progress ↔ lineHeight: progress = lineHeight × 10, 步长 0.1(对齐原生)。
+      lineHeight: _lineHeightProgress / 10.0,
+      // progress ↔ paragraphSpacing: 字段值即 progress(对齐原生整数 progress)。
+      paragraphSpacing: _paragraphSpacingProgress.toDouble(),
+      letterSpacing: (_letterSpacingProgress - 50) / 100.0,
         textIndent: textIndent,
         titleMode: titleMode,
         backgroundColor: bgColor,
@@ -532,6 +558,8 @@ class _StyleDialogState extends State<_StyleDialog> {
             title: '行距',
             progress: _lineHeightProgress,
             max: 20,
+            // 对齐原生 dsbLineSize.valueFormat: ((it - 10) / 10f).toString()
+            // 默认 progress=12 → 显示 0.2。
             display: ((_lineHeightProgress - 10) / 10.0).toStringAsFixed(1),
             onChanged: (v) { setState(() => _lineHeightProgress = v); _apply(); },
           ),
@@ -539,6 +567,8 @@ class _StyleDialogState extends State<_StyleDialog> {
             title: '段距',
             progress: _paragraphSpacingProgress,
             max: 20,
+            // 对齐原生 dsbParagraphSpacing.valueFormat: (it / 10f).toString()
+            // 默认 progress=2 → 显示 0.2。
             display: (_paragraphSpacingProgress / 10.0).toStringAsFixed(1),
             onChanged: (v) { setState(() => _paragraphSpacingProgress = v); _apply(); },
           ),
@@ -667,10 +697,12 @@ class _StyleDialogState extends State<_StyleDialog> {
                             _letterSpacingProgress = (preset.letterSpacing! * 100).toInt() + 50;
                           }
                           if (preset.lineHeight != null) {
-                            _lineHeightProgress = ((preset.lineHeight! - 1.0) / 0.015).round();
+                            // progress = lineHeight × 10(对齐原生 lineSpacingExtra 整数语义)
+                            _lineHeightProgress = (preset.lineHeight! * 10).round();
                           }
                           if (preset.paragraphSpacing != null) {
-                            _paragraphSpacingProgress = (preset.paragraphSpacing! * 10).toInt();
+                            // progress = 字段值(对齐原生 paragraphSpacing 整数语义)
+                            _paragraphSpacingProgress = preset.paragraphSpacing!.round();
                           }
                         });
                         _apply();

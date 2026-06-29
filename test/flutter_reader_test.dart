@@ -23,10 +23,11 @@ void main() {
   group('ReadingSettings', () {
     test('should copy with new values', () {
       final settings = ReadingSettings();
-      final newSettings = settings.copyWith(fontSize: 24.0);
+      // 默认值为微信读书预设(fontSize=24), copyWith 成区分值验证不变性
+      final newSettings = settings.copyWith(fontSize: 20.0);
 
-      expect(newSettings.fontSize, 24.0);
-      expect(settings.fontSize, 18.0);
+      expect(newSettings.fontSize, 20.0);
+      expect(settings.fontSize, 24.0, reason: '默认预设=微信读书 textSize=24');
     });
   });
 }
