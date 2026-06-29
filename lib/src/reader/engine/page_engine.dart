@@ -7,6 +7,25 @@ class PageEngine {
   /// 末页尾部留白, 对齐原生 legado 的 `endPadding = 20.dp`(20 逻辑像素)。
   static const double _endPadding = 20.0;
 
+  /// 字体度量补偿系数: 让 Flutter 行距/段距视觉对齐原生 legado。
+  ///
+  /// 根因: 两平台「纯字体度量 textHeight」的 ratio 不同。
+  ///   原生 textHeight = descent - ascent + leading (Android Paint, 中文字体
+  ///     如思源黑体/Noto CJK) ≈ fontSize × 1.4 (asc/desc 都大, 含 leading)。
+  ///   Flutter textHeight = metric.height / lineHeight ≈ fontSize × 1.0
+  ///     (默认 Roboto, ratio=1.0, 无 leading; 实测各字号 height 恒等 fontSize)。
+  ///
+  /// 故同样的 lineSpacingExtra 倍数, 原生行推进 = fontSize×1.4×倍数, Flutter 仅
+  /// fontSize×1.0×倍数, 视觉偏紧约 0.4。用户实测印证: 无补偿时 Flutter 行距显示
+  /// 0.4(lineHeight=1.4) 才 ≈ 原生显示 0.0(lineSpacingExtra=1.0)。
+  ///
+  /// 此系数把 Flutter 间距性质(行块高/段距)放大到原生量级, 使滑块显示值与原生
+  /// 语义一致(原生0.0 ↔ Flutter0.0)。仅作用于"间距", 不影响:
+  ///   - baseline 定位(用真实 textHeight-descent, 文字垂直位置由字体本身决定)
+  ///   - 滑块换算/预设值(仍按原生 progress 语义, 用户看到的数值不变)
+  ///   - textHeight 字段(保持纯字体度量, baseline 与段距借用都依赖它)
+  static const double _nativeMetricFactor = 1.4;
+
   List<TextPage> paginate({
     required String content,
     required Size pageSize,
@@ -39,7 +58,10 @@ class PageEngine {
       }
 
       if (para.trim().isEmpty) {
-        final spacing = lastTextHeight * settings.paragraphSpacing / 10.0;
+        // 段距补偿: 同样乘 _nativeMetricFactor, 对齐原生(原生段距基于
+        // ratio~1.4 的 textHeight, Flutter textHeight ratio 1.0, 需放大)。
+        final spacing =
+            lastTextHeight * settings.paragraphSpacing / 10.0 * _nativeMetricFactor;
         lines.add(TextLine(
           text: '',
           height: spacing,
@@ -89,8 +111,10 @@ class PageEngine {
       // 段后间距: 对齐原生 TextChapterLayout.kt:1026
       // `durY += textHeight * paragraphSpacing / 10f`, 在每个正文段落末尾追加。
       // 标题段有独立的 titleBottomSpacing, 不走这里。
+      // 段距同样乘 _nativeMetricFactor 对齐原生(见空段落分支注释)。
       if (!isTitle) {
-        final spacing = lastTextHeight * settings.paragraphSpacing / 10.0;
+        final spacing =
+            lastTextHeight * settings.paragraphSpacing / 10.0 * _nativeMetricFactor;
         lines.add(TextLine(
           text: '',
           height: spacing,
@@ -224,17 +248,36 @@ class PageEngine {
         startOffset: centerOffset,
       );
 
+      // 行高用 metric.height(含行距缝), 但 baseline 必须按原生公式重算,
+      // 否则行距视觉与原生不对等。
+      //
+      // 原生 upTopBottom (TextLine.kt:103-107):
+      //   lineBottom = lineTop + textHeight              // textHeight 纯字体度量, 不含 extra
+      //   lineBase   = lineBottom - fontMetrics.descent  // = textHeight - descent
+      // 即文字顶部对齐 textHeight 顶部, lineSpacingExtra 的缝全部留在行块下方。
+      //
+      // Flutter 若直接用 metric.baseline, Skia 会把 leading 摊在文字上方
+      // (文字在 metric.height 块里偏下), lineHeight 越大偏移越明显:
+      //   h=1.0 时 baseline 一致(缝为 0, 无 leading 可摊);
+      //   h=1.2 时偏 4.83px; h=1.5 时偏 12px (fs=24 实测)。
+      // 故用原生公式重算, 让文字在行块内顶部对齐。
+      final textHeight = metric.height / (style.height ?? 1.0);
+      final nativeBaseline = textHeight - metric.descent;
+      // 行块高补偿: metric.height 是 Flutter 字体(ratio 1.0)的行高, 乘以
+      // _nativeMetricFactor 放大到原生中文字体(ratio ~1.4)量级, 使行距视觉对齐。
+      // 文字仍按真实 textHeight 顶部对齐(nativeBaseline), 多出的缝留在行块下方。
+      final blockHeight = metric.height * _nativeMetricFactor;
       result.add(TextLine(
         text: lineText,
-        height: metric.height,
-        textHeight: metric.height / (style.height ?? 1.0),
+        height: blockHeight,
+        textHeight: textHeight,
         isParagraphEnd: isLastLine,
         isTitle: isTitle,
         columns: columns,
         indentWidth: indentWidth,
         indentSize: indentSize,
-        lineBase: metric.baseline,
-        lineBottom: metric.height,
+        lineBase: nativeBaseline,
+        lineBottom: blockHeight,
       ));
       offset = endOffset;
     }
@@ -496,7 +539,10 @@ class PageEngine {
     return TextStyle(
       fontSize: isTitle ? settings.fontSize + 2 : settings.fontSize,
       fontWeight: isTitle ? FontWeight.bold : settings.fontWeight,
-      height: settings.lineHeight,
+      // 原生 lineSpacingExtra 范围 -10~10(progress 0~20), 渲染倍数 = /10。
+      // 原生可取 0/负(压挤), 但 Flutter TextPainter 要求 height > 0, 否则 assert。
+      // 下限保护: 0/负值落到 0.1, 贴近"最紧"视觉效果且不崩。
+      height: settings.lineHeight > 0 ? settings.lineHeight : 0.1,
       letterSpacing: settings.letterSpacing,
       color: settings.textColor,
       fontFamily: settings.fontFamily,

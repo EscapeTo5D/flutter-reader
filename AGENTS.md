@@ -8,14 +8,11 @@
 - 包代码在 `lib/`，运行示例 app 在 `example/`。
 - 阅读排版配置模型: `lib/src/core/models/reading_settings.dart`（对应原生 `Config` / `ReadTipConfig`）。注意：2026-06-26 远程重构后文件已移到 `core/` 和 `reader/` 下。
 
-## ⚠️ 重要分支: backup/pre-refactor-2026-06-26
+## ⚠️ 关于"翻页架构重构"那条线
 
-**不要删除这个分支！** 它含一套**未合并到 master** 的独立工作（10 个提交）：
-- **PageDelegate 翻页架构重构**：`PageDelegate` 基类、`NoAnimPageDelegate`、把 `scroll_mode_handler.dart` 从 `page_animations/` 迁出、删除旧 `page_animations/*.dart`。这就是 master 上 `page_animations/` 目录缺失的原因——这个分支是"删除旧实现 + 用新 PageDelegate 架构替代"的进行中工作。
-- **整套 legado 技术文档**：`docs/legado_reader/` 00~11 章 + 重构计划 + 设计文档（约 5442 行）。
-- 删除不可恢复（除非靠 reflog 碰运气）。
-
-如果未来要恢复"翻页架构重构"那条线，从这个分支接续。
+历史曾存在分支 `backup/pre-refactor-2026-06-26`（PageDelegate 基类 + NoAnimPageDelegate + 把 `scroll_mode_handler.dart` 迁出 `page_animations/` + 整套 legado 技术文档 docs/legado_reader/ 00~11 章）。**该分支已于 2026-06-29 前被删除，本地/远程/reflog 均无残留，不可恢复。** master 上的 `912604b feat: implement scroll page mode aligned with legado ScrollPageDelegate` 是 master 自身提交，与该分支无关。
+- 后果：master 上 `page_animations/` 目录缺失（详见文末"待办"），根包暂不可整体编译。
+- 如未来要重做"翻页架构重构"，只能从零开始，无法从那个分支接续。
 
 ## 原生项目 (legado) 位置 ⚠️ 重要
 
@@ -128,8 +125,93 @@ Flutter 端（`page_engine.dart` + `reading_settings.dart`）已对齐：
 - `TextLine.textHeight`（纯字体度量）：由 `metric.height / style.height` 反推（Flutter 把 leading 摊进 height，故除回去）。
 - 渲染行高 `line.height = textHeight * lineHeight = metric.height`（与 paint 时 style.height 一致）。
 - **段距注入**：`paginate` 在每个正文段落末尾插入一个 `isEmptyParagraph` 行（height=段距），对齐原生 `setTypeText` 段末 `durY` 累加。标题段用独立的 `titleBottomSpacing`，不走这里。
-- UI 滑块（`read_menu.dart`）：行距/段距滑块已是倍数/系数语义，无需改。
 - ⚠️ `ContentProcessor` 跳过源文本空行（`if (paragraph.isEmpty) continue`），故实际管线里段距只来自引擎注入，不会双重；直接调 `paginate` 带 `\n\n` 的 caller 会对每个空行也加段距行（对齐原生同样跳过空行）。
+
+## 字号/字距/行距/段距 滑块映射（2026-06-29 修正）
+
+对齐原生 `ReadStyleDialog.kt` + `dialog_read_book_style.xml` 的四个 `DetailSeekBar`。**原生 progress 直接 = 字段值**，关键映射（`read_menu.dart` 的 `_StyleDialogState`）：
+
+| 项 | xml max | progress↔字段 | display(valueFormat) | 默认(=微信读书预设) |
+|---|---|---|---|---|
+| 字号 textSize | 45 | `textSize = progress + 5` (5~50sp) | `progress + 5` | 24→p19 |
+| 字距 letterSpacing | 100 | `letterSpacing = (progress-50)/100` (-0.5~0.5) | `(progress-50)/100` | 0→p50 |
+| 行距 lineSpacingExtra | 20 | **progress = lineHeight × 10**(整数, 步长 0.1) | `(progress-10)/10` | 1.0→p10, 显示 0.0 |
+| 段距 paragraphSpacing | 20 | **progress = 字段值**(整数) | `progress/10` | 6.0→p6, 显示 0.6 |
+
+- 行距：字段 `lineHeight` 是「倍数」(= 原生 `lineSpacingExtra/10`)，正反推 `progress ↔ lineHeight × 10`。旧实现误用 0.015 步长（与原生 0.1 不符，正反推漂移），已修。
+- 段距：字段 `paragraphSpacing` 的**值即原生 progress**(默认 2)。旧实现误用 `×10`（默认 2.0 被推成 p=20 满格），已修。渲染公式 `段距 = textHeight × paragraphSpacing / 10` 不变。
+- 字段语义和 page_engine 渲染公式原本就与原生数值一致，这次只动 UI 滑块的正/反推换算 + 预设值。
+- `page_engine._textStyle` 的 `height` 加了下限保护（≤0 落到 0.1），因原生 progress=0 时倍数为 0/负不崩，但 Flutter `TextPainter` 要求 `height > 0`。
+- 预设点击同步换算（`_lineHeightProgress = lineHeight×10`、`_paragraphSpacingProgress = 字段值`），含 `_StylePreset` 数据。
+
+## 行内 baseline 对齐原生（2026-06-29 修正行距视觉不对等）
+
+**问题**：用户反馈"行距视觉不一致"。查源码定位到根因——行距系数对，但**行内文字垂直位置**不对。
+
+**原生模型**（`TextLine.kt:103-107` `upTopBottom`）：文字顶部对齐 `textHeight` 顶部，lineSpacingExtra 的缝全部留在行块下方：
+```
+textHeight = descent - ascent + leading    // 纯字体度量, 不含 extra (PaintExtensions.kt:8)
+lineBase   = textHeight - descent          // baseline 紧贴字体底部
+// 行块内: [文字 textHeight 高][缝 textHeight×(lineHeight-1)]
+```
+
+**Flutter 旧实现错在哪**：`lineBase` 直接用 `metric.baseline`。但 Skia 的 `metric.height`(=textHeight×lineHeight) 会把 leading 摊在文字**上方**（文字在行块里偏下），与原生"缝全在下方"相反。lineHeight 越大偏移越大，实测（fs=24）：
+```
+lineHeight=1.0 → baseline 一致(缝为0, 无 leading 可摊, 两者重合) ← 微信读书正好是1.0, 所以它对等
+lineHeight=1.2 → Flutter 文字偏下 4.83px (默认预设1~5 用1.2, 故不对等)
+lineHeight=1.5 → 偏下 12px
+```
+
+**修复**：`page_engine.dart` `_wrapText` 里 `lineBase` 不再用 `metric.baseline`，改用原生公式重算 `textHeight - metric.descent`。`textHeight = metric.height / lineHeight`。这样文字在行块内顶部对齐、缝留下方，与原生一致。`metric.height` 仍是行块总高（含缝），`SizedBox(height: metric.height)` 不变。
+- 影响面：仅 `lineBase` 一处，CustomPainter 绘制 + 选中高亮框（用 lineBase）都自动对齐。
+- 降级 Text 分支（`!line.hasCharData`，几乎不走）仍用 Skia 默认，未改。
+- 回归测试：`test/line_spacing_test.dart` 新增"lineBase 按原生公式重算"用例，锁定 lh=1.0/1.2/1.5 三个值。
+
+**结论**：行距系数（lineHeight）换算一直是对的；视觉不对等是因为行内 baseline 定位，现已修。微信读书(lineHeight=1.0)本就对等，预设1~5(1.2)和大行距场景现在也对齐了。
+
+## 行距/段距字体度量补偿（2026-06-29, 解决"0.4 对应 0.0"）
+
+**问题**：上一条修完 baseline 后，用户实测反馈"Flutter 行距显示 0.4 才 ≈ 原生 0.0"。即行距系数换算虽对，但**绝对行距偏紧**。
+
+**根因（实测确认）**：两平台「纯字体度量 textHeight」的 ratio 不同：
+- 原生 `textHeight = descent - ascent + leading`（Android Paint，中文字体如思源黑体/Noto CJK）≈ **fontSize × 1.4**（asc/desc 都大，含 leading）。
+- Flutter `textHeight = metric.height / lineHeight`（默认 Roboto）≈ **fontSize × 1.0**（实测各字号 height 恒等 fontSize，无 leading；测试环境连中文字体名也 fallback 到 Roboto，ratio 仍 1.0）。
+- 故同样 lineSpacingExtra 倍数：原生行推进 = `fontSize × 1.4 × 倍数`，Flutter 仅 `fontSize × 1.0 × 倍数`，差约 0.4。用户反馈"Flutter 0.4 ↔ 原生 0.0"反推确认 ratio_native ≈ 1.4。
+
+**修复**：`page_engine.dart` 加常量 `_nativeMetricFactor = 1.4`，仅作用于"间距性质"（行块高 + 段距）：
+```
+行块高 height = metric.height × 1.4          // _wrapText, lineBottom 同步
+段距     = textHeight × paragraphSpacing / 10 × 1.4   // 空段落行 + 段末行两处
+```
+补偿后恒等式：`height = textHeight × lineHeight × 1.4`（非旧的 `× lineHeight`）。
+
+**不受补偿影响**（关键，保持文字正确）：
+- `lineBase = textHeight - descent`（真实字体度量，文字顶部对齐，lineBase 测试三个 lh 值不变）
+- `textHeight` 字段（保持纯字体度量，baseline + 段距借用都依赖它）
+- 滑块换算 / 预设值 / 默认值（仍按原生 progress 语义，用户看到的数值与原生一致：原生0.0 ↔ Flutter0.0）
+
+**语义**：1.4 是"Flutter 字体 ratio(1.0) → 原生中文字体 ratio(~1.4)"的等效放大。补偿后原生显示 0.0(lineSpacingExtra=1.0) 与 Flutter 显示 0.0(lineHeight=1.0) 行推进绝对值一致。固定值而非动态测量——因 Flutter 端实际渲染字体 ratio 恒为 1.0（无论指定中文字体名都会 fallback），动态测无意义；1.4 是中文字体通用 ratio。
+
+**回归测试**：`line_spacing_test.dart` 行高/段距断言更新为含 `× 1.4`；lineBase 测试不变（验证 baseline 不受补偿影响）。全套 34 测试通过。
+
+## 文字底色预设（2026-06-29 对齐）
+
+原生权威数据源：`D:/GitHub/legado/app/src/main/assets/defaultData/readConfig.json`（`DefaultData.readConfigs` → `ReadBookConfig.configList`）。共 6 个预设：
+
+| 预设 | bg | text | textSize | letterSpacing | lineSpacingExtra | paragraphSpacing |
+|---|---|---|---|---|---|---|
+| **微信读书** | `#ffc0edc6` | `#ff0b0b0b` | 24 | 0 | 10 | 6 |
+| 预设1 | `#FFFFFF` | `#000000` | (Config默认20) | (0.1) | (12) | (2) |
+| 预设2 | `#DDC090` | `#3E3422` | 默认 | 默认 | 默认 | 默认 |
+| 预设3 | `#C2D8AA` | `#596C44` | 默认 | 默认 | 默认 | 默认 |
+| 预设4 | `#DBB8E2` | `#68516C` | 默认 | 默认 | 默认 | 默认 |
+| 预设5 | `#ABCEE0` | `#3D4C54` | 默认 | 默认 | 默认 | 默认 |
+
+- **默认预设 = 微信读书**：`ReadingSettings()` 构造默认值已改为微信读书参数（fontSize=24, lineHeight=1.0, paragraphSpacing=6.0, letterSpacing=0, bg=#C0EDC6, text=#0B0B0B）。首次打开即微信读书样式，无需手动选预设。
+- **预设1~5 切换语义**：原生 JSON 只存颜色，其余字段回退到 `ReadBookConfig.Config` 类默认值（textSize=20, letterSpacing=0.1, lineSpacingExtra=12→lineHeight 1.2, paragraphSpacing=2）。故 Flutter `_StylePreset` 给预设1~5 显式补全这些默认文字参数——切换时重置滑块，而非保留当前值。对齐原生"切预设即重置排版参数"语义。
+- **lineSpacingExtra↔lineHeight 换算**：微信读书 lineSpacingExtra=10 → lineHeight=1.0；预设1~5 = 12 → 1.2。
+- **颜色 alpha**：原生微信读书色带 `#ff` 前缀（完全不透明），Flutter 用 `Color(0xFFxxxxxx)` 等价；预设1~5 色原生不带 alpha，Flutter 同样用 `0xFF` 前缀（不透明），视觉一致。
+- **未对齐项（留待后续）**：原生预设还含 padding(paddingTop5/Bottom4/Left22/Right22 等)、titleSize/titleMode、tipColor、header/footer padding、翻页等，Flutter `_StylePreset` 暂只支持 fontSize/letterSpacing/lineHeight/paragraphSpacing + 颜色 6 项。padding 等涉及 `ReaderPadding` 模型与尺寸重算，本轮未做。
 
 ## 页脚尺寸计算（已修复 2026-06-26）
 
