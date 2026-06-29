@@ -2,9 +2,14 @@ library flutter_reader;
 
 export 'src/core/models/book.dart';
 export 'src/core/models/reading_settings.dart';
+export 'src/core/models/reading_settings_codec.dart';
 export 'src/core/models/bookmark.dart';
 export 'src/core/controller/reading_controller.dart';
 export 'src/core/content_processor.dart';
+export 'src/core/storage/reader_repository.dart';
+export 'src/core/storage/reader_user.dart';
+export 'src/core/storage/reading_progress.dart';
+export 'src/core/storage/sqflite_reader_repository.dart';
 export 'src/reader/entities/text_page.dart';
 export 'src/reader/entities/column.dart';
 export 'src/reader/engine/page_engine.dart';

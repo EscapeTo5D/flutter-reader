@@ -40,8 +40,23 @@ class PageEngine {
     // 对齐原生: 段距 = textHeight * paragraphSpacing / 10。
     var lastTextHeight = settings.fontSize; // 初始用字号近似(无前文时)
 
+    // 当前段落在「预处理后内容」中的起始字符偏移。
+    //
+    // chapterPosition 用于阅读进度持久化: 进度存 (chapterIndex, charOffset) 而非
+    // pageIndex, 这样改字号/行距/换设备重排后, 用 charOffset 二分各页首行的
+    // chapterPosition 即可定位回对应页, 不丢进度(对齐原生 legado dur/durPos)。
+    //
+    // charOffset 是「预处理后内容」(ContentProcessor 输出 join('\n')) 的绝对偏移,
+    // **标题段也计入偏移流**(标题不特殊归零)——这样恢复时用同一套 ContentProcessor
+    // 重新生成内容, 偏移自洽可逆(无需知道标题边界来扣减)。
+    var contentOffset = 0;
+
     for (var i = 0; i < paragraphs.length; i++) {
       final para = paragraphs[i];
+      // 预先推进: 本轮 para 起点偏移 = contentOffset, 末尾 +1 算 '\n' 分隔符。
+      // 预先推进让所有 continue 分支(newpage/空段/隐藏标题)也正确累计偏移。
+      final paraStart = contentOffset;
+      contentOffset += para.length + 1;
 
       // 强制分页标记: 对齐原生 TextChapterLayout.kt:333
       // `if (text == "[newpage]") { prepareNextPageIfNeed(); return@forEach }`
@@ -67,6 +82,7 @@ class PageEngine {
           height: spacing,
           textHeight: lastTextHeight,
           isParagraphEnd: true,
+          chapterPosition: paraStart,
         ));
         continue;
       }
@@ -85,6 +101,7 @@ class PageEngine {
           text: '',
           height: settings.titleTopSpacing,
           isParagraphEnd: false,
+          chapterPosition: paraStart,
         ));
         titleAdded = true;
       }
@@ -101,6 +118,7 @@ class PageEngine {
         isTitle: isTitle,
         isMiddleTitle: settings.isMiddleTitle || settings.titleMode == 1,
         textFullJustify: settings.textFullJustify,
+        baseOffset: paraStart,
       );
       lines.addAll(textLines);
       // 更新纯字体度量, 供后续段距行借用
@@ -120,6 +138,8 @@ class PageEngine {
           height: spacing,
           textHeight: lastTextHeight,
           isParagraphEnd: true,
+          // 段末行取该段尾偏移, 保持 chapterPosition 单调递增
+          chapterPosition: paraStart + para.length,
         ));
       }
 
@@ -129,6 +149,7 @@ class PageEngine {
           text: '',
           height: settings.titleBottomSpacing,
           isParagraphEnd: false,
+          chapterPosition: paraStart,
         ));
       }
     }
@@ -141,6 +162,12 @@ class PageEngine {
   }
 
   /// 核心换行逻辑: 逐字符测量 + 生成 Column 对象
+  ///
+  /// [baseOffset] 是该段在「预处理后内容」中的起始字符偏移, 用于给每行写入
+  /// [TextLine.chapterPosition] (进度持久化用)。详见 paginate() 注释。
+  /// chapterPosition 基于 body(剥缩进后的源文本), 不含显示层缩进字符——
+  /// 故每行 = baseOffset + 行在 body 内的起始 offset(= 行在 displayText 内
+  /// 的 startOffset 减去 indentStr.length, 首行夹到 0)。
   List<TextLine> _wrapText({
     required String text,
     required TextStyle style,
@@ -151,6 +178,7 @@ class PageEngine {
     required bool isTitle,
     required bool isMiddleTitle,
     required bool textFullJustify,
+    int baseOffset = 0,
   }) {
     final result = <TextLine>[];
     // 对齐原生 legado: 缩进是"替换"而非"叠加"。源文本段落通常自带全角/半角空格
@@ -173,6 +201,7 @@ class PageEngine {
       result.add(TextLine(
         text: displayText,
         height: style.fontSize! * (style.height ?? 1.5),
+        chapterPosition: baseOffset,
       ));
       return result;
     }
@@ -267,6 +296,11 @@ class PageEngine {
       // _nativeMetricFactor 放大到原生中文字体(ratio ~1.4)量级, 使行距视觉对齐。
       // 文字仍按真实 textHeight 顶部对齐(nativeBaseline), 多出的缝留在行块下方。
       final blockHeight = metric.height * _nativeMetricFactor;
+      // 该行在 body(剥缩进源文本) 内的起始偏移: startOffset 是相对 displayText 的,
+      // body 从 displayText 的 indentStr.length 处开始, 故减去缩进长度, 首行夹到 0。
+      // + baseOffset 得到该行在整章预处理内容中的字符位置(进度持久化用)。
+      final bodyOffset =
+          baseOffset + (startOffset - indentStr.length).clamp(0, body.length);
       result.add(TextLine(
         text: lineText,
         height: blockHeight,
@@ -278,6 +312,7 @@ class PageEngine {
         indentSize: indentSize,
         lineBase: nativeBaseline,
         lineBottom: blockHeight,
+        chapterPosition: bodyOffset,
       ));
       offset = endOffset;
     }

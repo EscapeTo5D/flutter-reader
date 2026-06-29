@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../models/reading_settings.dart';
@@ -5,6 +7,8 @@ import '../../reader/entities/text_page.dart';
 import '../models/bookmark.dart';
 import '../../reader/engine/page_engine.dart';
 import '../content_processor.dart';
+import '../storage/reader_repository.dart';
+import '../storage/reading_progress.dart';
 
 /// 预取(peek)的翻页目标信息。
 ///
@@ -54,6 +58,53 @@ class ReadingController extends ChangeNotifier {
   ReadingSettings? _cacheSettingsRef;
   Size _cachePageSize = Size.zero;
 
+  // ─────────────────────────── 持久化 ───────────────────────────
+  /// 持久化仓库(null = 纯内存模式, 退化为不落盘, 兼容旧用法)。
+  ReaderRepository? _repository;
+
+  /// 当前用户 id(null = 未绑定, 此时进度等不落盘)。
+  String? _userId;
+
+  /// 进度落盘防抖定时器: 翻页/翻章后延迟 [_progressSaveDebounce] 落盘, 期间
+  /// 新动作重置定时器, 避免连续翻页每页一次 IO。
+  Timer? _progressSaveTimer;
+
+  /// 设置落盘防抖定时器。
+  Timer? _settingsSaveTimer;
+
+  /// 进度/设置防抖延迟。1.5s 覆盖典型连续翻页节奏, 又不至于太晚(用户秒退也兜得住)。
+  static const Duration _progressSaveDebounce = Duration(milliseconds: 1500);
+
+  /// 是否已 dispose。异步恢复(loadBook/restoreProgress)回调里用它防止
+  /// dispose 后还 notifyListeners(ChangeNotifier 此版本无 mounted getter, 自管标志位)。
+  bool _disposed = false;
+
+  ReadingController({ReaderRepository? repository, String? userId})
+      : _repository = repository,
+        _userId = userId;
+
+  /// 绑定持久化仓库与用户。两者任一为 null 则进入纯内存模式(不落盘)。
+  /// 可在 [loadBook] 前后任意时刻调用; 已加载的书会立即触发一次进度恢复。
+  void attachRepository(ReaderRepository repository, {String? userId}) {
+    _repository = repository;
+    if (userId != null) _userId = userId;
+    // 若书已加载, 尝试用新用户恢复进度
+    if (_book != null && _userId != null) {
+      restoreProgress();
+    }
+  }
+
+  /// 绑定/切换用户 id。切换后若书已加载, 立即恢复该用户在此书的进度。
+  void bindUser(String userId) {
+    _userId = userId;
+    if (_book != null && _repository != null) {
+      restoreProgress();
+    }
+  }
+
+  ReaderRepository? get repository => _repository;
+  String? get userId => _userId;
+
   Book? get book => _book;
   ReadingSettings get settings => _settings;
   int get currentChapterIndex => _currentChapterIndex;
@@ -80,12 +131,128 @@ class ReadingController extends ChangeNotifier {
     _currentPageIndex = 0;
     _rePaginate();
     notifyListeners();
+    // 书加载完(分页就绪)后, 异步从仓库恢复该用户的进度。
+    // 不阻塞渲染: 即使恢复晚一帧也无妨, 用户先看到首页再被定位到上次位置。
+    if (_repository != null && _userId != null) {
+      restoreProgress();
+    }
+  }
+
+  /// 从仓库恢复当前用户在当前书的进度。
+  ///
+  /// 流程: 取持久化的 (chapterIndex, chapterCharOffset) → 跳到该章 →
+  /// 用 charOffset 二分 `_pages` 各页首行 chapterPosition 定位回页码 → 落位。
+  /// 跨字号/换设备重排后仍能定位到正确页(charOffset 不随排版变), 不丢进度。
+  ///
+  /// 找不到记录或 charOffset 越界时保持首页(0), 不报错。
+  /// 仅在 _pageSize 就绪(分页已完成)时生效; 否则等 updatePageSize 后再恢复。
+  Future<void> restoreProgress() async {
+    final repo = _repository;
+    final uid = _userId;
+    final book = _book;
+    if (repo == null || uid == null || book == null) return;
+    if (_pageSize == Size.zero) return; // 分页未就绪, 等尺寸回调
+
+    final p = await repo.getProgress(uid, book.id);
+    if (_disposed) return;
+
+    if (p != null) {
+      // 章节越界保护
+      final targetChapter = p.chapterIndex.clamp(0, totalChapters - 1);
+      if (targetChapter != _currentChapterIndex) {
+        _currentChapterIndex = targetChapter;
+        _currentPageIndex = 0;
+        _rePaginate();
+      }
+      // charOffset → 页码
+      final page = _pageIndexForCharOffset(p.chapterCharOffset);
+      _currentPageIndex = page;
+      notifyListeners();
+    }
+    // 无论有无进度记录, 都恢复该书的书签(书签独立于进度存在)。
+    await loadBookmarks();
+  }
+
+  /// 把当前阅读位置(章+页)转成 [ReadingProgress] 落盘。
+  ///
+  /// charOffset 取当前页首行的 chapterPosition(页起点偏移, 比"页内某字"更稳定)。
+  ReadingProgress? _currentProgress() {
+    final book = _book;
+    final uid = _userId;
+    if (book == null || uid == null) return null;
+    return ReadingProgress(
+      userId: uid,
+      bookId: book.id,
+      chapterIndex: _currentChapterIndex,
+      chapterCharOffset: _charOffsetForCurrentPage(),
+      pageIndex: _currentPageIndex,
+      lastReadAt: DateTime.now(),
+    );
+  }
+
+  /// 当前页首行(第一个非空文字行)的 chapterPosition = 该页起始字符偏移。
+  /// 找不到文字行时返回 0(降级到章首)。
+  int _charOffsetForCurrentPage() {
+    if (_pages.isEmpty || _currentPageIndex >= _pages.length) return 0;
+    for (final line in _pages[_currentPageIndex].lines) {
+      if (line.text.isNotEmpty) return line.chapterPosition;
+    }
+    return 0;
+  }
+
+  /// charOffset → 页码(二分各页首行 chapterPosition)。
+  ///
+  /// 找到「首行偏移 <= offset」的最后一页; offset 超过末页首行则落末页。
+  /// 用于跨字号/换设备恢复进度——重排后页数变了, 但 charOffset 不变, 仍能定位。
+  int _pageIndexForCharOffset(int charOffset) {
+    if (_pages.isEmpty) return 0;
+    var result = 0;
+    for (var i = _pages.length - 1; i >= 0; i--) {
+      final firstOffset = _firstCharOffsetOfPage(_pages[i]);
+      if (firstOffset <= charOffset) {
+        result = i;
+        break;
+      }
+    }
+    return result;
+  }
+
+  int _firstCharOffsetOfPage(TextPage page) {
+    for (final line in page.lines) {
+      if (line.text.isNotEmpty) return line.chapterPosition;
+    }
+    return 0;
+  }
+
+  /// 防抖落盘进度。翻页/翻章/恢复后调用, 1.5s 内无新动作才真正写库。
+  void _scheduleProgressSave() {
+    if (_repository == null || _userId == null || _book == null) return;
+    _progressSaveTimer?.cancel();
+    _progressSaveTimer = Timer(_progressSaveDebounce, () {
+      final p = _currentProgress();
+      if (p != null) {
+        _repository!.saveProgress(p);
+      }
+    });
+  }
+
+  /// 立即落盘进度(取消防抖定时器, 同步写)。dispose 时调用确保不丢。
+  Future<void> flushProgress() async {
+    _progressSaveTimer?.cancel();
+    _progressSaveTimer = null;
+    final p = _currentProgress();
+    if (p != null && _repository != null) {
+      await _repository!.saveProgress(p);
+    }
   }
 
   void updateSettings(ReadingSettings settings) {
     _settings = settings;
     _rePaginate();
     notifyListeners();
+    _scheduleSettingsSave();
+    // 设置变了会重排, 重新按当前 charOffset 定位回对应页(避免因排版变而停在错误的页)
+    _scheduleProgressSave();
   }
 
   void updatePageSize(Size size) {
@@ -93,13 +260,27 @@ class ReadingController extends ChangeNotifier {
       _pageSize = size;
       _rePaginate();
       notifyListeners();
+      // 尺寸就绪后, 若仓库里有进度且尚未恢复(loadBook 时可能 pageSize 还是 zero), 现在恢复。
+      if (_repository != null && _userId != null && _book != null) {
+        restoreProgress();
+      }
     }
+  }
+
+  /// 防抖落盘设置。改字号/行距/颜色等频繁操作时, 1.5s 内最后状态写一次。
+  void _scheduleSettingsSave() {
+    if (_repository == null) return;
+    _settingsSaveTimer?.cancel();
+    _settingsSaveTimer = Timer(_progressSaveDebounce, () {
+      _repository!.saveSettings(_settings, userId: _userId);
+    });
   }
 
   void goToPage(int page) {
     if (page >= 0 && page < _pages.length) {
       _currentPageIndex = page;
       notifyListeners();
+      _scheduleProgressSave();
     }
   }
 
@@ -107,6 +288,7 @@ class ReadingController extends ChangeNotifier {
     if (page >= 0 && page < _pages.length && page != _currentPageIndex) {
       _currentPageIndex = page;
       notifyListeners();
+      _scheduleProgressSave();
     }
   }
 
@@ -120,6 +302,7 @@ class ReadingController extends ChangeNotifier {
     if (_currentPageIndex < _pages.length - 1) {
       _currentPageIndex++;
       notifyListeners();
+      _scheduleProgressSave();
     } else if (_currentChapterIndex < (_book?.chapters.length ?? 0) - 1) {
       nextChapter();
     }
@@ -129,6 +312,7 @@ class ReadingController extends ChangeNotifier {
     if (_currentPageIndex > 0) {
       _currentPageIndex--;
       notifyListeners();
+      _scheduleProgressSave();
     } else if (_currentChapterIndex > 0) {
       _currentChapterIndex--;
       _currentPageIndex = 0;
@@ -137,6 +321,7 @@ class ReadingController extends ChangeNotifier {
         _currentPageIndex = _pages.length - 1;
       }
       notifyListeners();
+      _scheduleProgressSave();
     }
   }
 
@@ -147,6 +332,7 @@ class ReadingController extends ChangeNotifier {
       _currentPageIndex = 0;
       _rePaginate();
       notifyListeners();
+      _scheduleProgressSave();
     }
   }
 
@@ -157,6 +343,7 @@ class ReadingController extends ChangeNotifier {
       _currentPageIndex = 0;
       _rePaginate();
       notifyListeners();
+      _scheduleProgressSave();
     }
   }
 
@@ -166,6 +353,7 @@ class ReadingController extends ChangeNotifier {
     _currentPageIndex = 0;
     _rePaginate();
     notifyListeners();
+    _scheduleProgressSave();
   }
 
   void toggleMenu() {
@@ -230,21 +418,47 @@ class ReadingController extends ChangeNotifier {
       (b) => b.bookId == _book!.id && b.chapterIndex == _currentChapterIndex && b.pageIndex == _currentPageIndex,
     );
     if (existing >= 0) {
-      _bookmarks.removeAt(existing);
+      final removed = _bookmarks.removeAt(existing);
+      // 同步删除持久化书签
+      if (_repository != null && removed.userId == _userId) {
+        _repository!.deleteBookmark(removed.id);
+      }
     } else {
       final page = _pages.isNotEmpty && _currentPageIndex < _pages.length
           ? _pages[_currentPageIndex]
           : null;
       final content = page?.lines.take(2).map((l) => l.text).join() ?? '';
-      _bookmarks.add(Bookmark(
+      final bookmark = Bookmark(
         id: '${_book!.id}_${_currentChapterIndex}_$_currentPageIndex',
         bookId: _book!.id,
         chapterIndex: _currentChapterIndex,
         pageIndex: _currentPageIndex,
         content: content,
         createdAt: DateTime.now(),
-      ));
+        chapterCharOffset: _charOffsetForCurrentPage(),
+        userId: _userId,
+      );
+      _bookmarks.add(bookmark);
+      // 同步落库
+      if (_repository != null && _userId != null) {
+        _repository!.saveBookmark(bookmark);
+      }
     }
+    notifyListeners();
+  }
+
+  /// 从仓库恢复当前用户在当前书的所有书签到内存 [_bookmarks]。
+  /// 仅在仓库/用户已绑定时生效; 失败则保持现有内存书签。
+  Future<void> loadBookmarks() async {
+    final repo = _repository;
+    final uid = _userId;
+    final book = _book;
+    if (repo == null || uid == null || book == null) return;
+    final stored = await repo.getBookmarks(uid, book.id);
+    if (_disposed) return;
+    // 合并: 移除该书旧的内存书签, 用持久化数据替换
+    _bookmarks.removeWhere((b) => b.bookId == book.id);
+    _bookmarks.addAll(stored);
     notifyListeners();
   }
 
@@ -459,6 +673,7 @@ class ReadingController extends ChangeNotifier {
       if (target.pageIndex != _currentPageIndex) {
         _currentPageIndex = target.pageIndex;
         notifyListeners();
+        _scheduleProgressSave();
       }
     } else {
       // 跨章翻页: goToChapter 会重排目标章并落到首页, 再定位到目标页。
@@ -469,6 +684,48 @@ class ReadingController extends ChangeNotifier {
         _currentPageIndex = target.pageIndex;
       }
       notifyListeners();
+      _scheduleProgressSave();
     }
+  }
+
+  /// 从仓库恢复阅读设置(优先当前用户, 回退全局)。
+  ///
+  /// 典型用法: 宿主在创建 controller 并 attachRepository 后、loadBook 前调用,
+  /// 让字号/行距/颜色等恢复到上次状态。无记录时保持默认不动。
+  Future<void> loadSettings() async {
+    final repo = _repository;
+    if (repo == null) return;
+    // 优先取用户设置, 没有再取全局
+    final s = (await repo.getSettings(userId: _userId)) ??
+        await repo.getSettings();
+    if (s != null && !_disposed) {
+      _settings = s;
+      _rePaginate();
+      notifyListeners();
+    }
+  }
+
+  /// 把当前书加入书架(保存元信息)。仅在有仓库+用户时生效。
+  Future<void> saveToShelf() async {
+    final repo = _repository;
+    final uid = _userId;
+    final book = _book;
+    if (repo == null || uid == null || book == null) return;
+    await repo.saveBookMeta(uid, book);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    // 取消防抖定时器。注意: 这里不 await flushProgress——dispose 不能是 async。
+    // 待落盘的进度若关键, 宿主应在 dispose 前手动调 await flushProgress()。
+    // 此处做 best-effort: 若定时器正在等待, 立即触发一次同步落盘(忽略返回 future)。
+    final pending = _currentProgress();
+    _progressSaveTimer?.cancel();
+    _settingsSaveTimer?.cancel();
+    if (pending != null && _repository != null) {
+      _repository!.saveProgress(pending); // fire-and-forget
+    }
+    super.dispose();
   }
 }

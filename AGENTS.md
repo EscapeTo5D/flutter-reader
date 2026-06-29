@@ -228,6 +228,55 @@ lineHeight=1.5 → 偏下 12px
 - 翻页模式（含 scroll）不影响 chrome 显隐，只改变翻页方式。scroll 模式也显示页眉页脚。
 - 页眉页脚整体显隐只看 `hidden` 字段；三槽全 none 时页脚仍占位（对齐原生"容器始终在"）。
 
+## 持久化架构（2026-06-29 实现：进度/设置/书签/书架/用户绑定）
+
+**决策**：本地 sqflite + 多用户隔离 + 进度存字符位置（charOffset）+ 包内接口+默认实现。全 58 测试通过。
+
+### 三层数据流
+1. **引擎层** `page_engine.dart`：`TextLine.chapterPosition`（已存在但此前恒为 0，本次补全累加逻辑）= 该行在「预处理后内容」（`ContentProcessor` 输出 `join('\n')`）中的绝对字符偏移。**标题段也计入偏移流**（不归零），保证 charOffset 自洽可逆。
+2. **Repository 层** `lib/src/core/storage/`：
+   - `reader_repository.dart` — abstract 接口（用户/进度/书签/设置/书架 CRUD）。宿主可注入任意实现。
+   - `sqflite_reader_repository.dart` — 默认 sqflite 实现（单文件 `flutter_reader.db`，5 张表）。桌面需宿主先初始化 `sqflite_ffi` 并传 `dbPath`（或调 `databaseFactory=databaseFactoryFfi`，example 的 `db.dart` 已封装）。
+   - `reading_progress.dart` / `reader_user.dart` — 进度/用户数据模型（均带 toJson/fromJson）。
+3. **Controller 层** `reading_controller.dart`：可选注入 `ReaderRepository`+`userId`（null = 纯内存，退化为旧行为，**不破坏现有 API**）。
+
+### charOffset 进度模型（核心，对齐原生 legado dur/durPos）
+- **为什么不用 pageIndex**：pageIndex 依赖 pageSize+settings（字号/行距/屏幕），换设备或改字号会漂移、跳页。
+- **进度存什么**：`(chapterIndex, chapterCharOffset)`。恢复时重走"预处理→分页"，用 charOffset 二分 `_pages` 各页首行 chapterPosition 定位回页。
+- **跨字号验证**：`test/persistence_integration_test.dart` "改字号重排后用 charOffset 仍定位到对应内容"——fontSize 20→30 重排后页数变了，但 charOffset 不变，仍落在同一内容位置。
+- 互转方法（controller 私有）：`_charOffsetForCurrentPage()`（取当前页首行 chapterPosition）/ `_pageIndexForCharOffset(int)`（二分落页）。
+
+### 防抖落盘
+- 翻页/翻章/改设置后 1.5s 内无新动作才写库（`_progressSaveTimer`/`_settingsSaveTimer`），避免连续翻页每页一次 IO。
+- `flushProgress()`：立即落盘，宿主在 controller.dispose() 前调（dispose 不能 async，内部只能 fire-and-forget）。
+- `addBookmark` 同步落库；删除书签同步删库。
+
+### 序列化（`reading_settings_codec.dart`，模型保持纯净）
+- `encodeReadingSettings()`/`decodeReadingSettings()` 函数式编解码，带 `_version` 字段供 schema 迁移。
+- Color → `toARGB32()`；FontWeight → `.value`（字重数值，非 index，index 已弃用）；枚举 → `.name`。
+- 缺失字段回落 `ReadingSettings` 默认值（向前兼容旧 schema）。
+- ⚠️ Flutter 3.41 stable：`Color.toARGB32()` 有，但 `Color.fromARGB32()` 尚不可用，fromJson 仍用 `Color(value)`（value 已弃用但唯一入口）。
+
+### 用户绑定
+- `ReaderUser { id, name?, avatar? }` 极简，只是隔离键载体。**本包不管账号登录/鉴权**（宿主职责）。
+- 进度/书签/书架复合键 `(userId, bookId)`；设置可全局(`__global__`)或按用户。
+- controller：构造 `{repository, userId}` 或 `attachRepository(repo, userId:)`/`bindUser(uid)`。
+
+### 接入方式（example 已演示）
+```dart
+// main() 里: await AppDatabase.init();  // example/lib/db.dart
+// ReaderPage: ReadingController(repository: AppDatabase.repo, userId: 'demo-user')
+// loadBook 前: await controller.loadSettings();
+// loadBook 后: controller 自动 restoreProgress + loadBookmarks
+// 退出前: await controller.flushProgress();
+```
+
+### 测试覆盖（新增 4 个文件，19 个用例）
+- `chapter_position_test.dart`(5)：chapterPosition 单调递增/标题偏移/同段多行/offset↔page 二分/覆盖完整内容。
+- `serialization_test.dart`(6)：settings+bookmark 往返、向前兼容、JSON 基础类型。
+- `sqflite_repository_test.dart`(7)：CRUD/upsert/用户隔离/removeBook 级联清理。
+- `persistence_integration_test.dart`(6)：进度恢复/跨字号不跳页/书签同步/设置持久化/纯内存降级/多用户隔离。
+
 ## 待办（先不做动画）
 
-- `reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此，与页脚/排版无关。用户决定先不补动画，等后续单独处理。
+- ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。

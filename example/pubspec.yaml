@@ -11,6 +11,8 @@ dependencies:
   flutter_reader:
     path: ../
   http: ^1.2.0
+  # 持久化演示用(桌面端 sqflite 需 ffi)
+  sqflite_common_ffi: ^2.3.4
 
 dev_dependencies:
   flutter_test:

@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_reader/flutter_reader.dart';
 import 'api_service.dart';
+import 'db.dart';
 
-void main() => runApp(const MyApp());
+Future<void> main() async {
+  // 持久化仓库初始化(需在 runApp 前, 因用到 path_provider 平台通道)
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppDatabase.init();
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -135,7 +141,9 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
-  final ReadingController _controller = ReadingController();
+  // 注入持久化仓库 + 演示用户。controller 在 loadBook 时会自动恢复该用户在此书的进度。
+  final ReadingController _controller =
+      ReadingController(repository: AppDatabase.repo, userId: AppDatabase.demoUserId);
   final _api = ApiService();
   bool _loading = true;
   String? _error;
@@ -152,6 +160,8 @@ class _ReaderPageState extends State<ReaderPage> {
       _error = null;
     });
     try {
+      // 先恢复阅读设置(字号/行距/颜色等), 让 reader_view 首帧就用上次的设置
+      await _controller.loadSettings();
       final chapters = await _api.fetchChapters(widget.novelId);
       if (!mounted) return;
 
@@ -171,6 +181,8 @@ class _ReaderPageState extends State<ReaderPage> {
             .toList(),
       );
       _controller.loadBook(book);
+      // 加入书架(保存元信息, 供"上次阅读"列表用)
+      _controller.saveToShelf();
       if (mounted) setState(() => _loading = false);
     } catch (e) {
       if (mounted) {
@@ -184,6 +196,8 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override
   void dispose() {
+    // 退出前强制落盘进度(防抖定时器可能还没触发)
+    _controller.flushProgress();
     _controller.dispose();
     super.dispose();
   }
