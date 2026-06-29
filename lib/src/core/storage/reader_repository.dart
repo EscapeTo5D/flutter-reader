@@ -4,6 +4,7 @@ import '../models/book.dart';
 import '../models/bookmark.dart';
 import '../models/reading_settings.dart';
 import '../models/reading_settings_codec.dart';
+import 'cached_chapter.dart';
 import 'reading_progress.dart';
 import 'reader_user.dart';
 
@@ -65,6 +66,34 @@ abstract class ReaderRepository {
 
   /// 从书架移除某书(同时清理该书在该用户下的进度与书签)。
   Future<void> removeBook(String userId, String bookId);
+
+  // ─────────────────────────── 章节正文缓存 ───────────────────────────
+  //
+  // 章节正文与用户无关(同书 A 用户的第 N 章 = B 用户的第 N 章), 故仅按
+  // (bookId, chapterIndex) 复合键存储, 不走 userId 隔离。用于「二次打开秒开」:
+  // 首次打开从网络拉取的正文落盘后, 后续直接读本地。宿主据此组合「本地优先」策略。
+
+  /// 读取某书已缓存的全部章节(按 chapter_index 升序)。
+  ///
+  /// 二次打开的主路径: 一次拿回全书正文, 命中即可瞬时渲染。
+  /// 未缓存的书返回空列表——调用方应回退到网络拉取, 下完后用 [saveChapterContent]
+  /// 回填, 下次即命中。
+  Future<List<CachedChapter>> getBookChapters(String bookId);
+
+  /// 读取某书指定章的缓存正文。无记录返回 null。
+  ///
+  /// 用于按章预取/恢复(如只校验某一章是否已缓存)。
+  Future<CachedChapter?> getCachedChapter(String bookId, int chapterIndex);
+
+  /// 写入/覆盖某章正文缓存(upsert, 主键 bookId+chapterIndex)。
+  ///
+  /// 网络拉取到章节正文后调用, 落盘供下次本地命中。
+  Future<void> saveChapterContent(
+    String bookId,
+    int chapterIndex,
+    String title,
+    String content,
+  );
 
   // ─────────────────────────── 生命周期 ───────────────────────────
 

@@ -8,6 +8,7 @@ import '../models/book.dart';
 import '../models/bookmark.dart';
 import '../models/reading_settings.dart';
 import '../models/reading_settings_codec.dart';
+import 'cached_chapter.dart';
 import 'reader_repository.dart';
 import 'reader_user.dart';
 import 'reading_progress.dart';
@@ -20,9 +21,12 @@ import 'reading_progress.dart';
 /// - `bookmarks(id TEXT PK, user_id, book_id, chapter_index, page_index, char_offset, content, created_at)`
 /// - `settings(user_id TEXT PK, json TEXT, updated_at INTEGER)`
 /// - `books(user_id, book_id, title, author, cover_url, current_chapter_index, current_page_index, updated_at, PK(user_id,book_id))`
+/// - `chapter_contents(book_id, chapter_index, title, content, fetched_at, PK(book_id,chapter_index))` — 章节正文缓存(v2)
 ///
 /// 进度/书签/书架均按 user_id 隔离; settings 整体存 JSON(便于 schema 演进, 见
 /// [encodeReadingSettings] 的 `_version` 字段)。
+/// **章节正文缓存不走 user_id**: 正文与用户无关(同书 A 用户第N章 = B 用户的),
+/// 仅按 bookId+chapterIndex 存, 避免冗余; removeBook 时按 book_id 级联清理。
 ///
 /// 用法:
 /// ```dart
@@ -35,7 +39,9 @@ class SqfliteReaderRepository implements ReaderRepository {
   final Database _db;
 
   static const _kDbName = 'flutter_reader.db';
-  static const _kDbVersion = 1;
+  // v2: 新增 chapter_contents 表(章节正文缓存, 用于二次打开秒开)。
+  // _onUpgrade 在老库上用 IF NOT EXISTS 增量建表, 已有数据不动。
+  static const _kDbVersion = 2;
 
   /// 打开(或创建)数据库。
   ///
@@ -118,6 +124,20 @@ class SqfliteReaderRepository implements ReaderRepository {
         PRIMARY KEY (user_id, book_id)
       )
     ''');
+    // 章节正文缓存(v2)。正文与用户无关, 仅按 bookId+chapterIndex 复合键存。
+    batch.execute('''
+      CREATE TABLE IF NOT EXISTS chapter_contents (
+        book_id TEXT NOT NULL,
+        chapter_index INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (book_id, chapter_index)
+      )
+    ''');
+    batch.execute(
+      'CREATE INDEX IF NOT EXISTS idx_chapter_contents_book ON chapter_contents(book_id, chapter_index)',
+    );
     await batch.commit(noResult: true);
   }
 
@@ -126,9 +146,22 @@ class SqfliteReaderRepository implements ReaderRepository {
     int oldVersion,
     int newVersion,
   ) async {
-    // 未来 schema 升级在此增量建表/加列。当前仅 v1, 暂无迁移。
-    // 保留空实现以便后续 ALTER, 同时 onCreate 已用 IF NOT EXISTS 幂等。
-    await _onCreate(db, newVersion);
+    // 增量建表: v2 新增 chapter_contents(用 IF NOT EXISTS, 老库平滑升级, 已有数据不动)。
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS chapter_contents (
+          book_id TEXT NOT NULL,
+          chapter_index INTEGER NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          content TEXT NOT NULL DEFAULT '',
+          fetched_at INTEGER NOT NULL,
+          PRIMARY KEY (book_id, chapter_index)
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_chapter_contents_book ON chapter_contents(book_id, chapter_index)',
+      );
+    }
   }
 
   @override
@@ -333,6 +366,9 @@ class SqfliteReaderRepository implements ReaderRepository {
         where: 'user_id = ? AND book_id = ?', whereArgs: [userId, bookId]);
     batch.delete('bookmarks',
         where: 'user_id = ? AND book_id = ?', whereArgs: [userId, bookId]);
+    // 章节正文缓存: 正文与用户无关, 但随「删书架」一并清理(用户从书架移除书
+    // 即视为不再需要该书缓存)。按 book_id 清, 不需要 user_id。
+    batch.delete('chapter_contents', where: 'book_id = ?', whereArgs: [bookId]);
     await batch.commit(noResult: true);
   }
 
@@ -344,6 +380,63 @@ class SqfliteReaderRepository implements ReaderRepository {
       coverUrl: row['cover_url'] as String?,
       currentChapterIndex: (row['current_chapter_index'] as int?) ?? 0,
       currentPageIndex: (row['current_page_index'] as int?) ?? 0,
+    );
+  }
+
+  // ─────────────────────────── 章节正文缓存 ───────────────────────────
+
+  @override
+  Future<List<CachedChapter>> getBookChapters(String bookId) async {
+    final rows = await _db.query(
+      'chapter_contents',
+      where: 'book_id = ?',
+      whereArgs: [bookId],
+      orderBy: 'chapter_index ASC',
+    );
+    return rows.map(_rowToCachedChapter).toList();
+  }
+
+  @override
+  Future<CachedChapter?> getCachedChapter(
+    String bookId,
+    int chapterIndex,
+  ) async {
+    final rows = await _db.query(
+      'chapter_contents',
+      where: 'book_id = ? AND chapter_index = ?',
+      whereArgs: [bookId, chapterIndex],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _rowToCachedChapter(rows.first);
+  }
+
+  @override
+  Future<void> saveChapterContent(
+    String bookId,
+    int chapterIndex,
+    String title,
+    String content,
+  ) async {
+    await _db.insert(
+      'chapter_contents',
+      {
+        'book_id': bookId,
+        'chapter_index': chapterIndex,
+        'title': title,
+        'content': content,
+        'fetched_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  CachedChapter _rowToCachedChapter(Map<String, dynamic> row) {
+    return CachedChapter(
+      bookId: row['book_id'] as String,
+      chapterIndex: row['chapter_index'] as int,
+      title: (row['title'] as String?) ?? '',
+      content: (row['content'] as String?) ?? '',
     );
   }
 }

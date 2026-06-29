@@ -277,6 +277,37 @@ lineHeight=1.5 → 偏下 12px
 - `sqflite_repository_test.dart`(7)：CRUD/upsert/用户隔离/removeBook 级联清理。
 - `persistence_integration_test.dart`(6)：进度恢复/跨字号不跳页/书签同步/设置持久化/纯内存降级/多用户隔离。
 
+## 章节正文缓存（2026-06-29 实现，二次打开秒开）
+
+**问题**：example 打开书每次都转圈——`fetchChapters` 一次 `POST /api/novel/chapter` 拉全书所有章节正文（几百 KB~几 MB），等这个大请求返回才能渲染。原生 legado 快是因为章节正文缓存在本地 DB，二次打开读本地几乎 0 延迟。
+
+**后端能力（已实测确认）**：只有两个接口可用——
+- `GET /api/novel/index` 返回**书库列表**（每本 `{id,title,author,desc,thumb}`），**不含章节目录**。
+- `POST /api/novel/chapter`（body `{id}`）**一次返回全书所有章节完整正文**，无法只拉目录或单章。
+- `/api/novel/info|detail|show|catalog` 均不存在（404）。
+
+故无法做按需拉取/骨架先显（需后端配合）。本次只做**正文本地缓存**：首次打开仍等全网，**二次起秒开**。
+
+### 缓存表设计
+- 新表 `chapter_contents(book_id, chapter_index, title, content, fetched_at, PK(book_id,chapter_index))`，schema 升 **v2**（`_onUpgrade` 用 `IF NOT EXISTS` 增量建表，老库平滑升级，已有数据不动）。
+- **不走 userId 隔离**：章节正文是书的内容，与用户无关（同书 A 用户第 N 章 = B 用户的），仅按 `bookId + chapterIndex` 复合键存，避免冗余。progress/bookmarks 仍按用户隔离。
+- **清理**：`removeBook(bookId)` 时按 `book_id` 级联清缓存（删书架即清缓存）。
+- **无 TTL/失效检测**：连载新书出新章时本地会旧。本轮不做，留待后端有「最后章数/更新时间」接口时再做。
+
+### Repository 接口（3 个原语，宿主组合「本地优先」策略）
+- `getBookChapters(bookId)` — 二次打开主路径，一次拿全书已缓存章节（按 index 升序）。
+- `getCachedChapter(bookId, index)` — 单章查询（预取/校验用）。
+- `saveChapterContent(bookId, index, title, content)` — 网络下完后回填（upsert）。
+- 新模型 `CachedChapter { bookId, chapterIndex, title, content }`（`lib/src/core/storage/cached_chapter.dart`）。
+
+### Controller 不动
+controller 仍读 `book.chapters[i].content`。「本地优先」逻辑放 example（`_fetchChaptersLocalFirst`）：先 `getBookChapters` 本地查 → 命中即渲染（秒开）→ 未命中走网络 → 逐章回填 `saveChapterContent`。包内 repository 只提供存/取原语，保持抽象层纯净，宿主可选用或不用缓存。
+
+### 测试（sqflite_repository_test.dart 新增 3 用例）
+- `saveChapterContent/getBookChapters` 往返 + 升序 + 按书隔离。
+- `getCachedChapter` 单章 + upsert 覆盖。
+- `removeBook` 级联清章节缓存。全 62 测试通过。
+
 ## 待办（先不做动画）
 
 - ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。

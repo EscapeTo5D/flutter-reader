@@ -163,4 +163,59 @@ void main() {
     expect(u.name, '张三');
     await repo.close();
   });
+
+  // ─────────────────────────── 章节正文缓存 ───────────────────────────
+
+  test('saveChapterContent/getBookChapters 往返 + 升序', () async {
+    final repo = await newRepo();
+    expect(await repo.getBookChapters('b1'), isEmpty);
+
+    await repo.saveChapterContent('b1', 2, '第二章', '内容2');
+    await repo.saveChapterContent('b1', 0, '第一章', '内容0');
+    await repo.saveChapterContent('b1', 1, '第二章', '内容1');
+
+    final list = await repo.getBookChapters('b1');
+    expect(list.length, 3);
+    // 按 chapter_index 升序返回
+    expect(list.map((c) => c.chapterIndex), [0, 1, 2]);
+    expect(list.first.title, '第一章');
+    expect(list.first.content, '内容0');
+    expect(list.last.title, '第二章');
+    expect(list.last.content, '内容2');
+    // 按书隔离
+    expect(await repo.getBookChapters('b2'), isEmpty);
+    await repo.close();
+  });
+
+  test('getCachedChapter 单章 + upsert 覆盖', () async {
+    final repo = await newRepo();
+    expect(await repo.getCachedChapter('b1', 0), isNull);
+
+    await repo.saveChapterContent('b1', 0, '旧标题', '旧内容');
+    final got = await repo.getCachedChapter('b1', 0);
+    expect(got, isNotNull);
+    expect(got!.title, '旧标题');
+    expect(got.content, '旧内容');
+
+    // 覆盖(同主键 upsert)
+    await repo.saveChapterContent('b1', 0, '新标题', '新内容');
+    final got2 = await repo.getCachedChapter('b1', 0);
+    expect(got2!.title, '新标题');
+    expect(got2.content, '新内容');
+    await repo.close();
+  });
+
+  test('removeBook 级联清章节缓存', () async {
+    final repo = await newRepo();
+    await repo.saveChapterContent('b1', 0, '第一章', '内容');
+    await repo.saveChapterContent('b1', 1, '第二章', '内容');
+    // 书架得先有该书(removeBook 按 user+book 删)
+    await repo.saveBookMeta('u1', Book(id: 'b1', title: '书', author: ''));
+
+    expect((await repo.getBookChapters('b1')).length, 2);
+    await repo.removeBook('u1', 'b1');
+    // 缓存随删书架一并清理
+    expect(await repo.getBookChapters('b1'), isEmpty);
+    await repo.close();
+  });
 }

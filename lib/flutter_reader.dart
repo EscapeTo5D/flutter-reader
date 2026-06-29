@@ -1,5 +1,3 @@
-library flutter_reader;
-
 export 'src/core/models/book.dart';
 export 'src/core/models/reading_settings.dart';
 export 'src/core/models/reading_settings_codec.dart';
@@ -7,6 +5,7 @@ export 'src/core/models/bookmark.dart';
 export 'src/core/controller/reading_controller.dart';
 export 'src/core/content_processor.dart';
 export 'src/core/storage/reader_repository.dart';
+export 'src/core/storage/cached_chapter.dart';
 export 'src/core/storage/reader_user.dart';
 export 'src/core/storage/reading_progress.dart';
 export 'src/core/storage/sqflite_reader_repository.dart';
@@ -19,4 +18,5 @@ export 'src/reader/widgets/page_view.dart';
 export 'src/reader/widgets/chapter_list_page.dart';
 export 'src/reader/widgets/legado_icons.dart';
 export 'src/reader/widgets/search_menu.dart';
-export 'src/reader/widgets/text_selection_toolbar.dart' show ReaderTextSelectionToolbar;
+export 'src/reader/widgets/text_selection_toolbar.dart'
+    show ReaderTextSelectionToolbar;

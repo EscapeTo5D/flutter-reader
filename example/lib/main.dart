@@ -162,7 +162,8 @@ class _ReaderPageState extends State<ReaderPage> {
     try {
       // 先恢复阅读设置(字号/行距/颜色等), 让 reader_view 首帧就用上次的设置
       await _controller.loadSettings();
-      final chapters = await _api.fetchChapters(widget.novelId);
+
+      final chapters = await _fetchChaptersLocalFirst(widget.novelId);
       if (!mounted) return;
 
       final book = Book(
@@ -192,6 +193,47 @@ class _ReaderPageState extends State<ReaderPage> {
         });
       }
     }
+  }
+
+  /// 章节正文「本地优先」加载。
+  ///
+  /// 1. 先查本地缓存([ReaderRepository.getBookChapters]): 命中且非空 → 直接返回,
+  ///    跳过全网请求(二次打开秒开的关键路径)。
+  /// 2. 未命中(首次打开/缓存被清) → 走网络 [ApiService.fetchChapters] 一次拉全书,
+  ///    下完后逐章回填缓存(saveChapterContent), 下次即本地命中。
+  ///
+  /// 后端目前只有「一次拉全书」接口, 无目录/单章接口, 故无法只拉目录先显骨架;
+  /// 本地缓存是当前能做到的最大优化(二次起秒开)。
+  Future<List<ChapterInfo>> _fetchChaptersLocalFirst(String novelId) async {
+    final repo = AppDatabase.repo;
+    final cached = await repo.getBookChapters(novelId);
+    if (cached.isNotEmpty) {
+      // 命中本地: 直接用缓存正文渲染
+      return cached
+          .map((c) => ChapterInfo(
+                id: '${novelId}_${c.chapterIndex}',
+                title: c.title,
+                content: c.content,
+              ))
+          .toList();
+    }
+
+    // 未命中: 走网络拉取
+    final chapters = await _api.fetchChapters(novelId);
+    // 回填缓存(逐章 upsert)。网络失败不致命——本次渲染照常用 chapters。
+    try {
+      for (var i = 0; i < chapters.length; i++) {
+        await repo.saveChapterContent(
+          novelId,
+          i,
+          chapters[i].title,
+          chapters[i].content,
+        );
+      }
+    } catch (_) {
+      // 缓存写入失败不影响本次阅读, 静默
+    }
+    return chapters;
   }
 
   @override
