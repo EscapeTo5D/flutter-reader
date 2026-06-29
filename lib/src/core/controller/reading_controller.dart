@@ -80,8 +80,8 @@ class ReadingController extends ChangeNotifier {
   bool _disposed = false;
 
   ReadingController({ReaderRepository? repository, String? userId})
-      : _repository = repository,
-        _userId = userId;
+    : _repository = repository,
+      _userId = userId;
 
   /// 绑定持久化仓库与用户。两者任一为 null 则进入纯内存模式(不落盘)。
   /// 可在 [loadBook] 前后任意时刻调用; 已加载的书会立即触发一次进度恢复。
@@ -117,13 +117,14 @@ class ReadingController extends ChangeNotifier {
   List<int> get searchResults => _searchResults;
   int get searchResultIndex => _searchResultIndex;
   int get totalPages => _pages.length;
-  bool get canGoNext => _currentPageIndex < _pages.length - 1 || _currentChapterIndex < (_book?.chapters.length ?? 0) - 1;
+  bool get canGoNext =>
+      _currentPageIndex < _pages.length - 1 ||
+      _currentChapterIndex < (_book?.chapters.length ?? 0) - 1;
   bool get canGoPrevious => _currentPageIndex > 0 || _currentChapterIndex > 0;
 
-  Chapter? get currentChapter =>
-      _book != null && _book!.chapters.isNotEmpty
-          ? _book!.chapters[_currentChapterIndex]
-          : null;
+  Chapter? get currentChapter => _book != null && _book!.chapters.isNotEmpty
+      ? _book!.chapters[_currentChapterIndex]
+      : null;
 
   void loadBook(Book book) {
     _book = book;
@@ -244,6 +245,25 @@ class ReadingController extends ChangeNotifier {
     if (p != null && _repository != null) {
       await _repository!.saveProgress(p);
     }
+  }
+
+  /// 立即落盘阅读设置(取消防抖定时器, 同步写)。
+  ///
+  /// 宿主在退出阅读页前可与 [flushProgress] 一起调用, 避免用户刚调整字号/颜色后
+  /// 立刻离开页面导致防抖写入尚未执行。
+  Future<void> flushSettings() async {
+    _settingsSaveTimer?.cancel();
+    _settingsSaveTimer = null;
+    final repo = _repository;
+    if (repo != null) {
+      await repo.saveSettings(_settings, userId: _userId);
+    }
+  }
+
+  /// 立即落盘当前进度与设置。
+  Future<void> flushPersistence() async {
+    await flushProgress();
+    await flushSettings();
   }
 
   void updateSettings(ReadingSettings settings) {
@@ -407,7 +427,9 @@ class ReadingController extends ChangeNotifier {
 
   void previousSearchResult() {
     if (_searchResults.isEmpty) return;
-    _searchResultIndex = (_searchResultIndex - 1 + _searchResults.length) % _searchResults.length;
+    _searchResultIndex =
+        (_searchResultIndex - 1 + _searchResults.length) %
+        _searchResults.length;
     goToChapter(_searchResults[_searchResultIndex]);
     notifyListeners();
   }
@@ -415,7 +437,10 @@ class ReadingController extends ChangeNotifier {
   void addBookmark() {
     if (_book == null || currentChapter == null) return;
     final existing = _bookmarks.indexWhere(
-      (b) => b.bookId == _book!.id && b.chapterIndex == _currentChapterIndex && b.pageIndex == _currentPageIndex,
+      (b) =>
+          b.bookId == _book!.id &&
+          b.chapterIndex == _currentChapterIndex &&
+          b.pageIndex == _currentPageIndex,
     );
     if (existing >= 0) {
       final removed = _bookmarks.removeAt(existing);
@@ -465,13 +490,20 @@ class ReadingController extends ChangeNotifier {
   bool isCurrentPageBookmarked() {
     if (_book == null) return false;
     return _bookmarks.any(
-      (b) => b.bookId == _book!.id && b.chapterIndex == _currentChapterIndex && b.pageIndex == _currentPageIndex,
+      (b) =>
+          b.bookId == _book!.id &&
+          b.chapterIndex == _currentChapterIndex &&
+          b.pageIndex == _currentPageIndex,
     );
   }
 
   ClickAction getClickAction(Offset position, Size size) {
-    final col = position.dx < size.width / 3 ? 0 : (position.dx < size.width * 2 / 3 ? 1 : 2);
-    final row = position.dy < size.height / 3 ? 0 : (position.dy < size.height * 2 / 3 ? 1 : 2);
+    final col = position.dx < size.width / 3
+        ? 0
+        : (position.dx < size.width * 2 / 3 ? 1 : 2);
+    final row = position.dy < size.height / 3
+        ? 0
+        : (position.dy < size.height * 2 / 3 ? 1 : 2);
     final config = _settings.clickConfig;
     if (row == 0 && col == 0) return config.topLeft;
     if (row == 0 && col == 1) return config.topCenter;
@@ -524,7 +556,9 @@ class ReadingController extends ChangeNotifier {
   }
 
   Chapter? getChapter(int index) {
-    if (_book == null || index < 0 || index >= _book!.chapters.length) return null;
+    if (_book == null || index < 0 || index >= _book!.chapters.length) {
+      return null;
+    }
     return _book!.chapters[index];
   }
 
@@ -586,7 +620,8 @@ class ReadingController extends ChangeNotifier {
   /// 若影响分页结果的输入(settings / pageSize)发生变化, 清空整个相邻章缓存。
   /// `_settings` 每次 updateSettings 传入新对象, 引用比较即可判断变化。
   void _invalidateAdjacentCacheIfNeeded() {
-    if (!identical(_settings, _cacheSettingsRef) || _pageSize != _cachePageSize) {
+    if (!identical(_settings, _cacheSettingsRef) ||
+        _pageSize != _cachePageSize) {
       _adjacentChapterCache.clear();
       _cacheSettingsRef = _settings;
       _cachePageSize = _pageSize;
@@ -608,7 +643,9 @@ class ReadingController extends ChangeNotifier {
     }
     // 当前章末页 → 下一章首页
     if (_currentChapterIndex < _book!.chapters.length - 1) {
-      final nextChapterPages = _paginateChapterWithPipeline(_currentChapterIndex + 1);
+      final nextChapterPages = _paginateChapterWithPipeline(
+        _currentChapterIndex + 1,
+      );
       if (nextChapterPages.isNotEmpty) {
         return PeekInfo(
           page: nextChapterPages.first,
@@ -634,7 +671,9 @@ class ReadingController extends ChangeNotifier {
     }
     // 当前章首页 → 上一章末页
     if (_currentChapterIndex > 0) {
-      final prevChapterPages = _paginateChapterWithPipeline(_currentChapterIndex - 1);
+      final prevChapterPages = _paginateChapterWithPipeline(
+        _currentChapterIndex - 1,
+      );
       if (prevChapterPages.isNotEmpty) {
         return PeekInfo(
           page: prevChapterPages.last,
@@ -696,8 +735,8 @@ class ReadingController extends ChangeNotifier {
     final repo = _repository;
     if (repo == null) return;
     // 优先取用户设置, 没有再取全局
-    final s = (await repo.getSettings(userId: _userId)) ??
-        await repo.getSettings();
+    final s =
+        (await repo.getSettings(userId: _userId)) ?? await repo.getSettings();
     if (s != null && !_disposed) {
       _settings = s;
       _rePaginate();
@@ -724,7 +763,14 @@ class ReadingController extends ChangeNotifier {
     _progressSaveTimer?.cancel();
     _settingsSaveTimer?.cancel();
     if (pending != null && _repository != null) {
-      _repository!.saveProgress(pending); // fire-and-forget
+      unawaited(_repository!.saveProgress(pending).catchError((_) {}));
+    }
+    if (_repository != null) {
+      unawaited(
+        _repository!
+            .saveSettings(_settings, userId: _userId)
+            .catchError((_) {}),
+      );
     }
     super.dispose();
   }

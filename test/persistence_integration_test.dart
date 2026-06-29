@@ -26,12 +26,14 @@ void main() {
       for (var p = 0; p < 30; p++) {
         paragraphs.add('第${c + 1}章第${p + 1}段内容' * 4);
       }
-      chapters.add(Chapter(
-        id: 'ch$c',
-        title: '第${c + 1}章 章节标题',
-        content: paragraphs.join('\n'),
-        index: c,
-      ));
+      chapters.add(
+        Chapter(
+          id: 'ch$c',
+          title: '第${c + 1}章 章节标题',
+          content: paragraphs.join('\n'),
+          index: c,
+        ),
+      );
     }
     return Book(
       id: 'book-test',
@@ -44,10 +46,10 @@ void main() {
   Future<SqfliteReaderRepository> newRepo() =>
       SqfliteReaderRepository.open(dbPath: ':memory:');
 
-  /// dispose 前先 flush 进度, 避免 dispose 的 fire-and-forget saveProgress
+  /// dispose 前先 flush 持久化, 避免 dispose 的 fire-and-forget 落库
   /// 在 repo.close() 之后才执行(测试场景的时序问题, 非产品 bug)。
   Future<void> closeController(ReadingController c) async {
-    await c.flushProgress();
+    await c.flushPersistence();
     c.dispose();
   }
 
@@ -64,8 +66,10 @@ void main() {
     c1.goToPage(2);
     expect(c1.currentPageIndex, 2);
     final savedChapter = c1.currentChapterIndex;
-    final savedOffset =
-        c1.pages[2].lines.where((l) => l.text.isNotEmpty).first.chapterPosition;
+    final savedOffset = c1.pages[2].lines
+        .where((l) => l.text.isNotEmpty)
+        .first
+        .chapterPosition;
 
     await c1.flushProgress();
     await closeController(c1);
@@ -82,8 +86,7 @@ void main() {
     c2.updatePageSize(const Size(120, 200)); // 同尺寸
     await Future.delayed(const Duration(milliseconds: 100));
 
-    expect(c2.currentChapterIndex, savedChapter,
-        reason: '应恢复到同一章');
+    expect(c2.currentChapterIndex, savedChapter, reason: '应恢复到同一章');
     expect(c2.currentPageIndex, 2, reason: '应恢复到第 2 页');
     await closeController(c2);
     await repo.close();
@@ -117,15 +120,21 @@ void main() {
         .first
         .chapterPosition;
     // 恢复页的首行 offset 应 <= 原 offset, 且下一页首行 offset > 原 offset
-    expect(restoredOffset, lessThanOrEqualTo(offsetA),
-        reason: '恢复页首行 offset 应 <= 原 offset');
+    expect(
+      restoredOffset,
+      lessThanOrEqualTo(offsetA),
+      reason: '恢复页首行 offset 应 <= 原 offset',
+    );
     if (cB.currentPageIndex + 1 < cB.pages.length) {
       final nextOffset = cB.pages[cB.currentPageIndex + 1].lines
           .where((l) => l.text.isNotEmpty)
           .first
           .chapterPosition;
-      expect(nextOffset, greaterThan(offsetA),
-          reason: '下一页首行 offset 应 > 原 offset (说明定位精确)');
+      expect(
+        nextOffset,
+        greaterThan(offsetA),
+        reason: '下一页首行 offset 应 > 原 offset (说明定位精确)',
+      );
     }
     await closeController(cB);
     await repo.close();
@@ -183,6 +192,22 @@ void main() {
     await repo.close();
   });
 
+  test('flushSettings 立即保存待落盘设置', () async {
+    final repo = await newRepo();
+    final c1 = ReadingController(repository: repo, userId: 'u1');
+    c1.updateSettings(ReadingSettings().copyWith(fontSize: 31));
+
+    await c1.flushSettings();
+    await closeController(c1);
+
+    final c2 = ReadingController(repository: repo, userId: 'u1');
+    await c2.loadSettings();
+
+    expect(c2.settings.fontSize, 31);
+    await closeController(c2);
+    await repo.close();
+  });
+
   test('纯内存模式(无 repo)不报错, 行为与旧版一致', () async {
     final c = ReadingController(); // 无 repo
     c.loadBook(makeBook());
@@ -193,7 +218,7 @@ void main() {
     c.addBookmark();
     expect(c.bookmarks.length, 1);
     // flush 在无 repo 时是 no-op, 不应抛
-    await c.flushProgress();
+    await c.flushPersistence();
     await closeController(c);
   });
 
