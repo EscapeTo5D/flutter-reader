@@ -34,7 +34,7 @@ void main() {
     final paragraphs = <String>[];
     for (var i = 0; i < 80; i++) {
       final len = 15 + (i * 7) % 40;
-      paragraphs.add('第${i + 1}段' + '内容文字啊' * (len ~/ 3));
+      paragraphs.add('第${i + 1}段${'内容文字啊' * (len ~/ 3)}');
     }
     return paragraphs.join('\n');
   }
@@ -70,9 +70,13 @@ void main() {
         final overflow = renderH - available;
         if (overflow > maxOverflow) maxOverflow = overflow;
       }
-      expect(maxOverflow, lessThan(0.5),
-          reason: '$label: 第某页溢出 ${maxOverflow.toStringAsFixed(2)}px, '
-              '末行会被 ClipRect 裁掉(截断)');
+      expect(
+        maxOverflow,
+        lessThan(0.5),
+        reason:
+            '$label: 第某页溢出 ${maxOverflow.toStringAsFixed(2)}px, '
+            '末行会被 ClipRect 裁掉(截断)',
+      );
     });
   }
 }
