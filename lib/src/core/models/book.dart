@@ -1,3 +1,5 @@
+import 'chapter_source.dart';
+
 class Book {
   final String id;
   final String title;
@@ -7,12 +9,23 @@ class Book {
   int currentChapterIndex;
   int currentPageIndex;
 
+  /// 章节正文按需加载源(可选)。
+  ///
+  /// 设置后, [ReadingController] 走「按章加载」路径: 只在需要时(当前章/相邻章)
+  /// 通过 [ChapterSource.loadContent] 懒加载正文, 内存不驻留全书。对齐原生 legado
+  /// 相邻三章缓存的内存模型。
+  ///
+  /// 为 null 时退化为旧的全量内存路径(直接读 [chapters] 的 content)。
+  /// 二者不互斥: [chapters] 可仅用于目录标题, 正文由 [chapterSource] 提供。
+  final ChapterSource? chapterSource;
+
   Book({
     required this.id,
     required this.title,
     required this.author,
     this.coverUrl,
     this.chapters = const [],
+    this.chapterSource,
     this.currentChapterIndex = 0,
     this.currentPageIndex = 0,
   });

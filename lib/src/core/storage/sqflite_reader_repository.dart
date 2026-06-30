@@ -412,6 +412,23 @@ class SqfliteReaderRepository implements ReaderRepository {
   }
 
   @override
+  Future<List<CachedChapter>> getCachedChaptersInRange(
+    String bookId,
+    int fromIndex,
+    int toIndex,
+  ) async {
+    // from > to 视为空区间, 避免误查全表。
+    if (fromIndex > toIndex) return const [];
+    final rows = await _db.query(
+      'chapter_contents',
+      where: 'book_id = ? AND chapter_index BETWEEN ? AND ?',
+      whereArgs: [bookId, fromIndex, toIndex],
+      orderBy: 'chapter_index ASC',
+    );
+    return rows.map(_rowToCachedChapter).toList();
+  }
+
+  @override
   Future<void> saveChapterContent(
     String bookId,
     int chapterIndex,
@@ -429,6 +446,30 @@ class SqfliteReaderRepository implements ReaderRepository {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  @override
+  Future<void> saveChapterContents(
+    String bookId,
+    Iterable<CachedChapter> chapters,
+  ) async {
+    // 单事务批量 upsert: 网络拉全书后一次回填, 比循环单条 insert 快得多。
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final batch = _db.batch();
+    for (final c in chapters) {
+      batch.insert(
+        'chapter_contents',
+        {
+          'book_id': bookId,
+          'chapter_index': c.chapterIndex,
+          'title': c.title,
+          'content': c.content,
+          'fetched_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
   }
 
   CachedChapter _rowToCachedChapter(Map<String, dynamic> row) {

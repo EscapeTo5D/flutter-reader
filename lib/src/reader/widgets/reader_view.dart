@@ -289,12 +289,40 @@ class _ReaderViewState extends State<ReaderView>
     final currentIndex = controller.currentPageIndex;
 
     if (pages.isEmpty) {
-      return Center(
-        child: Text(
-          controller.currentChapter?.content ?? '',
-          style: TextStyle(
-            fontSize: controller.settings.fontSize,
-            color: controller.settings.textColor,
+      // pages 为空时的占位渲染:
+      // - 章节加载/排版中(controller.chapterLoading)→ 显示与正文背景一致的空白
+      //   占位(不闪现未排版原文)。对齐 legado 排版未完成时不显示正文。
+      // - 已就绪但章节无内容 → 轻提示。
+      //
+      // 旧实现这里直接 Text(currentChapter.content) 会闪现整章未排版原文, 是卡顿
+      // 的可见症状之一(详见 AGENTS.md 根因)。改为占位后, 排版期间 UI 干净。
+      final bg = controller.settings.backgroundColor;
+      if (controller.chapterLoading) {
+        return ColoredBox(
+          color: bg,
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(
+                  controller.settings.textColor.withValues(alpha: 0.4),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      return ColoredBox(
+        color: bg,
+        child: Center(
+          child: Text(
+            '本章暂无内容',
+            style: TextStyle(
+              fontSize: controller.settings.fontSize,
+              color: controller.settings.textColor.withValues(alpha: 0.5),
+            ),
           ),
         ),
       );
