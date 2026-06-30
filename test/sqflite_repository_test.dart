@@ -4,6 +4,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_reader/src/core/models/book.dart';
 import 'package:flutter_reader/src/core/models/bookmark.dart';
 import 'package:flutter_reader/src/core/models/reading_settings.dart';
+import 'package:flutter_reader/src/core/storage/cached_chapter.dart';
 import 'package:flutter_reader/src/core/storage/sqflite_reader_repository.dart';
 import 'package:flutter_reader/src/core/storage/reader_user.dart';
 import 'package:flutter_reader/src/core/storage/reading_progress.dart';
@@ -216,6 +217,63 @@ void main() {
     await repo.removeBook('u1', 'b1');
     // 缓存随删书架一并清理
     expect(await repo.getBookChapters('b1'), isEmpty);
+    await repo.close();
+  });
+
+  // ─────────────────────────── 范围查 / 批量写 ───────────────────────────
+
+  test('getCachedChaptersInRange 闭区间 + 升序 + 按书隔离', () async {
+    final repo = await newRepo();
+    // 准备 b1 的 0~4 章
+    await repo.saveChapterContents('b1', [
+      for (var i = 0; i < 5; i++)
+        CachedChapter(bookId: 'b1', chapterIndex: i, title: '章$i', content: 'c$i'),
+    ]);
+    // b2 混入同名章, 验证按书隔离
+    await repo.saveChapterContent('b2', 1, '别书', '别内容');
+
+    // 闭区间 [1, 3]
+    final range = await repo.getCachedChaptersInRange('b1', 1, 3);
+    expect(range.map((c) => c.chapterIndex), [1, 2, 3]);
+    expect(range.first.content, 'c1');
+    expect(range.last.content, 'c3');
+    // 不含 b2 的章
+    expect(range.every((c) => c.bookId == 'b1'), isTrue);
+
+    // 缺失章: b1 只存了偶数, 奇数 index 不在结果里
+    await repo.saveChapterContents('b3', [
+      CachedChapter(bookId: 'b3', chapterIndex: 0, title: 't0', content: 'x0'),
+      CachedChapter(bookId: 'b3', chapterIndex: 2, title: 't2', content: 'x2'),
+      CachedChapter(bookId: 'b3', chapterIndex: 4, title: 't4', content: 'x4'),
+    ]);
+    final sparse = await repo.getCachedChaptersInRange('b3', 0, 4);
+    expect(sparse.map((c) => c.chapterIndex), [0, 2, 4]);
+
+    // 空区间(from > to)返回空, 不误查全表
+    expect(await repo.getCachedChaptersInRange('b1', 3, 1), isEmpty);
+    await repo.close();
+  });
+
+  test('saveChapterContents 批量写 + 覆盖 + 等价于循环单写', () async {
+    final repo = await newRepo();
+    await repo.saveChapterContents('b1', [
+      CachedChapter(bookId: 'b1', chapterIndex: 0, title: 'a', content: 'A'),
+      CachedChapter(bookId: 'b1', chapterIndex: 1, title: 'b', content: 'B'),
+    ]);
+    var all = await repo.getBookChapters('b1');
+    expect(all.length, 2);
+    expect(all.first.content, 'A');
+
+    // 批量覆盖(同主键 upsert)
+    await repo.saveChapterContents('b1', [
+      CachedChapter(bookId: 'b1', chapterIndex: 0, title: 'a', content: 'A2'),
+      CachedChapter(bookId: 'b1', chapterIndex: 2, title: 'c', content: 'C'),
+    ]);
+    all = await repo.getBookChapters('b1');
+    expect(all.map((c) => c.chapterIndex), [0, 1, 2]);
+    expect(all.firstWhere((c) => c.chapterIndex == 0).content, 'A2');
+    expect(all.firstWhere((c) => c.chapterIndex == 1).content, 'B'); // 未覆盖
+    expect(all.firstWhere((c) => c.chapterIndex == 2).content, 'C');
     await repo.close();
   });
 }

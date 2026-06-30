@@ -163,23 +163,16 @@ class _ReaderPageState extends State<ReaderPage> {
       // 先恢复阅读设置(字号/行距/颜色等), 让 reader_view 首帧就用上次的设置
       await _controller.loadSettings();
 
-      final chapters = await _fetchChaptersLocalFirst(widget.novelId);
+      final source = await _buildChapterSource(widget.novelId);
       if (!mounted) return;
 
       final book = Book(
         id: widget.novelId,
         title: widget.novelTitle,
         author: '',
-        chapters: chapters
-            .asMap()
-            .entries
-            .map((e) => Chapter(
-                  id: e.value.id,
-                  title: e.value.title,
-                  content: e.value.content,
-                  index: e.key,
-                ))
-            .toList(),
+        // 按章加载: 正文不在 chapters 常驻内存, 由 source 按章懒加载。
+        // chapters 仅保留(可选)目录标题, 实际标题/正文都走 chapterSource。
+        chapterSource: source,
       );
       _controller.loadBook(book);
       // 加入书架(保存元信息, 供"上次阅读"列表用)
@@ -195,45 +188,53 @@ class _ReaderPageState extends State<ReaderPage> {
     }
   }
 
-  /// 章节正文「本地优先」加载。
+  /// 构造按章加载源(本地缓存优先)。
   ///
-  /// 1. 先查本地缓存([ReaderRepository.getBookChapters]): 命中且非空 → 直接返回,
-  ///    跳过全网请求(二次打开秒开的关键路径)。
-  /// 2. 未命中(首次打开/缓存被清) → 走网络 [ApiService.fetchChapters] 一次拉全书,
-  ///    下完后逐章回填缓存(saveChapterContent), 下次即本地命中。
+  /// 对齐原生 legado「章节正文按章从 DB 读」:
+  /// - 缓存命中: 从 `getBookChapters` 只取**标题列表**(目录), 正文不灌内存,
+  ///   由 [CachedChapterSource.loadContent] 按章懒加载(命中本地)。
+  /// - 缓存未命中: 网络一次拉全书 → **批量回填**缓存(saveChapterContents,
+  ///   单事务, 比逐章循环快)→ 只取标题列表灌 source, 正文仍按章懒加载。
   ///
-  /// 后端目前只有「一次拉全书」接口, 无目录/单章接口, 故无法只拉目录先显骨架;
-  /// 本地缓存是当前能做到的最大优化(二次起秒开)。
-  Future<List<ChapterInfo>> _fetchChaptersLocalFirst(String novelId) async {
+  /// 后端只有「一次拉全书」接口, 无目录/单章接口。但通过 ChapterSource 抽象,
+  /// controller 内存只驻留当前章 ± 相邻章窗口的正文, 不再全书常驻——
+  /// 内存占用与排版预热开销都降到单章量级。
+  Future<CachedChapterSource> _buildChapterSource(String novelId) async {
     final repo = AppDatabase.repo;
     final cached = await repo.getBookChapters(novelId);
     if (cached.isNotEmpty) {
-      // 命中本地: 直接用缓存正文渲染
-      return cached
-          .map((c) => ChapterInfo(
-                id: '${novelId}_${c.chapterIndex}',
-                title: c.title,
-                content: c.content,
-              ))
-          .toList();
+      // 命中本地: 标题从缓存行提取, 正文按章懒加载(命中本地缓存)
+      return CachedChapterSource.fromCached(
+        chapters: cached,
+        repository: repo,
+        bookId: novelId,
+      );
     }
 
-    // 未命中: 走网络拉取
+    // 未命中: 走网络一次拉全书, 批量回填缓存
     final chapters = await _api.fetchChapters(novelId);
-    // 回填缓存(逐章 upsert)。网络失败不致命——本次渲染照常用 chapters。
     try {
-      for (var i = 0; i < chapters.length; i++) {
-        await repo.saveChapterContent(
-          novelId,
-          i,
-          chapters[i].title,
-          chapters[i].content,
-        );
-      }
+      await repo.saveChapterContents(
+        novelId,
+        [
+          for (var i = 0; i < chapters.length; i++)
+            CachedChapter(
+              bookId: novelId,
+              chapterIndex: i,
+              title: chapters[i].title,
+              content: chapters[i].content,
+            ),
+        ],
+      );
     } catch (_) {
       // 缓存写入失败不影响本次阅读, 静默
     }
-    return chapters;
+    // 标题灌 source, 正文按章懒加载(下次命中本地)
+    return CachedChapterSource(
+      titles: chapters.map((c) => c.title).toList(growable: false),
+      repository: repo,
+      bookId: novelId,
+    );
   }
 
   @override

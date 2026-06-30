@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../models/book.dart';
+import '../models/chapter_source.dart';
 import '../models/reading_settings.dart';
 import '../../reader/entities/text_page.dart';
 import '../models/bookmark.dart';
 import '../../reader/engine/page_engine.dart';
+import '../../reader/engine/paginate_isolate.dart';
 import '../content_processor.dart';
 import '../storage/reader_repository.dart';
 import '../storage/reading_progress.dart';
@@ -57,6 +59,28 @@ class ReadingController extends ChangeNotifier {
   final Map<int, List<TextPage>> _adjacentChapterCache = {};
   ReadingSettings? _cacheSettingsRef;
   Size _cachePageSize = Size.zero;
+
+  // ─────────────────────────── 按章加载 / 异步排版 ───────────────────────────
+  //
+  // 对齐原生 legado: 章节正文从数据源按章懒加载(不全书常驻内存), 排版跑后台
+  // (isolate), 仅当前章 ± 相邻章驻留。详见 AGENTS.md「按章加载」。
+  //
+  // 章节加载状态机(每章独立):
+  //   idle   → 未请求
+  //   loading → 已发起加载/排版, 尚未就绪(此期间 [chapterLoading] 为 true)
+  //   ready   → 已就绪, 分页结果在 [_adjacentChapterCache]
+  // 用一个「正在加载的章节索引集合」表达 loading, 避免引入完整状态枚举的复杂度。
+
+  /// 当前正在后台加载/排版的章节索引集合(用于驱动 [chapterLoading])。
+  final Set<int> _loadingChapters = {};
+
+  /// 章节正文按需加载源(来自 [Book.chapterSource], null = 旧全量内存模式)。
+  ChapterSource? get _chapterSource => _book?.chapterSource;
+
+  /// 是否处于「章节加载中」状态: 当前章正在后台加载/排版, UI 应显示占位
+  /// 而非闪现原文。对齐 legado 排版未完成时不显示正文。
+  bool get chapterLoading =>
+      _loadingChapters.contains(_currentChapterIndex) && _pages.isEmpty;
 
   // ─────────────────────────── 持久化 ───────────────────────────
   /// 持久化仓库(null = 纯内存模式, 退化为不落盘, 兼容旧用法)。
@@ -117,13 +141,25 @@ class ReadingController extends ChangeNotifier {
   List<int> get searchResults => _searchResults;
   int get searchResultIndex => _searchResultIndex;
   int get totalPages => _pages.length;
+
+  /// 章节总数。按章加载模式下取自 [_chapterSource], 否则取自 [_book.chapters]。
+  int get totalChapters {
+    final source = _chapterSource;
+    if (source != null) return source.chapterCount;
+    return _book?.chapters.length ?? 0;
+  }
+
   bool get canGoNext =>
       _currentPageIndex < _pages.length - 1 ||
-      _currentChapterIndex < (_book?.chapters.length ?? 0) - 1;
+      _currentChapterIndex < totalChapters - 1;
   bool get canGoPrevious => _currentPageIndex > 0 || _currentChapterIndex > 0;
 
+  /// 当前章对象(旧全量内存模式)。按章加载模式下正文不在 chapters, 可能返回
+  /// 仅含标题的占位 Chapter 或 null——调用方渲染正文应改用 [_pages]。
   Chapter? get currentChapter => _book != null && _book!.chapters.isNotEmpty
-      ? _book!.chapters[_currentChapterIndex]
+      ? (_currentChapterIndex < _book!.chapters.length
+          ? _book!.chapters[_currentChapterIndex]
+          : null)
       : null;
 
   void loadBook(Book book) {
@@ -323,7 +359,7 @@ class ReadingController extends ChangeNotifier {
       _currentPageIndex++;
       notifyListeners();
       _scheduleProgressSave();
-    } else if (_currentChapterIndex < (_book?.chapters.length ?? 0) - 1) {
+    } else if (_currentChapterIndex < totalChapters - 1) {
       nextChapter();
     }
   }
@@ -347,7 +383,7 @@ class ReadingController extends ChangeNotifier {
 
   void nextChapter() {
     if (_book == null) return;
-    if (_currentChapterIndex < _book!.chapters.length - 1) {
+    if (_currentChapterIndex < totalChapters - 1) {
       _currentChapterIndex++;
       _currentPageIndex = 0;
       _rePaginate();
@@ -368,7 +404,7 @@ class ReadingController extends ChangeNotifier {
   }
 
   void goToChapter(int index) {
-    if (_book == null || index < 0 || index >= _book!.chapters.length) return;
+    if (_book == null || index < 0 || index >= totalChapters) return;
     _currentChapterIndex = index;
     _currentPageIndex = 0;
     _rePaginate();
@@ -398,6 +434,12 @@ class ReadingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 全书搜索。
+  ///
+  /// - 旧全量内存模式: 遍历 [_book.chapters] 的 content 做全文匹配。
+  /// - 按章加载模式: 正文不全在内存, 退化为「标题搜索」(匹配 [_chapterSource]
+  ///   各章标题)。正文全文搜索需宿主提供带正文的源或专用搜索接口, 留待后续。
+  ///   (TODO: 接入正文搜索, 或限制在已加载窗口内搜)
   void search(String query) {
     _searchQuery = query;
     _searchResults = [];
@@ -406,9 +448,20 @@ class ReadingController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    for (var i = 0; i < _book!.chapters.length; i++) {
-      if (_book!.chapters[i].content.contains(query)) {
-        _searchResults.add(i);
+    final source = _chapterSource;
+    if (source != null) {
+      // 按章加载: 标题搜索
+      for (var i = 0; i < source.chapterCount; i++) {
+        if (source.chapterTitle(i).contains(query)) {
+          _searchResults.add(i);
+        }
+      }
+    } else {
+      // 全量内存: 全文搜索
+      for (var i = 0; i < _book!.chapters.length; i++) {
+        if (_book!.chapters[i].content.contains(query)) {
+          _searchResults.add(i);
+        }
       }
     }
     if (_searchResults.isNotEmpty) {
@@ -562,19 +615,134 @@ class ReadingController extends ChangeNotifier {
     return _book!.chapters[index];
   }
 
-  int get totalChapters => _book?.chapters.length ?? 0;
-
   void _rePaginate() {
     if (_book == null || _pageSize == Size.zero) return;
-    final chapter = currentChapter;
-    if (chapter == null) {
-      _pages = [];
+    final source = _chapterSource;
+    if (source == null) {
+      // 旧全量内存模式: chapters 已持有全部正文, 同步重排(原有行为不变)。
+      final chapter = currentChapter;
+      if (chapter == null) {
+        _pages = [];
+        return;
+      }
+      _pages = _paginateChapterCached(_currentChapterIndex);
+      _clampCurrentPage();
       return;
     }
-    _pages = _paginateChapterWithPipeline(_currentChapterIndex);
+    // 按章加载模式。
+    // 快路径: 当前章分页缓存命中(预排过) → 同步就绪, 翻章流畅。
+    final cached = _adjacentChapterCache[_currentChapterIndex];
+    if (cached != null) {
+      _pages = cached;
+      _clampCurrentPage();
+      return;
+    }
+    // 未命中: 正文可能未加载或未排版。启动后台加载+排版, 期间 _pages 暂空(loading 态)。
+    // 异步完成后填 _pages 并 notifyListeners。
+    _pages = [];
+    _loadAndPaginateCurrentAsync();
+  }
+
+  void _clampCurrentPage() {
     if (_currentPageIndex >= _pages.length) {
       _currentPageIndex = _pages.isEmpty ? 0 : _pages.length - 1;
     }
+  }
+
+  /// 异步加载当前章正文并排版(按章加载模式)。
+  ///
+  /// 流程(对齐 legado `loadContent` + 后台排版):
+  /// 1. 标记当前章 loading → notifyListeners(UI 显示占位而非原文)。
+  /// 2. 从 [_chapterSource] 取当前章正文。
+  /// 3. ContentProcessor 预处理 + [paginateInBackground] 后台排版。
+  /// 4. 结果入 [_adjacentChapterCache], 填 [_pages], 清 loading, notifyListeners。
+  /// 5. 顺带预取相邻章(prefetchRange + 排版)。
+  ///
+  /// 幂等保护: 若在加载期间用户已翻到别的章(_currentChapterIndex 变了),
+  /// 本次结果丢弃(不覆盖新当前章)。
+  Future<void> _loadAndPaginateCurrentAsync() async {
+    final source = _chapterSource;
+    final book = _book;
+    if (source == null || book == null || _pageSize == Size.zero) return;
+    final chapterIndex = _currentChapterIndex;
+    // 防重入: 同一章已在加载中, 不重复发起。
+    if (_loadingChapters.contains(chapterIndex)) return;
+
+    _loadingChapters.add(chapterIndex);
+    if (chapterIndex == _currentChapterIndex) notifyListeners();
+
+    try {
+      final pages = await _loadAndPaginateChapter(chapterIndex);
+      if (_disposed) return;
+      // 加载期间用户已翻走: 丢弃本次结果(结果仍入缓存供将来用, 但不更新当前 _pages)。
+      final stillCurrent = chapterIndex == _currentChapterIndex;
+      if (stillCurrent) {
+        _pages = pages;
+        _clampCurrentPage();
+        _loadingChapters.remove(chapterIndex);
+        notifyListeners();
+        // 当前章就绪后, 预取相邻章(对齐 legado prefetch, 翻章命中缓存 O(1))。
+        _prefetchAdjacentAsync();
+      } else {
+        _loadingChapters.remove(chapterIndex);
+      }
+    } catch (e) {
+      _loadingChapters.remove(chapterIndex);
+      debugPrint('[Reader] 异步加载章 $chapterIndex 失败: $e');
+      if (chapterIndex == _currentChapterIndex && !_disposed) {
+        notifyListeners();
+      }
+    }
+  }
+
+  /// 加载并排版指定章, 返回分页结果(不入 _pages, 调用方决定如何用)。
+  /// 结果同时写入 [_adjacentChapterCache]。
+  Future<List<TextPage>> _loadAndPaginateChapter(int chapterIndex) async {
+    final source = _chapterSource;
+    final book = _book;
+    if (source == null || book == null) return [];
+    if (chapterIndex < 0 || chapterIndex >= source.chapterCount) return [];
+    // 缓存命中直接返回(避免重复排版)。
+    _invalidateAdjacentCacheIfNeeded();
+    final cached = _adjacentChapterCache[chapterIndex];
+    if (cached != null) return cached;
+
+    // 1. 取正文: 按章加载模式从数据源懒加载。
+    final content = await source.loadContent(chapterIndex) ?? '';
+    if (_disposed) return [];
+    final title = source.chapterTitle(chapterIndex);
+    // 2. 预处理(对齐 legado ContentProcessor)。
+    final bookContent = ContentProcessor.getContent(
+      title: title,
+      content: content,
+      bookName: book.title,
+      textIndent: _settings.textIndent,
+    );
+    final processedContent = bookContent.textList.join('\n');
+    // 3. 后台排版(isolate, 不阻塞 UI)。对齐 legado Coroutine.async(IO)。
+    final pages = await paginateInBackground(
+      content: processedContent,
+      pageSize: _pageSize,
+      settings: _settings,
+    );
+    _adjacentChapterCache[chapterIndex] = pages;
+    return pages;
+  }
+
+  /// 异步预取相邻章(±1)的分页结果到缓存(按章加载模式)。
+  ///
+  /// 对齐 legado `prefetchAdjacentChapters`: 用户在当前章阅读时, 后台把相邻章
+  /// 正文加载+排版好入缓存, 翻章时命中 O(1)。不更新 _pages, 不阻塞当前显示。
+  Future<void> _prefetchAdjacentAsync() async {
+    final source = _chapterSource;
+    if (source == null) return;
+    final next = _currentChapterIndex + 1;
+    final prev = _currentChapterIndex - 1;
+    // 用 Future.wait 并行预取, 任一失败不影响另一个。
+    await Future.wait([
+      _loadAndPaginateChapter(next).catchError((_) => <TextPage>[]),
+      _loadAndPaginateChapter(prev).catchError((_) => <TextPage>[]),
+    ]);
   }
 
   /// 对指定章节跑完整的内容预处理 + 排版管线, 返回分页结果。
@@ -585,6 +753,8 @@ class ReadingController extends ChangeNotifier {
   /// 翻页动画展示的页与提交后看到的页会错位。
   ///
   /// 不修改 `_pages`/`_currentPageIndex` 等状态, 纯函数。
+  /// ⚠️ 仅用于旧全量内存模式(_chapterSource == null)。按章加载模式下跨章 peek
+  /// 走 [_loadAndPaginateChapter](异步), 见 [peekNext]/[peekPrev]。
   List<TextPage> _paginateChapterWithPipeline(int chapterIndex) {
     return _paginateChapterCached(chapterIndex);
   }
@@ -593,6 +763,9 @@ class ReadingController extends ChangeNotifier {
   ///
   /// 缓存键 = chapterIndex; 失效条件 = `_settings` 引用变 / `_pageSize` 变。
   /// 命中 → O(1) 返回; 未命中 → 同步重排(首次或失效后)。
+  ///
+  /// ⚠️ 仅用于旧全量内存模式。按章加载模式下, 章节正文不在 [_book.chapters],
+  /// 不能同步排; 此时调用方应改用异步 [_loadAndPaginateChapter]。
   List<TextPage> _paginateChapterCached(int chapterIndex) {
     _invalidateAdjacentCacheIfNeeded();
     if (_book == null || _pageSize == Size.zero) return [];
@@ -632,6 +805,10 @@ class ReadingController extends ChangeNotifier {
   ///
   /// 章内有下一页 → 该页; 否则若存在下一章 → 下一章首页; 否则 null(无下一页)。
   /// 翻页动画据此把目标页画到 next 缓存槽, 动画结束按 info 提交。
+  ///
+  /// 按章加载模式下, 跨章只能用已预排好的缓存(异步预排在后台进行, 详见
+  /// [_prefetchAdjacentAsync]); 缓存未命中时返回 null, reader_view 的去重标记
+  /// 不会更新, 下次章/页就绪后会重试(对齐 _refreshPeekCaches 的 null 容错)。
   PeekInfo? peekNext() {
     if (_book == null) return null;
     if (_currentPageIndex < _pages.length - 1) {
@@ -642,14 +819,14 @@ class ReadingController extends ChangeNotifier {
       );
     }
     // 当前章末页 → 下一章首页
-    if (_currentChapterIndex < _book!.chapters.length - 1) {
-      final nextChapterPages = _paginateChapterWithPipeline(
-        _currentChapterIndex + 1,
-      );
+    if (_currentChapterIndex < totalChapters - 1) {
+      final nextIdx = _currentChapterIndex + 1;
+      final nextChapterPages = _adjacentChapterCache[nextIdx] ??
+          (_chapterSource == null ? _paginateChapterWithPipeline(nextIdx) : const []);
       if (nextChapterPages.isNotEmpty) {
         return PeekInfo(
           page: nextChapterPages.first,
-          chapterIndex: _currentChapterIndex + 1,
+          chapterIndex: nextIdx,
           pageIndex: 0,
         );
       }
@@ -671,13 +848,13 @@ class ReadingController extends ChangeNotifier {
     }
     // 当前章首页 → 上一章末页
     if (_currentChapterIndex > 0) {
-      final prevChapterPages = _paginateChapterWithPipeline(
-        _currentChapterIndex - 1,
-      );
+      final prevIdx = _currentChapterIndex - 1;
+      final prevChapterPages = _adjacentChapterCache[prevIdx] ??
+          (_chapterSource == null ? _paginateChapterWithPipeline(prevIdx) : const []);
       if (prevChapterPages.isNotEmpty) {
         return PeekInfo(
           page: prevChapterPages.last,
-          chapterIndex: _currentChapterIndex - 1,
+          chapterIndex: prevIdx,
           pageIndex: prevChapterPages.length - 1,
         );
       }
@@ -693,8 +870,14 @@ class ReadingController extends ChangeNotifier {
   /// 本章、尚未快速翻页」的时刻, 用户无感。
   ///
   /// 幂等: 命中缓存则跳过, 多次调用安全。
+  /// 按章加载模式下走异步预取 [_prefetchAdjacentAsync](fire-and-forget)。
   void prefetchAdjacentChapters() {
     if (_book == null || _pageSize == Size.zero) return;
+    if (_chapterSource != null) {
+      // 异步预取: 不阻塞当前帧, 完成后入缓存供下次 peek 命中。
+      _prefetchAdjacentAsync();
+      return;
+    }
     final next = _currentChapterIndex + 1;
     final prev = _currentChapterIndex - 1;
     _paginateChapterCached(next);
@@ -703,8 +886,8 @@ class ReadingController extends ChangeNotifier {
 
   ///
   /// 翻页动画结束时调用: 把动画展示的目标页真正落到 controller 状态。
-  /// 跨章时 goToChapter 会重排目标章(与 peek 跑的是同一管线, 页面一致),
-  /// 再用 setCurrentPageIndex 落到目标页; 章内直接 goToPage。
+  /// 跨章时: 若目标章已预排命中缓存 → 同步落到目标页(流畅); 否则(快速连点未及
+  /// 预排)→ 启动异步加载, 落首页, 排完后由异步路径刷新。
   /// 对齐原生 legado `fillPage` → `moveToNext/moveToPrev`。
   void commitTurn(PeekInfo target) {
     if (target.chapterIndex == _currentChapterIndex) {
@@ -715,10 +898,11 @@ class ReadingController extends ChangeNotifier {
         _scheduleProgressSave();
       }
     } else {
-      // 跨章翻页: goToChapter 会重排目标章并落到首页, 再定位到目标页。
+      // 跨章翻页: 切到目标章, 落首页后 _rePaginate(命中缓存则同步就绪)。
       _currentChapterIndex = target.chapterIndex;
       _currentPageIndex = 0;
       _rePaginate();
+      // 命中缓存(同步就绪): 尝试落到 peek 展示的目标页。
       if (target.pageIndex < _pages.length) {
         _currentPageIndex = target.pageIndex;
       }

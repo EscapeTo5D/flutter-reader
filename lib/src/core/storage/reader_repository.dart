@@ -85,6 +85,17 @@ abstract class ReaderRepository {
   /// 用于按章预取/恢复(如只校验某一章是否已缓存)。
   Future<CachedChapter?> getCachedChapter(String bookId, int chapterIndex);
 
+  /// 读取某书在 [fromIndex, toIndex] 闭区间内已缓存的章节(按 chapter_index 升序)。
+  ///
+  /// 用于「当前章 ± N 章」窗口按需加载: 只读窗口内已缓存章节, 未缓存的 index
+  /// 不在结果中(调用方据此判断哪些需走网络)。缺省实现基于 [getBookChapters] 过滤,
+  /// 数据库实现应用 `BETWEEN` 命中主键索引, 避免全表扫描全书。
+  Future<List<CachedChapter>> getCachedChaptersInRange(
+    String bookId,
+    int fromIndex,
+    int toIndex,
+  );
+
   /// 写入/覆盖某章正文缓存(upsert, 主键 bookId+chapterIndex)。
   ///
   /// 网络拉取到章节正文后调用, 落盘供下次本地命中。
@@ -93,6 +104,15 @@ abstract class ReaderRepository {
     int chapterIndex,
     String title,
     String content,
+  );
+
+  /// 批量写入多章正文缓存(单事务 upsert)。
+  ///
+  /// 用于网络一次拉全书后的回填: 比循环调用 [saveChapterContent](每章一个事务)
+  /// 快得多。缺省实现退化为循环单条写; 数据库实现应用 batch 提交。
+  Future<void> saveChapterContents(
+    String bookId,
+    Iterable<CachedChapter> chapters,
   );
 
   // ─────────────────────────── 生命周期 ───────────────────────────
