@@ -74,6 +74,13 @@ class ReadingController extends ChangeNotifier {
   /// 当前正在后台加载/排版的章节索引集合(用于驱动 [chapterLoading])。
   final Set<int> _loadingChapters = {};
 
+  /// 正在进行中的「加载+排版」Future 去重表(章索引 → 进行中的 Future)。
+  ///
+  /// 防止同一章被并发排版多次: 当 prefetchAdjacent / _rePaginate / restoreProgress
+  /// 几乎同时请求同一章时, 复用同一个 Future, 而不是各自 spawn 排版。实测同章被
+  /// 重复排 6 次每次 ~1s, 此表把 6 次合并为 1 次。
+  final Map<int, Future<List<TextPage>>> _paginateInFlight = {};
+
   /// 章节正文按需加载源(来自 [Book.chapterSource], null = 旧全量内存模式)。
   ChapterSource? get _chapterSource => _book?.chapterSource;
 
@@ -697,6 +704,10 @@ class ReadingController extends ChangeNotifier {
 
   /// 加载并排版指定章, 返回分页结果(不入 _pages, 调用方决定如何用)。
   /// 结果同时写入 [_adjacentChapterCache]。
+  ///
+  /// **in-flight 去重**: 同一章在 [_paginateInFlight] 已有进行中的 Future 时,
+  /// 复用它而非另起一次排版。防止 prefetchAdjacent / _rePaginate / restoreProgress
+  /// 并发请求同章导致重复排版。
   Future<List<TextPage>> _loadAndPaginateChapter(int chapterIndex) async {
     final source = _chapterSource;
     final book = _book;
@@ -707,11 +718,33 @@ class ReadingController extends ChangeNotifier {
     final cached = _adjacentChapterCache[chapterIndex];
     if (cached != null) return cached;
 
+    // in-flight 去重: 同一章已在排版中, 复用 Future。
+    final inflight = _paginateInFlight[chapterIndex];
+    if (inflight != null) return inflight;
+
+    final future = _doLoadAndPaginate(chapterIndex);
+    _paginateInFlight[chapterIndex] = future;
+    try {
+      return await future;
+    } finally {
+      _paginateInFlight.remove(chapterIndex);
+    }
+  }
+
+  Future<List<TextPage>> _doLoadAndPaginate(int chapterIndex) async {
+    final source = _chapterSource;
+    final book = _book;
+    if (source == null || book == null) return [];
     // 1. 取正文: 按章加载模式从数据源懒加载。
+    final tLoad = Stopwatch()..start();
     final content = await source.loadContent(chapterIndex) ?? '';
+    debugPrint(
+      '[PERF] loadContent(章 $chapterIndex, ${content.length}字符): ${tLoad.elapsedMilliseconds}ms',
+    );
     if (_disposed) return [];
     final title = source.chapterTitle(chapterIndex);
     // 2. 预处理(对齐 legado ContentProcessor)。
+    final tProc = Stopwatch()..start();
     final bookContent = ContentProcessor.getContent(
       title: title,
       content: content,
@@ -719,11 +752,16 @@ class ReadingController extends ChangeNotifier {
       textIndent: _settings.textIndent,
     );
     final processedContent = bookContent.textList.join('\n');
+    debugPrint('[PERF] ContentProcessor(章 $chapterIndex): ${tProc.elapsedMilliseconds}ms');
     // 3. 后台排版(isolate, 不阻塞 UI)。对齐 legado Coroutine.async(IO)。
+    final tPaginate = Stopwatch()..start();
     final pages = await paginateInBackground(
       content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
+    );
+    debugPrint(
+      '[PERF] paginate(章 $chapterIndex, ${pages.length}页): ${tPaginate.elapsedMilliseconds}ms',
     );
     _adjacentChapterCache[chapterIndex] = pages;
     return pages;

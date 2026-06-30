@@ -91,6 +91,16 @@ class _ReaderViewState extends State<ReaderView>
   int? _peekedChapter;
   int? _peekedPage;
 
+  /// 转场动画是否已结束(Navigator push 进入阅读页的滑入动画)。
+  ///
+  /// 关键优化: 阅读页转场动画期间(~300ms), LayoutBuilder 已拿到真实尺寸并
+  /// PostFrame 回调 updatePageSize → controller 触发 ~170ms 同步排版。若这 170ms
+  /// 砸在转场动画进行中的帧上, 动画会掉帧(肉眼卡顿)。
+  /// 故首次布局先**不排版**(返回空页), 等 route.animation completed 后再排版:
+  /// 转场丝滑, 排版延后到「页面已停稳」之后, 用户感知是「页面滑进来后内容淡入」。
+  bool _routeReady = false;
+  Animation<double>? _routeAnimation;
+
   @override
   void initState() {
     super.initState();
@@ -111,11 +121,44 @@ class _ReaderViewState extends State<ReaderView>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 挂一次 route 转场动画监听: 动画结束后解除「延迟排版」。
+    // 只挂一次(_routeAnimation 非空表示已挂)。
+    if (_routeAnimation == null) {
+      final route = ModalRoute.of(context);
+      final anim = route?.animation;
+      if (anim != null) {
+        _routeAnimation = anim;
+        if (anim.isCompleted) {
+          _routeReady = true;
+        } else {
+          anim.addStatusListener(_onRouteAnimation);
+        }
+      } else {
+        // 非 Navigator 路由场景(测试/无 route): 直接就绪。
+        _routeReady = true;
+      }
+    }
+  }
+
+  void _onRouteAnimation(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      _routeReady = true;
+      _routeAnimation?.removeStatusListener(_onRouteAnimation);
+      _routeAnimation = null;
+      // 转场结束, 触发一次重绘让 LayoutBuilder 走「就绪」分支排版。
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
   void dispose() {
     _menuHideTimer?.cancel();
     _selectionOverlay?.remove();
     _pageAnim.removeStatusListener(_onPageAnimStatus);
     _pageAnim.dispose();
+    _routeAnimation?.removeStatusListener(_onRouteAnimation);
     widget.controller.removeListener(_onControllerUpdate);
     BatteryProvider.instance.removeListener(_onBatteryUpdate);
     // 恢复显示系统栏(离开阅读页)。
@@ -235,7 +278,15 @@ class _ReaderViewState extends State<ReaderView>
               .clamp(0.0, constraints.maxHeight),
         );
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          widget.controller.updatePageSize(size);
+          debugPrint(
+            '[PERF] updatePageSize called: ${size.width.toStringAsFixed(0)}x${size.height.toStringAsFixed(0)} routeReady=$_routeReady',
+          );
+          // 转场动画期间不排版(~170ms 同步排版会砸掉转场动画的帧)。
+          // _routeReady 由 didChangeDependencies 的 route.animation completed 回调置 true,
+          // 届时 setState 触发重建, 这里才真正 updatePageSize → 排版。
+          if (_routeReady) {
+            widget.controller.updatePageSize(size);
+          }
         });
 
         return GestureDetector(

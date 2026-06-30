@@ -241,6 +241,10 @@ class PageEngine {
       }
 
       // 测量每个字符的宽度
+      //
+      // 每行用独立 painter 测量(不能用整段 painter: 跨行换行处 caret x 会跳回
+      // 行首, 单行内 x 单调假设失效, 导致两端对齐拉伸量算错)。性能瓶颈主要在此,
+      // 后续可考虑按 fontSize+letterSpacing 缓存字符宽度。
       final charWidths = _measureCharWidths(lineText, style);
 
       // 计算缩进宽度
@@ -395,6 +399,14 @@ class PageEngine {
   }
 
   /// 测量每个字符的宽度
+  ///
+  /// 每行用独立 TextPainter 测量, 保证单行内 caret x 单调(整段 painter 在换行
+  /// 边界 x 会跳回行首, 差值非字符宽度)。TextPainter 创建+layout 是单章排版
+  /// 主要耗时点(~260ms/章), 后续可按 fontSize+letterSpacing+字体 缓存字符宽度表
+  /// 来优化, 但需保证缓存 key 含全部影响宽度的因素。
+  ///
+  /// 优化: 第 i 字符宽度 = caret(i+1).x - caret(i).x, 故只需 N+1 次 caret 查询
+  /// 而非 2N 次, 约减半 caret 调用开销(caret 查询本身不便宜)。
   List<double> _measureCharWidths(String text, TextStyle style) {
     if (text.isEmpty) return [];
     final painter = TextPainter(
@@ -404,16 +416,17 @@ class PageEngine {
     painter.layout();
 
     final widths = <double>[];
+    var prevX = painter.getOffsetForCaret(
+      const TextPosition(offset: 0),
+      Rect.zero,
+    ).dx;
     for (var i = 0; i < text.length; i++) {
-      final startOffset = painter.getOffsetForCaret(
-        TextPosition(offset: i),
-        Rect.zero,
-      );
-      final endOffset = painter.getOffsetForCaret(
+      final x = painter.getOffsetForCaret(
         TextPosition(offset: i + 1),
         Rect.zero,
-      );
-      widths.add((endOffset.dx - startOffset.dx).abs());
+      ).dx;
+      widths.add((x - prevX).abs());
+      prevX = x;
     }
     return widths;
   }

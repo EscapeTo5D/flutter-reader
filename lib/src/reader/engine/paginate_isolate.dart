@@ -1,6 +1,7 @@
 import 'dart:isolate' show Isolate;
 import 'dart:ui' show RootIsolateToken;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show BackgroundIsolateBinaryMessenger;
 
@@ -27,6 +28,15 @@ import 'page_engine.dart';
 ///
 /// **回退保护**: 若 isolate 排版抛错(token 不可用/平台限制/测试环境),
 /// 退回主线程同步 PageEngine.paginate, 保证最坏情况等价于现状, 不崩。
+///
+/// ⚠️ 实测在 debug 模式 + 真机上, `BackgroundIsolateBinaryMessenger` 虽初始化,
+/// 但 `TextPainter.layout` 仍依赖只在 root isolate 可用的 UI actions,
+/// 抛 `UI actions are only available on root isolate`。失败时 spawn+回退开销
+/// 巨大(每次 ~1s 浪费在注定失败的 isolate spawn 上)。故用 [_isolateDisabled]
+/// 熔断: 首次失败后永久走主线程, 避免反复 spawn。release/profile 模式下
+/// isolate 通常可用, 熔断标志只在当前进程生效。
+bool _isolateDisabled = false;
+
 Future<List<TextPage>> paginateInBackground({
   required String content,
   required Size pageSize,
@@ -35,26 +45,41 @@ Future<List<TextPage>> paginateInBackground({
   // 短内容直接主线程排, 避免起 isolate 的开销(isolate spawn ~1-2ms)。
   // 阈值取经验值: 单页约几百字符, 几页内的内容主线程排也很快。
   if (content.length < 2000) {
-    return PageEngine().paginate(
+    final t = Stopwatch()..start();
+    final r = PageEngine().paginate(
       content: content,
       pageSize: pageSize,
       settings: settings,
     );
+    debugPrint(
+      '[PERF] paginateInBackground(短内容主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
+    );
+    return r;
   }
 
-  // 测试环境(FlutterTester)无 root isolate token, 直接走主线程。
-  // kDebugMode 下不强求 isolate, 保证测试可重复。
+  // 熔断过 / 测试环境(FlutterTester 无 root isolate token) / kDebugMode:
+  // 直接走主线程。kDebugMode 下 JIT + UI actions 限制使 isolate 排版不可靠,
+  // 与其每次 spawn 失败浪费 ~1s, 不如直接主线程排(~180ms)。
   final token = RootIsolateToken.instance;
-  if (token == null) {
-    return PageEngine().paginate(
+  if (_isolateDisabled || token == null || kDebugMode) {
+    final t = Stopwatch()..start();
+    final r = PageEngine().paginate(
       content: content,
       pageSize: pageSize,
       settings: settings,
     );
+    final reason = _isolateDisabled
+        ? '熔断'
+        : (token == null ? '无token' : 'debug模式');
+    debugPrint(
+      '[PERF] paginateInBackground(主线程[$reason], ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
+    );
+    return r;
   }
 
   try {
-    return await Isolate.run(() {
+    final tIso = Stopwatch()..start();
+    final r = await Isolate.run(() {
       // 让 worker isolate 能访问 Flutter engine(字体/文本测量)。
       BackgroundIsolateBinaryMessenger.ensureInitialized(token);
       return PageEngine().paginate(
@@ -63,14 +88,24 @@ Future<List<TextPage>> paginateInBackground({
         settings: settings,
       );
     });
+    debugPrint(
+      '[PERF] paginateInBackground(isolate, ${content.length}字符→${r.length}页): ${tIso.elapsedMilliseconds}ms',
+    );
+    return r;
   } catch (e) {
-    // 回退: 后台排版失败(平台限制/引擎异常)时, 退回主线程同步排。
-    // 最坏情况等价于无 isolate 的旧行为, 不会比现状更差。
-    debugPrint('[paginateInBackground] isolate 失败, 回退主线程: $e');
-    return PageEngine().paginate(
+    // 熔断: isolate 排版失败(平台限制/UI actions 不可用)后, 标记永久走主线程,
+    // 避免后续每次调用都重复 spawn 一个注定失败的 isolate(spawn 本身 ~1s 开销)。
+    _isolateDisabled = true;
+    debugPrint('[paginateInBackground] isolate 失败, 熔断→永久主线程: $e');
+    final t = Stopwatch()..start();
+    final r = PageEngine().paginate(
       content: content,
       pageSize: pageSize,
       settings: settings,
     );
+    debugPrint(
+      '[PERF] paginateInBackground(熔断后主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
+    );
+    return r;
   }
 }

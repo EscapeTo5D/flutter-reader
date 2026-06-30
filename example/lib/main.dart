@@ -155,15 +155,24 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _loadChapters() async {
+    // [PERF] 打开小说整体计时起点
+    final sw = Stopwatch()..start();
+    debugPrint('[PERF] === _loadChapters START ===');
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       // 先恢复阅读设置(字号/行距/颜色等), 让 reader_view 首帧就用上次的设置
+      final tSettings = Stopwatch()..start();
       await _controller.loadSettings();
+      debugPrint('[PERF] loadSettings: ${tSettings.elapsedMilliseconds}ms');
 
+      final tSource = Stopwatch()..start();
       final source = await _buildChapterSource(widget.novelId);
+      debugPrint(
+        '[PERF] _buildChapterSource(全): ${tSource.elapsedMilliseconds}ms',
+      );
       if (!mounted) return;
 
       final book = Book(
@@ -174,10 +183,17 @@ class _ReaderPageState extends State<ReaderPage> {
         // chapters 仅保留(可选)目录标题, 实际标题/正文都走 chapterSource。
         chapterSource: source,
       );
+      final tLoadBook = Stopwatch()..start();
       _controller.loadBook(book);
+      debugPrint('[PERF] loadBook: ${tLoadBook.elapsedMilliseconds}ms');
       // 加入书架(保存元信息, 供"上次阅读"列表用)
-      _controller.saveToShelf();
+      final tShelf = Stopwatch()..start();
+      await _controller.saveToShelf();
+      debugPrint('[PERF] saveToShelf: ${tShelf.elapsedMilliseconds}ms');
       if (mounted) setState(() => _loading = false);
+      debugPrint(
+        '[PERF] === _loadChapters END (loading=false) total: ${sw.elapsedMilliseconds}ms ===',
+      );
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -201,7 +217,11 @@ class _ReaderPageState extends State<ReaderPage> {
   /// 内存占用与排版预热开销都降到单章量级。
   Future<CachedChapterSource> _buildChapterSource(String novelId) async {
     final repo = AppDatabase.repo;
+    final tDbRead = Stopwatch()..start();
     final cached = await repo.getBookChapters(novelId);
+    debugPrint(
+      '[PERF] getBookChapters(本地全章节行数=${cached.length}): ${tDbRead.elapsedMilliseconds}ms',
+    );
     if (cached.isNotEmpty) {
       // 命中本地: 标题从缓存行提取, 正文按章懒加载(命中本地缓存)
       return CachedChapterSource.fromCached(
@@ -212,7 +232,12 @@ class _ReaderPageState extends State<ReaderPage> {
     }
 
     // 未命中: 走网络一次拉全书, 批量回填缓存
+    final tNet = Stopwatch()..start();
     final chapters = await _api.fetchChapters(novelId);
+    debugPrint(
+      '[PERF] fetchChapters(网络拉全书, 章数=${chapters.length}): ${tNet.elapsedMilliseconds}ms',
+    );
+    final tSave = Stopwatch()..start();
     try {
       await repo.saveChapterContents(
         novelId,
@@ -229,6 +254,9 @@ class _ReaderPageState extends State<ReaderPage> {
     } catch (_) {
       // 缓存写入失败不影响本次阅读, 静默
     }
+    debugPrint(
+      '[PERF] saveChapterContents(批量写缓存): ${tSave.elapsedMilliseconds}ms',
+    );
     // 标题灌 source, 正文按章懒加载(下次命中本地)
     return CachedChapterSource(
       titles: chapters.map((c) => c.title).toList(growable: false),
