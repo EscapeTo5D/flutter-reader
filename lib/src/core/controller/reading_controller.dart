@@ -169,16 +169,26 @@ class ReadingController extends ChangeNotifier {
           : null)
       : null;
 
-  void loadBook(Book book) {
+  ///
+  /// [initialChapterIndex] 用于宿主「从目录跳转到指定章」场景:
+  /// - 提供(>=0): 直接定位到该章, **跳过** restoreProgress(否则异步恢复会
+  ///   用持久化的上次进度覆盖刚指定的跳转目标)。书签仍正常加载。
+  /// - 不提供(null): 走原行为——用 [Book.currentChapterIndex] 起步, 异步恢复进度。
+  void loadBook(Book book, {int? initialChapterIndex}) {
     _book = book;
-    _currentChapterIndex = book.currentChapterIndex;
+    _currentChapterIndex =
+        initialChapterIndex ?? book.currentChapterIndex;
     _currentPageIndex = 0;
     _rePaginate();
     notifyListeners();
-    // 书加载完(分页就绪)后, 异步从仓库恢复该用户的进度。
-    // 不阻塞渲染: 即使恢复晚一帧也无妨, 用户先看到首页再被定位到上次位置。
-    if (_repository != null && _userId != null) {
+    if (_repository == null || _userId == null) return;
+    if (initialChapterIndex == null) {
+      // 未指定跳转: 书加载完(分页就绪)后, 异步从仓库恢复该用户的进度。
+      // 不阻塞渲染: 即使恢复晚一帧也无妨, 用户先看到首页再被定位到上次位置。
       restoreProgress();
+    } else {
+      // 显式跳章: 不恢复进度(避免覆盖跳转), 仍加载该书签(书签独立于进度)。
+      loadBookmarks();
     }
   }
 
