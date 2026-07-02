@@ -44,12 +44,24 @@ class HeaderFooterConfig {
 }
 
 class ReaderPadding {
+  // 正文区内边距(对齐原生 ReadBookConfig.paddingTop/Bottom/Left/Right, 默认 6/6/16/16)。
   final double top;
   final double bottom;
   final double left;
   final double right;
+  // 页眉/页脚内容行高(原生无此字段, 由文字行高+padding 决定; 此处抽象为固定行高)。
   final double headerHeight;
   final double footerHeight;
+  // 页眉外层四向内边距(对齐原生 headerPaddingTop/Bottom/Left/Right, 默认 0/0/16/16)。
+  final double headerTop;
+  final double headerBottom;
+  final double headerLeft;
+  final double headerRight;
+  // 页脚外层四向内边距(对齐原生 footerPaddingTop/Bottom/Left/Right, 默认 6/6/16/16)。
+  final double footerTop;
+  final double footerBottom;
+  final double footerLeft;
+  final double footerRight;
 
   const ReaderPadding({
     this.top = 16,
@@ -58,6 +70,14 @@ class ReaderPadding {
     this.right = 16,
     this.headerHeight = 24,
     this.footerHeight = 24,
+    this.headerTop = 0,
+    this.headerBottom = 0,
+    this.headerLeft = 16,
+    this.headerRight = 16,
+    this.footerTop = 6,
+    this.footerBottom = 6,
+    this.footerLeft = 16,
+    this.footerRight = 16,
   });
 
   ReaderPadding copyWith({
@@ -67,6 +87,14 @@ class ReaderPadding {
     double? right,
     double? headerHeight,
     double? footerHeight,
+    double? headerTop,
+    double? headerBottom,
+    double? headerLeft,
+    double? headerRight,
+    double? footerTop,
+    double? footerBottom,
+    double? footerLeft,
+    double? footerRight,
   }) {
     return ReaderPadding(
       top: top ?? this.top,
@@ -75,6 +103,14 @@ class ReaderPadding {
       right: right ?? this.right,
       headerHeight: headerHeight ?? this.headerHeight,
       footerHeight: footerHeight ?? this.footerHeight,
+      headerTop: headerTop ?? this.headerTop,
+      headerBottom: headerBottom ?? this.headerBottom,
+      headerLeft: headerLeft ?? this.headerLeft,
+      headerRight: headerRight ?? this.headerRight,
+      footerTop: footerTop ?? this.footerTop,
+      footerBottom: footerBottom ?? this.footerBottom,
+      footerLeft: footerLeft ?? this.footerLeft,
+      footerRight: footerRight ?? this.footerRight,
     );
   }
 }

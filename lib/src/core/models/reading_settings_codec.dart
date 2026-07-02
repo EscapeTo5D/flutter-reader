@@ -57,16 +57,35 @@ Map<String, dynamic> _paddingToJson(ReaderPadding p) => {
       'right': p.right,
       'headerHeight': p.headerHeight,
       'footerHeight': p.footerHeight,
+      'headerTop': p.headerTop,
+      'headerBottom': p.headerBottom,
+      'headerLeft': p.headerLeft,
+      'headerRight': p.headerRight,
+      'footerTop': p.footerTop,
+      'footerBottom': p.footerBottom,
+      'footerLeft': p.footerLeft,
+      'footerRight': p.footerRight,
     };
 
-ReaderPadding _paddingFromJson(Map<String, dynamic> json) => ReaderPadding(
-      top: _asDouble(json['top'], 16),
-      bottom: _asDouble(json['bottom'], 16),
-      left: _asDouble(json['left'], 16),
-      right: _asDouble(json['right'], 16),
-      headerHeight: _asDouble(json['headerHeight'], 24),
-      footerHeight: _asDouble(json['footerHeight'], 24),
-    );
+ReaderPadding _paddingFromJson(Map<String, dynamic> json) {
+  const d = ReaderPadding();
+  return ReaderPadding(
+    top: _asDouble(json['top'], d.top),
+    bottom: _asDouble(json['bottom'], d.bottom),
+    left: _asDouble(json['left'], d.left),
+    right: _asDouble(json['right'], d.right),
+    headerHeight: _asDouble(json['headerHeight'], d.headerHeight),
+    footerHeight: _asDouble(json['footerHeight'], d.footerHeight),
+    headerTop: _asDouble(json['headerTop'], d.headerTop),
+    headerBottom: _asDouble(json['headerBottom'], d.headerBottom),
+    headerLeft: _asDouble(json['headerLeft'], d.headerLeft),
+    headerRight: _asDouble(json['headerRight'], d.headerRight),
+    footerTop: _asDouble(json['footerTop'], d.footerTop),
+    footerBottom: _asDouble(json['footerBottom'], d.footerBottom),
+    footerLeft: _asDouble(json['footerLeft'], d.footerLeft),
+    footerRight: _asDouble(json['footerRight'], d.footerRight),
+  );
+}
 
 // ─────────────────────────── ClickRegionConfig ───────────────────────────
 

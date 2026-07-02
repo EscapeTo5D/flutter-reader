@@ -3,6 +3,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import 'chapter_list_page.dart';
+import 'detail_seek_bar.dart';
 import 'legado_icons.dart';
 
 class ReadMenu extends StatefulWidget {
@@ -442,7 +443,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       _buildStrokeButton(const Text('字体', style: _strokeButtonStyle), () {}),
       _buildStrokeButton(const Text('缩进', style: _strokeButtonStyle), _showIndentPicker),
       _buildStrokeButton(_buildChineseSpans(), _showChinesePicker),
-      _buildStrokeButton(const Text('边距', style: _strokeButtonStyle), () {}),
+      _buildStrokeButton(const Text('边距', style: _strokeButtonStyle), _showPaddingConfig),
       _buildStrokeButton(const Text('信息', style: _strokeButtonStyle), _showTipConfig),
     ];
     return Padding(
@@ -734,53 +735,13 @@ class _StyleDialogState extends State<_StyleDialog> {
     required String display,
     required ValueChanged<int> onChanged,
   }) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 60,
-          child: Text(title, style: const TextStyle(fontSize: 13, color: Colors.black54)),
-        ),
-        _buildSeekBarButton(LegadoIcons.reduce(size: 24, color: Colors.black54), () {
-          if (progress > 0) onChanged(progress - 1);
-        }),
-        Expanded(
-          child: SliderTheme(
-            data: SliderThemeData(
-              activeTrackColor: Theme.of(context).colorScheme.primary,
-              thumbColor: Theme.of(context).colorScheme.primary,
-              trackHeight: 2,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-            ),
-            child: Slider(
-              value: progress.toDouble().clamp(0, max.toDouble()),
-              min: 0,
-              max: max.toDouble(),
-              divisions: max,
-              onChanged: (v) => onChanged(v.round()),
-            ),
-          ),
-        ),
-        _buildSeekBarButton(LegadoIcons.add(size: 24, color: Colors.black54), () {
-          if (progress < max) onChanged(progress + 1);
-        }),
-        SizedBox(
-          width: 60,
-          child: Text(
-            display,
-            textAlign: TextAlign.right,
-            style: const TextStyle(fontSize: 13, color: Colors.black54),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSeekBarButton(Widget icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: SizedBox(width: 24, height: 24, child: icon),
+    return DetailSeekBar(
+      title: title,
+      progress: progress,
+      max: max,
+      display: display,
+      onChanged: onChanged,
+      textColor: Colors.black54,
     );
   }
 
@@ -1007,6 +968,16 @@ class _StyleDialogState extends State<_StyleDialog> {
       ),
     );
   }
+
+  /// 边距配置弹窗(对齐原生 PaddingConfigDialog + dialog_read_padding.xml)。
+  /// 原生是居中弹窗(0.9 宽, 无 dim)。3 组(页眉/正文/页脚)×4 向 = 12 滑块 + 2 分隔线开关。
+  void _showPaddingConfig() {
+    SmartDialog.show(
+      alignment: Alignment.center,
+      maskColor: Colors.transparent,
+      builder: (_) => _PaddingConfigDialog(controller: widget.controller),
+    );
+  }
 }
 
 class _StylePreset {
@@ -1023,6 +994,185 @@ class _StylePreset {
     this.lineHeight,
     this.paragraphSpacing,
   });
+}
+
+/// 边距配置弹窗, 复刻原生 legado `PaddingConfigDialog`
+/// (`dialog_read_padding.xml`)。居中弹窗(无 dim), 3 组×4 向 = 12 滑块
+/// + 页眉/页脚分隔线开关。值整数 dp(对齐原生 DetailSeekBar 无 valueFormat)。
+///
+/// 默认值对齐原生 ReadBookConfig.Config: 正文 6/6/16/16, 页眉 0/0/16/16,
+/// 页脚 6/6/16/16; showHeaderLine=false, showFooterLine=true。
+class _PaddingConfigDialog extends StatefulWidget {
+  final ReadingController controller;
+  const _PaddingConfigDialog({required this.controller});
+
+  @override
+  State<_PaddingConfigDialog> createState() => _PaddingConfigDialogState();
+}
+
+class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
+  late double _bodyTop, _bodyBottom, _bodyLeft, _bodyRight;
+  late double _headerTop, _headerBottom, _headerLeft, _headerRight;
+  late double _footerTop, _footerBottom, _footerLeft, _footerRight;
+  late bool _showHeaderLine, _showFooterLine;
+
+  @override
+  void initState() {
+    super.initState();
+    final p = widget.controller.settings.padding;
+    _bodyTop = p.top;
+    _bodyBottom = p.bottom;
+    _bodyLeft = p.left;
+    _bodyRight = p.right;
+    _headerTop = p.headerTop;
+    _headerBottom = p.headerBottom;
+    _headerLeft = p.headerLeft;
+    _headerRight = p.headerRight;
+    _footerTop = p.footerTop;
+    _footerBottom = p.footerBottom;
+    _footerLeft = p.footerLeft;
+    _footerRight = p.footerRight;
+    _showHeaderLine = widget.controller.settings.showHeaderDivider;
+    _showFooterLine = widget.controller.settings.showFooterDivider;
+  }
+
+  void _apply() {
+    widget.controller.updateSettings(
+      widget.controller.settings.copyWith(
+        padding: widget.controller.settings.padding.copyWith(
+          top: _bodyTop,
+          bottom: _bodyBottom,
+          left: _bodyLeft,
+          right: _bodyRight,
+          headerTop: _headerTop,
+          headerBottom: _headerBottom,
+          headerLeft: _headerLeft,
+          headerRight: _headerRight,
+          footerTop: _footerTop,
+          footerBottom: _footerBottom,
+          footerLeft: _footerLeft,
+          footerRight: _footerRight,
+        ),
+        showHeaderDivider: _showHeaderLine,
+        showFooterDivider: _showFooterLine,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 居中弹窗, 宽 0.9 屏宽(对齐原生 setLayout(0.9f, WRAP_CONTENT))。
+    final dialogWidth = MediaQuery.of(context).size.width * 0.9;
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: dialogWidth,
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFAFAFA),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── 页眉组 ──
+                _buildSectionTitle('页眉'),
+                _bar('上', _headerTop, 100, (v) =>
+                    setState(() => _headerTop = v.toDouble())),
+                _bar('下', _headerBottom, 100, (v) =>
+                    setState(() => _headerBottom = v.toDouble())),
+                _bar('左', _headerLeft, 100, (v) =>
+                    setState(() => _headerLeft = v.toDouble())),
+                _bar('右', _headerRight, 100, (v) =>
+                    setState(() => _headerRight = v.toDouble())),
+                _buildLineSwitch('显示页眉分隔线', _showHeaderLine, (v) {
+                  setState(() => _showHeaderLine = v);
+                  _apply();
+                }),
+                const SizedBox(height: 8),
+                // ── 正文组 ──
+                _buildSectionTitle('正文'),
+                _bar('上', _bodyTop, 200, (v) =>
+                    setState(() => _bodyTop = v.toDouble())),
+                _bar('下', _bodyBottom, 100, (v) =>
+                    setState(() => _bodyBottom = v.toDouble())),
+                _bar('左', _bodyLeft, 100, (v) =>
+                    setState(() => _bodyLeft = v.toDouble())),
+                _bar('右', _bodyRight, 100, (v) =>
+                    setState(() => _bodyRight = v.toDouble())),
+                const SizedBox(height: 8),
+                // ── 页脚组 ──
+                _buildSectionTitle('页脚'),
+                _bar('上', _footerTop, 100, (v) =>
+                    setState(() => _footerTop = v.toDouble())),
+                _bar('下', _footerBottom, 100, (v) =>
+                    setState(() => _footerBottom = v.toDouble())),
+                _bar('左', _footerLeft, 100, (v) =>
+                    setState(() => _footerLeft = v.toDouble())),
+                _bar('右', _footerRight, 100, (v) =>
+                    setState(() => _footerRight = v.toDouble())),
+                _buildLineSwitch('显示页脚分隔线', _showFooterLine, (v) {
+                  setState(() => _showFooterLine = v);
+                  _apply();
+                }),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  Widget _bar(String title, double value, int max, ValueChanged<int> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: DetailSeekBar(
+        title: title,
+        progress: value.round().clamp(0, max),
+        max: max,
+        display: value.round().toString(),
+        onChanged: (v) { onChanged(v); _apply(); },
+      ),
+    );
+  }
+
+  Widget _buildLineSwitch(String label, bool value, ValueChanged<bool> onChanged) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(label, style: const TextStyle(fontSize: 13)),
+            ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeThumbColor: Theme.of(context).colorScheme.primary,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _MoreSettingsSheet extends StatefulWidget {

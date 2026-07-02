@@ -321,14 +321,18 @@ class _ReaderViewState extends State<ReaderView>
         final viewPadding = MediaQuery.of(context).viewPadding;
         final statusBarH = showHeader ? 0.0 : viewPadding.top;
         final navBarH = settings.hideNavigationBar ? 0.0 : viewPadding.bottom;
-        // footer 外层 Padding(top:2 + bottom:4) 来自 page_view._buildFooter
-        final footerPadding = showFooter ? 6.0 : 0.0;
+        // header/footer 总高 = 各向外边距(headerTop/Bottom + footerTop/Bottom)
+        // + 内容行高(headerHeight/footerHeight)。对齐原生 PaddingConfig 四向 padding。
+        final headerOuter =
+            settings.padding.headerTop + settings.padding.headerBottom;
+        final footerOuter =
+            settings.padding.footerTop + settings.padding.footerBottom;
         final nonContentHeight = statusBarH +
             navBarH +
-            (showHeader ? settings.padding.headerHeight : 0) +
+            (showHeader ? settings.padding.headerHeight + headerOuter : 0) +
             (showHeader && settings.showHeaderDivider ? 0.5 : 0) +
             (showFooter && settings.showFooterDivider ? 0.5 : 0) +
-            (showFooter ? settings.padding.footerHeight + footerPadding : 0);
+            (showFooter ? settings.padding.footerHeight + footerOuter : 0);
         final size = Size(
           constraints.maxWidth,
           (constraints.maxHeight - nonContentHeight)

@@ -59,11 +59,7 @@ class PageView extends StatelessWidget {
         Expanded(child: ClipRect(child: _buildContent())),
         if (showFooter && settings.showFooterDivider)
           Container(height: 0.5, color: const Color(0x66666666)),
-        if (showFooter)
-          Padding(
-            padding: const EdgeInsets.only(top: 2, bottom: 4),
-            child: _buildFooter(context),
-          ),
+        if (showFooter) _buildFooter(context),
       ],
     );
 
@@ -83,14 +79,21 @@ class PageView extends StatelessWidget {
 
   Widget _buildChromeOnly(BuildContext context) {
     final cfg = showHeaderOnly ? settings.headerConfig : settings.footerConfig;
+    // chrome-only 路径用对应(header/footer)的外层四向 padding, 与 _buildHeader/Footer 一致。
+    final p = settings.padding;
     final vertPadding = showHeaderOnly
         ? EdgeInsets.only(
-            left: settings.padding.left, right: settings.padding.right)
+            left: p.headerLeft,
+            right: p.headerRight,
+            top: p.headerTop,
+            bottom: p.headerBottom,
+          )
         : EdgeInsets.only(
-            left: settings.padding.left,
-            right: settings.padding.right,
-            top: 2,
-            bottom: 6);
+            left: p.footerLeft,
+            right: p.footerRight,
+            top: p.footerTop,
+            bottom: p.footerBottom,
+          );
     return Padding(
       padding: vertPadding,
       child: Row(
@@ -104,13 +107,16 @@ class PageView extends StatelessWidget {
   }
 
   Widget _buildHeader(BuildContext context) {
-    return SizedBox(
-      height: settings.padding.headerHeight,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: settings.padding.left,
-          right: settings.padding.right,
-        ),
+    return Padding(
+      // 页眉外层四向内边距(对齐原生 headerPaddingTop/Bottom/Left/Right)。
+      padding: EdgeInsets.only(
+        left: settings.padding.headerLeft,
+        right: settings.padding.headerRight,
+        top: settings.padding.headerTop,
+        bottom: settings.padding.headerBottom,
+      ),
+      child: SizedBox(
+        height: settings.padding.headerHeight,
         child: Row(
           children: [
             Expanded(
@@ -130,24 +136,28 @@ class PageView extends StatelessWidget {
 
   Widget _buildFooter(BuildContext context) {
     return Padding(
+      // 页脚外层四向内边距(对齐原生 footerPaddingTop/Bottom/Left/Right)。
       padding: EdgeInsets.only(
-        left: settings.padding.left,
-        right: settings.padding.right,
-        top: 2,
-        bottom: 6,
+        left: settings.padding.footerLeft,
+        right: settings.padding.footerRight,
+        top: settings.padding.footerTop,
+        bottom: settings.padding.footerBottom,
       ),
-      child: Row(
-        children: [
-          Expanded(
-              child: _buildTip(
-                  settings.footerConfig.left, context, Alignment.centerLeft)),
-          Expanded(
-              child: _buildTip(
-                  settings.footerConfig.center, context, Alignment.center)),
-          Expanded(
-              child: _buildTip(
-                  settings.footerConfig.right, context, Alignment.centerRight)),
-        ],
+      child: SizedBox(
+        height: settings.padding.footerHeight,
+        child: Row(
+          children: [
+            Expanded(
+                child: _buildTip(
+                    settings.footerConfig.left, context, Alignment.centerLeft)),
+            Expanded(
+                child: _buildTip(
+                    settings.footerConfig.center, context, Alignment.center)),
+            Expanded(
+                child: _buildTip(
+                    settings.footerConfig.right, context, Alignment.centerRight)),
+          ],
+        ),
       ),
     );
   }
