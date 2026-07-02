@@ -101,6 +101,17 @@ class _ReaderViewState extends State<ReaderView>
   bool _routeReady = false;
   Animation<double>? _routeAnimation;
 
+  /// 本路由是否为 Navigator 当前路由(无下一页覆盖)。
+  ///
+  /// 当目录页/菜单等 push 到本路由之上时, 键盘弹起会持续改变窗口 viewInsets
+  /// → LayoutBuilder constraints 多帧变化 → updatePageSize → 重排整章(~170ms/
+  /// 次), 把主线程占满, 表现为"打开搜索框后不停卡"。
+  ///
+  /// 守卫: 仅当本路由是 current route 时才响应尺寸变化排版。push 出去的页面
+  /// (目录/书签/设置弹窗)由其自身负责, reader 此刻不可见, 无需重排。
+  bool _isCurrentRoute = true;
+  Animation<double>? _secondaryAnimation;
+
   @override
   void initState() {
     super.initState();
@@ -140,6 +151,41 @@ class _ReaderViewState extends State<ReaderView>
         _routeReady = true;
       }
     }
+    // 监听 secondaryAnimation: 当 push 出新路由(目录/菜单/弹窗)覆盖本路由时,
+    // secondaryAnimation 会从 0 推向 1。借此标记本路由是否 current route,
+    // 用于在「被覆盖」期间屏蔽键盘 resize 引发的无谓重排(详见 _isCurrentRoute)。
+    if (_secondaryAnimation == null) {
+      final route = ModalRoute.of(context);
+      final secondary = route?.secondaryAnimation;
+      if (secondary != null) {
+        _secondaryAnimation = secondary;
+        _isCurrentRoute = secondary.value <= 0;
+        secondary.addStatusListener(_onSecondaryAnimation);
+        secondary.addListener(_onSecondaryFrame);
+      }
+    }
+  }
+
+  void _onSecondaryAnimation(AnimationStatus status) {
+    // status 反映本路由被覆盖与否:
+    //   completed = secondaryAnimation 推到 1(本路由被覆盖)
+    //   dismissed = secondaryAnimation 回到 0(本路由恢复 current)
+    final wasCurrent = _isCurrentRoute;
+    _isCurrentRoute = status == AnimationStatus.dismissed ||
+        (status == AnimationStatus.forward && _secondaryAnimation!.value <= 0);
+    // 从被覆盖 → current 时, 触发一次重排让尺寸(可能已变)生效。
+    if (!wasCurrent && _isCurrentRoute && mounted) {
+      setState(() {});
+    }
+  }
+
+  void _onSecondaryFrame() {
+    // 反向(pop 覆盖页)动画进行中, value 一路从 1 降到 0; 在降到 0 的瞬间翻转标志。
+    final v = _secondaryAnimation?.value ?? 0;
+    final nowCurrent = v <= 0;
+    if (nowCurrent != _isCurrentRoute) {
+      _isCurrentRoute = nowCurrent;
+    }
   }
 
   void _onRouteAnimation(AnimationStatus status) {
@@ -159,6 +205,8 @@ class _ReaderViewState extends State<ReaderView>
     _pageAnim.removeStatusListener(_onPageAnimStatus);
     _pageAnim.dispose();
     _routeAnimation?.removeStatusListener(_onRouteAnimation);
+    _secondaryAnimation?.removeStatusListener(_onSecondaryAnimation);
+    _secondaryAnimation?.removeListener(_onSecondaryFrame);
     widget.controller.removeListener(_onControllerUpdate);
     BatteryProvider.instance.removeListener(_onBatteryUpdate);
     // 恢复显示系统栏(离开阅读页)。
@@ -284,7 +332,11 @@ class _ReaderViewState extends State<ReaderView>
           // 转场动画期间不排版(~170ms 同步排版会砸掉转场动画的帧)。
           // _routeReady 由 didChangeDependencies 的 route.animation completed 回调置 true,
           // 届时 setState 触发重建, 这里才真正 updatePageSize → 排版。
-          if (_routeReady) {
+          //
+          // 同时屏蔽「本路由被覆盖」期间(目录页/菜单等 push 到上层)的排版: 此时 reader
+          // 不可见, 但键盘弹起会让 viewInsets 多帧变化 → constraints 变 → 反复触发重排
+          // 卡死主线程。仅当本路由是 current route 时才响应。
+          if (_routeReady && _isCurrentRoute) {
             widget.controller.updatePageSize(size);
           }
         });

@@ -13,6 +13,8 @@ dependencies:
   http: ^1.2.0
   # 持久化演示用(桌面端 sqflite 需 ffi)
   sqflite_common_ffi: ^2.3.4
+  # 弹窗(在 MaterialApp.builder 初始化 FlutterSmartDialog.init)
+  flutter_smart_dialog: ^5.1.0
 
 dev_dependencies:
   flutter_test:

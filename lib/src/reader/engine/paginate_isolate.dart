@@ -41,6 +41,7 @@ Future<List<TextPage>> paginateInBackground({
   required String content,
   required Size pageSize,
   required ReadingSettings settings,
+  bool firstParagraphIsTitle = false,
 }) async {
   // 短内容直接主线程排, 避免起 isolate 的开销(isolate spawn ~1-2ms)。
   // 阈值取经验值: 单页约几百字符, 几页内的内容主线程排也很快。
@@ -50,6 +51,7 @@ Future<List<TextPage>> paginateInBackground({
       content: content,
       pageSize: pageSize,
       settings: settings,
+      firstParagraphIsTitle: firstParagraphIsTitle,
     );
     debugPrint(
       '[PERF] paginateInBackground(短内容主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
@@ -67,6 +69,7 @@ Future<List<TextPage>> paginateInBackground({
       content: content,
       pageSize: pageSize,
       settings: settings,
+      firstParagraphIsTitle: firstParagraphIsTitle,
     );
     final reason = _isolateDisabled
         ? '熔断'
@@ -86,6 +89,7 @@ Future<List<TextPage>> paginateInBackground({
         content: content,
         pageSize: pageSize,
         settings: settings,
+        firstParagraphIsTitle: firstParagraphIsTitle,
       );
     });
     debugPrint(
@@ -102,6 +106,7 @@ Future<List<TextPage>> paginateInBackground({
       content: content,
       pageSize: pageSize,
       settings: settings,
+      firstParagraphIsTitle: firstParagraphIsTitle,
     );
     debugPrint(
       '[PERF] paginateInBackground(熔断后主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',

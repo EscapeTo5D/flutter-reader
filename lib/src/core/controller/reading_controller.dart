@@ -110,6 +110,17 @@ class ReadingController extends ChangeNotifier {
   /// dispose 后还 notifyListeners(ChangeNotifier 此版本无 mounted getter, 自管标志位)。
   bool _disposed = false;
 
+  /// 标记「即将退出」, 立即阻断后续异步预取/章加载(不等 [dispose])。
+  ///
+  /// 宿主在页面 dispose 的**同步阶段**调用: dispose() 是同步的, 但宿主常先
+  /// fire-and-forget 一个 await flushProgress() 再 dispose(), 期间若异步加载回调
+  /// 完成(如章正文排版好了), 会触发 _prefetchAdjacentAsync 发起新的网络请求。
+  /// 提前置 _disposed 可让这些回调里的守卫生效, 避免退出后仍加载。进度落盘不受
+  /// 影响(dispose 内部仍会 best-effort 落盘, 宿主 flushProgress 也会先 await)。
+  void markExiting() {
+    _disposed = true;
+  }
+
   ReadingController({ReaderRepository? repository, String? userId})
     : _repository = repository,
       _userId = userId;
@@ -156,6 +167,17 @@ class ReadingController extends ChangeNotifier {
     return _book?.chapters.length ?? 0;
   }
 
+  /// 第 [index] 章的标题。按章加载模式下取自 [_chapterSource], 否则取自
+  /// [_book.chapters]。供目录页等仅需标题的场景使用(与 [totalChapters] 配套)。
+  /// 越界返回空串。
+  String chapterTitle(int index) {
+    final source = _chapterSource;
+    if (source != null) return source.chapterTitle(index);
+    final chapters = _book?.chapters;
+    if (chapters == null || index < 0 || index >= chapters.length) return '';
+    return chapters[index].title;
+  }
+
   bool get canGoNext =>
       _currentPageIndex < _pages.length - 1 ||
       _currentChapterIndex < totalChapters - 1;
@@ -169,16 +191,26 @@ class ReadingController extends ChangeNotifier {
           : null)
       : null;
 
-  void loadBook(Book book) {
+  ///
+  /// [initialChapterIndex] 用于宿主「从目录跳转到指定章」场景:
+  /// - 提供(>=0): 直接定位到该章, **跳过** restoreProgress(否则异步恢复会
+  ///   用持久化的上次进度覆盖刚指定的跳转目标)。书签仍正常加载。
+  /// - 不提供(null): 走原行为——用 [Book.currentChapterIndex] 起步, 异步恢复进度。
+  void loadBook(Book book, {int? initialChapterIndex}) {
     _book = book;
-    _currentChapterIndex = book.currentChapterIndex;
+    _currentChapterIndex =
+        initialChapterIndex ?? book.currentChapterIndex;
     _currentPageIndex = 0;
     _rePaginate();
     notifyListeners();
-    // 书加载完(分页就绪)后, 异步从仓库恢复该用户的进度。
-    // 不阻塞渲染: 即使恢复晚一帧也无妨, 用户先看到首页再被定位到上次位置。
-    if (_repository != null && _userId != null) {
+    if (_repository == null || _userId == null) return;
+    if (initialChapterIndex == null) {
+      // 未指定跳转: 书加载完(分页就绪)后, 异步从仓库恢复该用户的进度。
+      // 不阻塞渲染: 即使恢复晚一帧也无妨, 用户先看到首页再被定位到上次位置。
       restoreProgress();
+    } else {
+      // 显式跳章: 不恢复进度(避免覆盖跳转), 仍加载该书签(书签独立于进度)。
+      loadBookmarks();
     }
   }
 
@@ -637,6 +669,11 @@ class ReadingController extends ChangeNotifier {
       return;
     }
     // 按章加载模式。
+    // 先按需失效缓存: settings(字号/行距/titleMode 等)或 pageSize 变化时, 旧分页结果
+    // 作废。否则快路径会复用旧 settings 排好的缓存, 导致改 titleMode 等不生效
+    // (例: 隐藏→显示标题时仍用无标题的旧分页)。_invalidateAdjacentCacheIfNeeded
+    // 内部用 identical 比较 _settings 引用, 无变化时是 O(1) no-op。
+    _invalidateAdjacentCacheIfNeeded();
     // 快路径: 当前章分页缓存命中(预排过) → 同步就绪, 翻章流畅。
     final cached = _adjacentChapterCache[_currentChapterIndex];
     if (cached != null) {
@@ -759,6 +796,8 @@ class ReadingController extends ChangeNotifier {
       content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
+      // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定。
+      firstParagraphIsTitle: title.isNotEmpty,
     );
     debugPrint(
       '[PERF] paginate(章 $chapterIndex, ${pages.length}页): ${tPaginate.elapsedMilliseconds}ms',
@@ -772,6 +811,7 @@ class ReadingController extends ChangeNotifier {
   /// 对齐 legado `prefetchAdjacentChapters`: 用户在当前章阅读时, 后台把相邻章
   /// 正文加载+排版好入缓存, 翻章时命中 O(1)。不更新 _pages, 不阻塞当前显示。
   Future<void> _prefetchAdjacentAsync() async {
+    if (_disposed) return;
     final source = _chapterSource;
     if (source == null) return;
     final next = _currentChapterIndex + 1;
@@ -823,6 +863,9 @@ class ReadingController extends ChangeNotifier {
       content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
+      // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定,
+      // 不依赖正则(覆盖"楔子"/"序章"/宿主自定义标题等非"第N章"格式)。
+      firstParagraphIsTitle: chapter.title.isNotEmpty,
     );
     _adjacentChapterCache[chapterIndex] = pages;
     return pages;
@@ -910,7 +953,11 @@ class ReadingController extends ChangeNotifier {
   /// 幂等: 命中缓存则跳过, 多次调用安全。
   /// 按章加载模式下走异步预取 [_prefetchAdjacentAsync](fire-and-forget)。
   void prefetchAdjacentChapters() {
-    if (_book == null || _pageSize == Size.zero) return;
+    // 已销毁或无 UI 监听者(view 已 dispose 并 removeListener)时不再预取——
+    // 否则退出页面后排队中的 PostFrame 回调仍会触发章节网络加载。
+    if (_disposed || !hasListeners || _book == null || _pageSize == Size.zero) {
+      return;
+    }
     if (_chapterSource != null) {
       // 异步预取: 不阻塞当前帧, 完成后入缓存供下次 peek 命中。
       _prefetchAdjacentAsync();

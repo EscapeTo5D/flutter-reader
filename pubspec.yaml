@@ -16,6 +16,9 @@ dependencies:
   sqflite_common_ffi: ^2.3.4
   path: ^1.9.0
   path_provider: ^2.1.5
+  # 弹窗(替换 Flutter 内置 Dialog/BottomSheet)。全局 dialog/attach/toast/loading。
+  # 宿主需在 MaterialApp.builder 里包 FlutterSmartDialog.init() (见 example/lib/main.dart)。
+  flutter_smart_dialog: ^5.1.0
 
 dev_dependencies:
   flutter_test:

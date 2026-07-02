@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_reader/flutter_reader.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'api_service.dart';
 import 'db.dart';
 
@@ -18,6 +19,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flutter Reader Demo',
       theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
+      // flutter_smart_dialog 初始化: 必须在 MaterialApp.builder 里包一层,
+      // 否则 SmartDialog.show / showLoading / showToast 无法工作。
+      builder: FlutterSmartDialog.init(),
       home: const NovelListPage(),
     );
   }
