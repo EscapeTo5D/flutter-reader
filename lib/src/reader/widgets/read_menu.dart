@@ -490,10 +490,11 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
-  /// 字重切换器文字 "N/B/L"(对齐原生 strings.xml font_weight_text="N/B/L"),
-  /// 高亮当前项为红色(对齐 TextFontWeightConverter: 0=N 正常, 1=B 粗体, 2=L 细体)。
+  /// 字重切换器文字 "中/粗/细"。
+  /// 原生 strings.xml font_weight_text="N/B/L"(英文), 这里用中文更直观。
+  /// 高亮当前项为红色(对齐 TextFontWeightConverter: 0=正常, 1=粗体, 2=细体)。
   Widget _buildWeightSpans() {
-    const chars = ['N', 'B', 'L'];
+    const chars = ['中', '粗', '细'];
     return RichText(
       text: TextSpan(
         style: _strokeButtonStyle,
