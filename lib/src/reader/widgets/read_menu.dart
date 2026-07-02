@@ -308,6 +308,9 @@ class _StyleDialogState extends State<_StyleDialog> {
   late String? bgImage;
   bool _clearBgImage = false;
   late PageAnimMode pageAnimMode;
+  // 共享排版(对齐原生 ReadBookConfig.shareLayout, 详见 ReadingSettings.shareLayout)。
+  // true 时点颜色预设只换 bg/text, 不重置 字号/字距/行距/段距 滑块。
+  late bool _shareLayout;
   // 字重三态(对齐原生 ReadBookConfig.textBold: 0=正常 1=粗体 2=细体)。
   // TextFontWeightConverter 显示 "中/粗/细", 高亮当前项为红色。
   late int _textBold;
@@ -364,6 +367,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     textColor = s.textColor;
     bgImage = s.backgroundImage;
     pageAnimMode = s.pageAnimMode;
+    _shareLayout = s.shareLayout;
     // fontWeight → textBold 反推(对齐原生三态):
     // w700(粗) → 1, w300(细) → 2, 其余 → 0(正常)。
     if (s.fontWeight == FontWeight.w700) {
@@ -402,6 +406,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         backgroundImage: bgImage,
         clearBackgroundImage: _clearBgImage,
         pageAnimMode: pageAnimMode,
+        shareLayout: _shareLayout,
       ),
     );
   }
@@ -796,20 +801,28 @@ class _StyleDialogState extends State<_StyleDialog> {
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
+                // 对齐原生 tv_bg_ts: text_bg_style="颜色与背景 (长按自定义)"。
                 child: Text(
-                  '文字底色',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                  '颜色与背景 (长按自定义)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54.withValues(alpha: 0.75),
+                  ),
                 ),
               ),
-              const Text('共用布局', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              Text('共享排版', style: TextStyle(fontSize: 12, color: Colors.black54)),
               const SizedBox(width: 4),
               SizedBox(
                 width: 20,
                 height: 20,
                 child: Checkbox(
-                  value: false,
-                  onChanged: (v) {},
+                  // 对齐原生 cb_share_layout: 绑定 ReadBookConfig.shareLayout。
+                  value: _shareLayout,
+                  onChanged: (v) {
+                    setState(() => _shareLayout = v ?? false);
+                    _apply();
+                  },
                   activeColor: Theme.of(context).colorScheme.primary,
                   visualDensity: VisualDensity.compact,
                   side: BorderSide(color: Colors.grey.shade400),
@@ -847,20 +860,24 @@ class _StyleDialogState extends State<_StyleDialog> {
                                     textColor = preset.text;
                                     bgImage = null;
                                     _clearBgImage = true;
-                                    if (preset.fontSize != null) {
-                                      _fontSizeProgress = preset.fontSize!.toInt() - 5;
-                                    }
-                                    if (preset.letterSpacing != null) {
-                                      _letterSpacingProgress =
-                                          (preset.letterSpacing! * 100).toInt() + 50;
-                                    }
-                                    if (preset.lineHeight != null) {
-                                      // progress = lineHeight × 10(对齐原生 lineSpacingExtra 整数语义)
-                                      _lineHeightProgress = (preset.lineHeight! * 10).round();
-                                    }
-                                    if (preset.paragraphSpacing != null) {
-                                      // progress = 字段值(对齐原生 paragraphSpacing 整数语义)
-                                      _paragraphSpacingProgress = preset.paragraphSpacing!.round();
+                                    // 共享排版: true 时只换 bg/text, 不重置排版参数
+                                    // (对齐原生 shareLayout 语义——切样式保留当前排版)。
+                                    if (!_shareLayout) {
+                                      if (preset.fontSize != null) {
+                                        _fontSizeProgress = preset.fontSize!.toInt() - 5;
+                                      }
+                                      if (preset.letterSpacing != null) {
+                                        _letterSpacingProgress =
+                                            (preset.letterSpacing! * 100).toInt() + 50;
+                                      }
+                                      if (preset.lineHeight != null) {
+                                        // progress = lineHeight × 10(对齐原生 lineSpacingExtra 整数语义)
+                                        _lineHeightProgress = (preset.lineHeight! * 10).round();
+                                      }
+                                      if (preset.paragraphSpacing != null) {
+                                        // progress = 字段值(对齐原生 paragraphSpacing 整数语义)
+                                        _paragraphSpacingProgress = preset.paragraphSpacing!.round();
+                                      }
                                     }
                                   });
                                   _apply();

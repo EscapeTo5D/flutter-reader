@@ -158,6 +158,7 @@ Map<String, dynamic> encodeReadingSettings(ReadingSettings s) {
     'titleTopSpacing': s.titleTopSpacing,
     'titleBottomSpacing': s.titleBottomSpacing,
     'pageAnimMode': s.pageAnimMode.name,
+    'shareLayout': s.shareLayout,
   };
 }
 
@@ -203,6 +204,7 @@ ReadingSettings decodeReadingSettings(Map<String, dynamic> json) {
     titleTopSpacing: _asDouble(json['titleTopSpacing'], d.titleTopSpacing),
     titleBottomSpacing: _asDouble(json['titleBottomSpacing'], d.titleBottomSpacing),
     pageAnimMode: _pageAnimFromName(json['pageAnimMode'], d.pageAnimMode),
+    shareLayout: (json['shareLayout'] as bool?) ?? d.shareLayout,
   );
 }
 

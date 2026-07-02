@@ -166,6 +166,11 @@ class ReadingSettings {
   double titleBottomSpacing; // 标题下方间距
   /// 翻页动画类型, 对齐原生 legado PageAnim。默认 slide(对齐原生默认)。
   PageAnimMode pageAnimMode;
+  /// 共享排版, 对齐原生 ReadBookConfig.shareLayout。
+  /// 原生语义: true 时排版参数(字号/字距/行距/段距)跨「样式槽」共享。
+  /// Flutter 无多槽配置, 重新定义为: true 时点颜色预设只换 bg/text,
+  /// 不重置滑块值(保留当前排版参数); false 时切预设连同排版参数一起重置(原生默认行为)。
+  bool shareLayout;
 
   ReadingSettings({
     // 默认值对齐原生 legado「微信读书」预设(readConfig.json 第 0 项):
@@ -213,6 +218,7 @@ class ReadingSettings {
     this.titleTopSpacing = 12.0,
     this.titleBottomSpacing = 8.0,
     this.pageAnimMode = PageAnimMode.slide,
+    this.shareLayout = false,
   });
 
   ReadingSettings copyWith({
@@ -247,6 +253,7 @@ class ReadingSettings {
     double? titleTopSpacing,
     double? titleBottomSpacing,
     PageAnimMode? pageAnimMode,
+    bool? shareLayout,
   }) {
     return ReadingSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -279,6 +286,7 @@ class ReadingSettings {
       titleTopSpacing: titleTopSpacing ?? this.titleTopSpacing,
       titleBottomSpacing: titleBottomSpacing ?? this.titleBottomSpacing,
       pageAnimMode: pageAnimMode ?? this.pageAnimMode,
+      shareLayout: shareLayout ?? this.shareLayout,
     );
   }
 }
