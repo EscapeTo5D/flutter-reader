@@ -22,6 +22,14 @@ class _ChapterListPageState extends State<ChapterListPage>
   bool _searchMode = false;
   String _chapterQuery = '';
 
+  /// 主体(TabBar/TabBarView/搜索框)是否已挂载。
+  ///
+  /// 首次 push 进入时主体不挂载, 只渲染轻量 Scaffold(让转场动画不被首帧 ~217ms
+  /// 的 layout 卡死); 转场动画结束(route.animation completed)后再 setState 挂载
+  /// 完整主体。对齐 ReaderView._routeReady 的同类策略。
+  bool _bodyMounted = false;
+  Animation<double>? _routeAnimation;
+
   @override
   void initState() {
     super.initState();
@@ -35,7 +43,38 @@ class _ChapterListPageState extends State<ChapterListPage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 挂一次 route 转场动画监听: 动画结束后才挂载主体(首次), 避免重活卡死转场。
+    if (_routeAnimation == null) {
+      final route = ModalRoute.of(context);
+      final anim = route?.animation;
+      if (anim != null) {
+        _routeAnimation = anim;
+        if (anim.isCompleted) {
+          // 转场已结束(如热重载/非首次): 直接挂载。
+          _bodyMounted = true;
+        } else {
+          anim.addStatusListener(_onRouteAnimation);
+        }
+      } else {
+        // 非 Navigator 路由场景(测试): 直接挂载。
+        _bodyMounted = true;
+      }
+    }
+  }
+
+  void _onRouteAnimation(AnimationStatus status) {
+    if (status == AnimationStatus.completed && mounted && !_bodyMounted) {
+      setState(() => _bodyMounted = true);
+      _routeAnimation?.removeStatusListener(_onRouteAnimation);
+      _routeAnimation = null;
+    }
+  }
+
+  @override
   void dispose() {
+    _routeAnimation?.removeStatusListener(_onRouteAnimation);
     _tabController.dispose();
     _searchFocus.dispose();
     _searchEdit.dispose();
@@ -61,89 +100,101 @@ class _ChapterListPageState extends State<ChapterListPage>
 
   @override
   Widget build(BuildContext context) {
-    final accent = Theme.of(context).colorScheme.primary;
+    // 首次进入时主体未挂载: 只渲染轻量 Scaffold, 让转场动画不被首帧 layout 卡死;
+    // 转场动画结束后 _onRouteAnimation 触发 setState(_bodyMounted=true) 挂载完整主体。
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: LegadoIcons.arrowBack(size: 24, color: Colors.black87),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Stack(
-          children: [
-            // 对齐 legado TocActivity: SearchView 作为 menu actionView 在 Activity 启动时
-            // 就 inflate 好(只是 iconified 收起), 点搜索只切 isIconified, 无首次 layout。
-            // Flutter 等价: TextField 与 TabBar 都常驻挂载, 用 Visibility 切显隐。
-            // Visibility(maintainState/Size/Animation: true) 保留 RenderObject 与已算好
-            // 的 layout, 故 EditableText 的首次 layout 在页面进入时(用户无感)完成,
-            // 点搜索时无 ~120ms 首次 layout 开销。
-            Visibility(
-              visible: !_searchMode,
-              maintainState: true,
-              maintainSize: true,
-              maintainAnimation: true,
-              child: TabBar(
-                controller: _tabController,
-                // 对齐原生 TabLayout: 居中, indicator 仅随 label 宽度(非整宽), 强调色下划线。
-                labelColor: Colors.black87,
-                unselectedLabelColor: Colors.black54,
-                indicatorColor: accent,
-                indicatorSize: TabBarIndicatorSize.label,
-                tabAlignment: TabAlignment.center,
-                dividerHeight: 0,
-                tabs: const [
-                  Tab(text: '目录'),
-                  Tab(text: '书签'),
-                ],
-              ),
-            ),
-            Visibility(
-              visible: _searchMode,
-              maintainState: true,
-              maintainSize: true,
-              maintainAnimation: true,
-              child: TextField(
-                controller: _searchEdit,
-                focusNode: _searchFocus,
-                style: const TextStyle(fontSize: 16, color: Colors.black87),
-                decoration: InputDecoration(
-                  isDense: true,
-                  border: InputBorder.none,
-                  hintText: '搜索章节标题',
-                  hintStyle: const TextStyle(color: Colors.black38, fontSize: 16),
-                  suffixIcon: _chapterQuery.isEmpty
-                      ? null
-                      : IconButton(
-                          icon: LegadoIcons.close(size: 20, color: Colors.black54),
-                          onPressed: _exitSearch,
-                        ),
-                ),
-                onChanged: (v) => setState(() => _chapterQuery = v.trim()),
-              ),
-            ),
-          ],
+        title: _bodyMounted ? _buildTitle() : const SizedBox.shrink(),
+        actions: _bodyMounted
+            ? [
+                if (!_searchMode)
+                  IconButton(
+                    icon: LegadoIcons.search(size: 24, color: Colors.black87),
+                    tooltip: '搜索',
+                    onPressed: () {
+                      // 仅在目录 tab 启用搜索, 不在目录则先切过去。
+                      if (_tabController.index != 0) {
+                        _tabController.animateTo(0);
+                      }
+                      _enterSearch();
+                    },
+                  ),
+              ]
+            : null,
+      ),
+      body: _bodyMounted
+          ? TabBarView(
+              controller: _tabController,
+              children: [
+                _ChapterListView(controller: widget.controller, query: _chapterQuery),
+                _BookmarkListView(controller: widget.controller),
+              ],
+            )
+          : const SizedBox.shrink(),
+    );
+  }
+
+  /// 标题区: TabBar 与搜索框叠放, 用 Visibility 切显隐。
+  ///
+  /// 对齐 legado TocActivity: SearchView 作为 menu actionView 在 Activity 启动时
+  // 就 inflate 好(只是 iconified 收起), 点搜索只切 isIconified, 无首次 layout。
+  // Flutter 等价: TextField 与 TabBar 都常驻挂载, 用 Visibility 切显隐。
+  // Visibility(maintainState/Size/Animation: true) 保留 RenderObject 与已算好
+  // 的 layout, 故 EditableText 的首次 layout 在主体挂载时(转场后, 用户已见页面)
+  // 完成, 点搜索时无 ~120ms 首次 layout 开销。
+  Widget _buildTitle() {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Stack(
+      children: [
+        Visibility(
+          visible: !_searchMode,
+          maintainState: true,
+          maintainSize: true,
+          maintainAnimation: true,
+          child: TabBar(
+            controller: _tabController,
+            // 对齐原生 TabLayout: 居中, indicator 仅随 label 宽度(非整宽), 强调色下划线。
+            labelColor: Colors.black87,
+            unselectedLabelColor: Colors.black54,
+            indicatorColor: accent,
+            indicatorSize: TabBarIndicatorSize.label,
+            tabAlignment: TabAlignment.center,
+            dividerHeight: 0,
+            tabs: const [
+              Tab(text: '目录'),
+              Tab(text: '书签'),
+            ],
+          ),
         ),
-        actions: [
-          if (!_searchMode)
-            IconButton(
-              icon: LegadoIcons.search(size: 24, color: Colors.black87),
-              tooltip: '搜索',
-              onPressed: () {
-                // 仅在目录 tab 启用搜索, 不在目录则先切过去。
-                if (_tabController.index != 0) {
-                  _tabController.animateTo(0);
-                }
-                _enterSearch();
-              },
+        Visibility(
+          visible: _searchMode,
+          maintainState: true,
+          maintainSize: true,
+          maintainAnimation: true,
+          child: TextField(
+            controller: _searchEdit,
+            focusNode: _searchFocus,
+            style: const TextStyle(fontSize: 16, color: Colors.black87),
+            decoration: InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              hintText: '搜索章节标题',
+              hintStyle: const TextStyle(color: Colors.black38, fontSize: 16),
+              suffixIcon: _chapterQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: LegadoIcons.close(size: 20, color: Colors.black54),
+                      onPressed: _exitSearch,
+                    ),
             ),
-        ],
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _ChapterListView(controller: widget.controller, query: _chapterQuery),
-          _BookmarkListView(controller: widget.controller),
-        ],
-      ),
+            onChanged: (v) => setState(() => _chapterQuery = v.trim()),
+          ),
+        ),
+      ],
     );
   }
 }

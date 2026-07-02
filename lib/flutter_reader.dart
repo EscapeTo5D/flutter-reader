@@ -17,7 +17,6 @@ export 'src/reader/entities/column.dart';
 export 'src/reader/engine/page_engine.dart';
 export 'src/reader/engine/paginate_isolate.dart';
 export 'src/reader/widgets/reader_view.dart';
-export 'src/reader/widgets/reader_page_route.dart';
 export 'src/reader/widgets/read_menu.dart';
 export 'src/reader/widgets/page_view.dart';
 export 'src/reader/widgets/chapter_list_page.dart';

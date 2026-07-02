@@ -65,7 +65,7 @@ class _NovelListPageState extends State<NovelListPage> {
 
   void _openNovel(NovelInfo novel) {
     Navigator.of(context).push(
-      ReaderPageRoute(
+      MaterialPageRoute(
         builder: (_) => ReaderPage(novelId: novel.id, novelTitle: novel.title),
       ),
     );

@@ -6,7 +6,6 @@ import '../../core/storage/reading_style_preset.dart';
 import 'chapter_list_page.dart';
 import 'detail_seek_bar.dart';
 import 'legado_icons.dart';
-import 'reader_page_route.dart';
 
 class ReadMenu extends StatefulWidget {
   final ReadingController controller;
@@ -250,7 +249,7 @@ class _ReadMenuState extends State<ReadMenu> {
     final book = widget.controller.book;
     if (book == null) return;
     Navigator.of(context).push(
-      ReaderPageRoute(
+      MaterialPageRoute(
         builder: (ctx) => ChapterListPage(controller: widget.controller),
       ),
     );
