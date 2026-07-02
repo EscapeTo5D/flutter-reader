@@ -331,3 +331,29 @@ controller 仍读 `book.chapters[i].content`。「本地优先」逻辑放 examp
 - **兜底**（对齐 `ChapterProvider.upViewSize` 的 300ms 延迟 + 反弹取消）：`reading_controller.updatePageSize` 改防抖——尺寸变化延迟 300ms 执行，期间反弹回原值则取消；首次进入（`_pageSize == Size.zero`，loadBook 关键路径）同步不延迟。应对真正改变尺寸的场景（旋转/分屏/系统栏显隐）的连续帧，是 rebuild 链之外的额外保险。
 
 **语义**：正文被键盘/搜索框遮挡时本就无需适配其高度，移除 viewInsets 不影响视觉。`SearchMenu` 当前用 `MediaQuery.padding`（系统栏）定位、不消费 viewInsets，故不受 `removeViewInsets` 影响。
+
+## 「首次挂载卡顿」预 layout 预热模式（2026-07-03，commit 8f5aeb9）
+
+**场景**：目录页（`ChapterListPage`）首次点搜索按钮唤起键盘，比第二次慢 ~90ms（124ms vs 31ms）。**无转场动画可掩盖**（在当前页内切换 TabBar↔TextField），卡顿赤裸可见。
+
+**根因（用 Stopwatch 打点定位，别猜）**：
+- `[PERF] ChapterListPage.build: 3ms`、`_ChapterListView.build: 0ms` → **build 不是瓶颈**。
+- `enterSearch→PostFrame: 124ms` → 瓶颈全在 build 之后的 **layout**：TextField 内部 `EditableText` 的首次 layout（`RenderEditable` 初始化、光标几何、文本测量）。第二次复用 RenderObject 故快（31ms）。
+- 教训：`EditableText` 这类有自定义 `RenderObject` 的 widget，**首次 layout 开销远大于首次 build**，性能分析必须分 build / layout 两段打点。
+
+**对照 legado**（`TocActivity.kt:70-106`）：`SearchView` 作为 Toolbar menu actionView（`showAsAction="always"`），在 `onCreateOptionsMenu`（Activity 启动早期）就 inflate 好——用户一打开目录页看到的放大镜图标就是已 inflate 的 SearchView。点搜索只切 `isIconified(true→false)` + requestFocus，**无首次 inflate/layout**。这叫「预 inflate」。⚠️ 不是靠转场动画掩盖（书内全文搜索那条线 `SearchContentActivity` 才是独立 Activity + 转场，别和目录页混淆）。
+
+**修复（对齐 legado 预 inflate 的 Flutter 等价物）**：
+- title 用 `Stack` 叠放 `TabBar` 与 `TextField`，两者**都常驻挂载**，用 `Visibility` 切显隐。
+- 关键：`Visibility(maintainState: true, maintainSize: true, maintainAnimation: true)`。三个 maintain 全开 = 保留 `Element`、保留 `RenderObject`、保留已算好的 **layout**、保留动画 ticker。EditableText 的首次 layout 在页面进入时（用户无感）就完成，点搜索时无首次 layout 开销。
+- `_enterSearch`：`setState` 后用 `PostFrame` 重新 `requestFocus`——因为 `Visibility(visible:false)` 的 widget 无法获焦，切到 visible 后下一帧才能唤起键盘。
+
+**踩过的坑（避免重复）**：
+- `Offstage` **无效**：`Offstage` 的 widget 只 build，**跳过 layout 和 paint**。EditableText 没完成首次 layout，预热白做（实测 155→108 只省了 build 部分，layout 仍要补）。要预 layout 必须 `Visibility` 三 maintain 全开。
+- `Visibility` 不带 maintain 参数 = 等同于条件挂载，也无效。
+- `Opacity(opacity:0)` 理论上能预 layout（参与 layout/paint 但透明），但比 `Visibility` maintain 更重（真的 paint 了），不推荐。
+
+**可复用模式**：任何「首次显示某重量级 widget（含自定义 RenderObject，如 EditableText/CustomPaint/图表）卡顿」的场景，都可考虑：
+1. 先打点确认是 build 还是 layout 慢（`Stopwatch` 在 build 起止 + PostFrame 两段）。
+2. 若是首次 layout 慢，用 `Visibility(maintainState/Size/Animation: true)` 把它常驻树里预 layout，切显隐时复用已有 RenderObject。
+3. 代价：常驻一个隐藏 widget 的内存与 layout 开销，权衡是否值得（低频/轻量 widget 不值得）。
