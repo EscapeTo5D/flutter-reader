@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import 'chapter_list_page.dart';
@@ -253,21 +254,36 @@ class _ReadMenuState extends State<ReadMenu> {
   }
 
   void _showStyleDialog(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => _StyleDialog(controller: widget.controller),
+    SmartDialog.show(
+      alignment: Alignment.bottomCenter,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      animationBuilder: _bottomSheetAnimation,
+      builder: (_) => _StyleDialog(controller: widget.controller),
     );
   }
 
   void _showMoreSettings(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => _MoreSettingsSheet(controller: widget.controller),
+    SmartDialog.show(
+      alignment: Alignment.bottomCenter,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      animationBuilder: _bottomSheetAnimation,
+      builder: (_) => _MoreSettingsSheet(controller: widget.controller),
     );
   }
+}
+
+/// 底部弹窗滑入/滑出动画(对齐 Material BottomSheet 行为)。
+/// SmartDialog 默认 bottomCenter 是缩放动画, 改成 Y 轴平移更贴合原 showModalBottomSheet。
+Widget _bottomSheetAnimation(
+  AnimationController controller,
+  Widget child,
+  AnimationParam animationParam,
+) {
+  final offset = Tween<Offset>(
+    begin: const Offset(0, 1),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: controller, curve: Curves.easeOutCubic));
+  return SlideTransition(position: offset, child: child);
 }
 
 class _StyleDialog extends StatefulWidget {
@@ -290,6 +306,13 @@ class _StyleDialogState extends State<_StyleDialog> {
   late String? bgImage;
   bool _clearBgImage = false;
   late PageAnimMode pageAnimMode;
+  // 字重三态(对齐原生 ReadBookConfig.textBold: 0=正常 1=粗体 2=细体)。
+  // TextFontWeightConverter 显示 "中/粗/细", 高亮当前项为红色。
+  late int _textBold;
+  // 简繁转换三态(对齐原生 AppConfig.chineseConverterType: 0=不转换 1=简 2=繁)。
+  // ChineseConverter 显示 "简/繁", 高亮当前项(0 时不高亮)。
+  // 注意: 本包无中文转换实现, 仅记录选中态, 文本不实际转换。
+  int _chineseConverterType = 0;
 
   // 预设数据对齐原生 legado readConfig.json。
   // - 微信读书: textSize=24, letterSpacing=0, lineSpacingExtra=10, paragraphSpacing=6,
@@ -339,6 +362,24 @@ class _StyleDialogState extends State<_StyleDialog> {
     textColor = s.textColor;
     bgImage = s.backgroundImage;
     pageAnimMode = s.pageAnimMode;
+    // fontWeight → textBold 反推(对齐原生三态):
+    // w700(粗) → 1, w300(细) → 2, 其余 → 0(正常)。
+    if (s.fontWeight == FontWeight.w700) {
+      _textBold = 1;
+    } else if (s.fontWeight == FontWeight.w300) {
+      _textBold = 2;
+    } else {
+      _textBold = 0;
+    }
+  }
+
+  /// textBold(0/1/2) → FontWeight, 对齐原生正常/粗体/细体。
+  FontWeight _fontWeightForTextBold(int type) {
+    switch (type) {
+      case 1: return FontWeight.w700;
+      case 2: return FontWeight.w300;
+      default: return FontWeight.w400;
+    }
   }
 
   void _apply() {
@@ -350,6 +391,8 @@ class _StyleDialogState extends State<_StyleDialog> {
       // progress ↔ paragraphSpacing: 字段值即 progress(对齐原生整数 progress)。
       paragraphSpacing: _paragraphSpacingProgress.toDouble(),
       letterSpacing: (_letterSpacingProgress - 50) / 100.0,
+      // 字重三态 → FontWeight(对齐原生 textBold: 0=正常 w400, 1=粗体 w700, 2=细体 w300)。
+      fontWeight: _fontWeightForTextBold(_textBold),
         textIndent: textIndent,
         titleMode: titleMode,
         backgroundColor: bgColor,
@@ -372,7 +415,8 @@ class _StyleDialogState extends State<_StyleDialog> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildDragHandle(),
+          // 对齐原生 dialog_read_book_style.xml: 无拖拽条, 顶部直接是按钮行(marginTop 16dp)。
+          const SizedBox(height: 16),
           _buildTopButtons(),
           _buildSeekBars(),
           _buildPageAnimSelector(),
@@ -384,41 +428,158 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
-  Widget _buildDragHandle() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Container(
-        width: 32,
-        height: 4,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade300,
-          borderRadius: BorderRadius.circular(2),
+  Widget _buildTopButtons() {
+    // 对齐原生 dialog_read_book_style.xml: 6 个 StrokeTextView(wrap_content) + 5 个
+    // Space(weight=1) 等宽撑开间隙。IntrinsicHeight 让所有按钮等高(stretch)。
+    final buttons = <Widget>[
+      _buildStrokeButton(_buildWeightSpans(), _showWeightPicker),
+      _buildStrokeButton(const Text('字体', style: _strokeButtonStyle), () {}),
+      _buildStrokeButton(const Text('缩进', style: _strokeButtonStyle), _showIndentPicker),
+      _buildStrokeButton(_buildChineseSpans(), _showChinesePicker),
+      _buildStrokeButton(const Text('边距', style: _strokeButtonStyle), () {}),
+      _buildStrokeButton(const Text('信息', style: _strokeButtonStyle), _showTipConfig),
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (int i = 0; i < buttons.length; i++) ...[
+              if (i > 0) const Expanded(child: SizedBox()), // Space(weight=1)
+              buttons[i],
+            ],
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildTopButtons() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
+  static const _strokeButtonStyle = TextStyle(fontSize: 14, color: Colors.black87);
+
+  /// StrokeTextView 风格按钮: 描边圆角 3dp, padding 6/4/6/4dp(对齐原生)。
+  Widget _buildStrokeButton(Widget child, VoidCallback onTap) {
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        // 对齐原生 StrokeTextView: paddingLeft/Right=6dp, Top/Bottom=4dp, radius=3dp。
+        padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+        side: BorderSide(color: Colors.grey.shade300),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: child,
+    );
+  }
+
+  /// 字重切换器文字 "中/粗/细"(对齐原生中文资源 font_weight_text), 高亮当前项为红色。
+  /// 对齐 TextFontWeightConverter.upUi: 0=正常高亮"中", 1=粗体高亮"粗", 2=细体高亮"细"。
+  Widget _buildWeightSpans() {
+    const chars = ['中', '粗', '细'];
+    return RichText(
+      text: TextSpan(
+        style: _strokeButtonStyle,
         children: [
-          Expanded(child: _buildTextButton('加粗', () {})),
-          const SizedBox(width: 6),
-          Expanded(child: _buildTextButton('字体', () {})),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _buildTextButton('缩进', () {
-              _showIndentPicker();
+          for (int i = 0; i < 3; i++) ...[
+            TextSpan(
+              text: chars[i],
+              style: i == _textBold
+                  ? _strokeButtonStyle.copyWith(color: Colors.red)
+                  : null,
+            ),
+            if (i < 2) const TextSpan(text: '/'),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 简繁切换器文字 "简/繁", 高亮当前项(对齐 ChineseConverter)。
+  /// type=1 高亮"简", type=2 高亮"繁", type=0 不高亮。
+  Widget _buildChineseSpans() {
+    final accent = Theme.of(context).colorScheme.primary;
+    return RichText(
+      text: TextSpan(
+        style: _strokeButtonStyle,
+        children: [
+          TextSpan(
+            text: '简',
+            style: _chineseConverterType == 1 ? _strokeButtonStyle.copyWith(color: accent) : null,
+          ),
+          const TextSpan(text: '/'),
+          TextSpan(
+            text: '繁',
+            style: _chineseConverterType == 2 ? _strokeButtonStyle.copyWith(color: accent) : null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 字重选择弹窗(对齐 TextFontWeightConverter.selectType: 选项 正常/粗体/细体)。
+  void _showWeightPicker() {
+    const options = ['正常', '粗体', '细体'];
+    SmartDialog.show(
+      alignment: Alignment.bottomCenter,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      animationBuilder: _bottomSheetAnimation,
+      builder: (_) => SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(3, (i) {
+              return ListTile(
+                title: Text(options[i]),
+                trailing: _textBold == i
+                    ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
+                    : null,
+                onTap: () {
+                  setState(() => _textBold = i);
+                  _apply();
+                  SmartDialog.dismiss();
+                },
+              );
             }),
           ),
-          const SizedBox(width: 6),
-          Expanded(child: _buildTextButton('繁简', () {})),
-          const SizedBox(width: 6),
-          Expanded(child: _buildTextButton('内边距', () {})),
-          const SizedBox(width: 6),
-          Expanded(child: _buildTextButton('信息', () => _showTipConfig())),
-        ],
+        ),
+      ),
+    );
+  }
+
+  /// 简繁选择弹窗(对齐 ChineseConverter.selectType: 不转换/简体/繁体)。
+  void _showChinesePicker() {
+    const options = ['不转换', '简体', '繁体'];
+    SmartDialog.show(
+      alignment: Alignment.bottomCenter,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      animationBuilder: _bottomSheetAnimation,
+      builder: (_) => SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(3, (i) {
+              return ListTile(
+                title: Text(options[i]),
+                trailing: _chineseConverterType == i
+                    ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
+                    : null,
+                onTap: () {
+                  setState(() => _chineseConverterType = i);
+                  SmartDialog.dismiss();
+                },
+              );
+            }),
+          ),
+        ),
       ),
     );
   }
@@ -514,23 +675,6 @@ class _StyleDialogState extends State<_StyleDialog> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildTextButton(String label, VoidCallback onTap) {
-    return OutlinedButton(
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        side: BorderSide(color: Colors.grey.shade300),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(fontSize: 13, color: Colors.black87),
       ),
     );
   }
@@ -643,8 +787,9 @@ class _StyleDialogState extends State<_StyleDialog> {
   }
 
   Widget _buildStyleSection() {
+    // bottom 16 对齐原生 RecyclerView marginBottom=16dp。
     return Padding(
-      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
+      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -672,82 +817,108 @@ class _StyleDialogState extends State<_StyleDialog> {
             ],
           ),
           const SizedBox(height: 8),
-          SizedBox(
-            height: 60,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              children: [
-                ...List.generate(_stylePresets.length, (i) {
-                  final preset = _stylePresets[i];
-                  final selected =
-                      bgColor == preset.bg && textColor == preset.text && bgImage == null;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          bgColor = preset.bg;
-                          textColor = preset.text;
-                          bgImage = null;
-                          _clearBgImage = true;
-                          if (preset.fontSize != null) {
-                            _fontSizeProgress = preset.fontSize!.toInt() - 5;
-                          }
-                          if (preset.letterSpacing != null) {
-                            _letterSpacingProgress = (preset.letterSpacing! * 100).toInt() + 50;
-                          }
-                          if (preset.lineHeight != null) {
-                            // progress = lineHeight × 10(对齐原生 lineSpacingExtra 整数语义)
-                            _lineHeightProgress = (preset.lineHeight! * 10).round();
-                          }
-                          if (preset.paragraphSpacing != null) {
-                            // progress = 字段值(对齐原生 paragraphSpacing 整数语义)
-                            _paragraphSpacingProgress = preset.paragraphSpacing!.round();
-                          }
-                        });
-                        _apply();
-                      },
-                      child: Container(
-                        width: 56,
-                        decoration: BoxDecoration(
-                          color: preset.bg,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(
-                            color: selected
-                                ? Theme.of(context).colorScheme.primary
-                                : Colors.grey.shade300,
-                            width: selected ? 2 : 1,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            preset.label,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: preset.text,
-                              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                            ),
-                          ),
+          // 对齐原生: 横向 RecyclerView, 6 个预设圆形 + 末尾"+"添加。
+          // 每 item 占屏宽 1/6(圆 48dp 居中 + 左右等宽间隔), 6 个预设首屏刚好填满不紧贴;
+          // "+"在第 7 格, 需向右滑动才能露出(对齐原生 RecyclerView 滚动行为)。
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // 可用宽度扣除 section 的左右 padding(各 16)后的内容区。
+              final itemWidth = constraints.maxWidth / 6;
+              return SizedBox(
+                height: 48,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.zero,
+                  itemCount: _stylePresets.length + 1,
+                  itemBuilder: (ctx, i) {
+                    // 最后一项 = "+"添加预设。
+                    final isAdd = i == _stylePresets.length;
+                    return SizedBox(
+                      width: itemWidth,
+                      child: Center(
+                        child: GestureDetector(
+                          onTap: isAdd
+                              ? () {}
+                              : () {
+                                  final preset = _stylePresets[i];
+                                  setState(() {
+                                    bgColor = preset.bg;
+                                    textColor = preset.text;
+                                    bgImage = null;
+                                    _clearBgImage = true;
+                                    if (preset.fontSize != null) {
+                                      _fontSizeProgress = preset.fontSize!.toInt() - 5;
+                                    }
+                                    if (preset.letterSpacing != null) {
+                                      _letterSpacingProgress =
+                                          (preset.letterSpacing! * 100).toInt() + 50;
+                                    }
+                                    if (preset.lineHeight != null) {
+                                      // progress = lineHeight × 10(对齐原生 lineSpacingExtra 整数语义)
+                                      _lineHeightProgress = (preset.lineHeight! * 10).round();
+                                    }
+                                    if (preset.paragraphSpacing != null) {
+                                      // progress = 字段值(对齐原生 paragraphSpacing 整数语义)
+                                      _paragraphSpacingProgress = preset.paragraphSpacing!.round();
+                                    }
+                                  });
+                                  _apply();
+                                },
+                          // 对齐原生 CircleImageView: 48dp 圆形, 1dp 边框。
+                          // 选中时边框=accentColor 且文字加粗(StyleAdapter.convert)。
+                          child: isAdd
+                              ? Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: Colors.black54),
+                                  ),
+                                  child: Center(
+                                    child: LegadoIcons.add(size: 20, color: Colors.black54),
+                                  ),
+                                )
+                              : Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    color: _stylePresets[i].bg,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: bgColor == _stylePresets[i].bg &&
+                                              textColor == _stylePresets[i].text &&
+                                              bgImage == null
+                                          ? Theme.of(context).colorScheme.primary
+                                          : _stylePresets[i].text,
+                                      width: bgColor == _stylePresets[i].bg &&
+                                              textColor == _stylePresets[i].text &&
+                                              bgImage == null
+                                          ? 2
+                                          : 1,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      _stylePresets[i].label,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: _stylePresets[i].text,
+                                        fontWeight: bgColor == _stylePresets[i].bg &&
+                                                textColor == _stylePresets[i].text &&
+                                                bgImage == null
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
-                    ),
-                  );
-                }),
-                GestureDetector(
-                  onTap: () {},
-                  child: Container(
-                    width: 56,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: Center(
-                      child: LegadoIcons.add(size: 20, color: Colors.black54),
-                    ),
-                  ),
+                    );
+                  },
                 ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ),
@@ -755,34 +926,43 @@ class _StyleDialogState extends State<_StyleDialog> {
   }
 
   void _showIndentPicker() {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(9, (i) {
-            final indent = i;
-            return ListTile(
-              title: Text(indent == 0 ? '无缩进' : '缩进 $indent 字符'),
-              trailing: textIndent == indent
-                  ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
-                  : null,
-              onTap: () {
-                setState(() => textIndent = indent);
-                _apply();
-                Navigator.pop(ctx);
-              },
-            );
-          }),
+    SmartDialog.show(
+      alignment: Alignment.bottomCenter,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      animationBuilder: _bottomSheetAnimation,
+      builder: (_) => SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(9, (i) {
+              final indent = i;
+              return ListTile(
+                title: Text(indent == 0 ? '无缩进' : '缩进 $indent 字符'),
+                trailing: textIndent == indent
+                    ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
+                    : null,
+                onTap: () {
+                  setState(() => textIndent = indent);
+                  _apply();
+                  SmartDialog.dismiss();
+                },
+              );
+            }),
+          ),
         ),
       ),
     );
   }
 
   void _showTipConfig() {
-    showDialog(
-      context: context,
-      builder: (ctx) => _TipConfigDialog(
+    SmartDialog.show(
+      alignment: Alignment.center,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      builder: (_) => _TipConfigDialog(
         titleMode: titleMode,
         titleSize: widget.controller.settings.titleSize,
         titleTopSpacing: widget.controller.settings.titleTopSpacing,
@@ -928,7 +1108,7 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   }
 }
 
-class _TipConfigDialog extends StatelessWidget {
+class _TipConfigDialog extends StatefulWidget {
   final int titleMode;
   final double titleSize;
   final double titleTopSpacing;
@@ -950,12 +1130,36 @@ class _TipConfigDialog extends StatelessWidget {
   });
 
   @override
+  State<_TipConfigDialog> createState() => _TipConfigDialogState();
+}
+
+class _TipConfigDialogState extends State<_TipConfigDialog> {
+  late int titleMode;
+  late double titleSize;
+  late double titleTopSpacing;
+  late double titleBottomSpacing;
+
+  @override
+  void initState() {
+    super.initState();
+    titleMode = widget.titleMode;
+    titleSize = widget.titleSize;
+    titleTopSpacing = widget.titleTopSpacing;
+    titleBottomSpacing = widget.titleBottomSpacing;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Dialog(
-      child: ConstrainedBox(
+    return Material(
+      color: Colors.transparent,
+      child: Container(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(context).size.height * 0.7,
           maxWidth: 340,
+        ),
+        decoration: BoxDecoration(
+          color: Theme.of(context).dialogTheme.backgroundColor ?? Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
         ),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -966,9 +1170,9 @@ class _TipConfigDialog extends StatelessWidget {
               // 正文标题
               const Text('正文标题', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               _buildTitleModeSelector(),
-              _buildSeekBar('标题字号', titleSize, 20, onTitleSizeChanged),
-              _buildSeekBar('上间距', titleTopSpacing, 100, onTitleTopSpacingChanged),
-              _buildSeekBar('下间距', titleBottomSpacing, 100, onTitleBottomSpacingChanged),
+              _buildSeekBar('标题字号', titleSize, 20, (v) { setState(() => titleSize = v); widget.onTitleSizeChanged(v); }),
+              _buildSeekBar('上间距', titleTopSpacing, 100, (v) { setState(() => titleTopSpacing = v); widget.onTitleTopSpacingChanged(v); }),
+              _buildSeekBar('下间距', titleBottomSpacing, 100, (v) { setState(() => titleBottomSpacing = v); widget.onTitleBottomSpacingChanged(v); }),
               const Divider(),
               // 页头
               const Text('页头', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -992,7 +1196,7 @@ class _TipConfigDialog extends StatelessWidget {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => SmartDialog.dismiss(),
                   child: const Text('关闭'),
                 ),
               ),
@@ -1003,27 +1207,35 @@ class _TipConfigDialog extends StatelessWidget {
     );
   }
 
+  /// 标题模式选择器, 对齐原生 legado `dialog_tip_config.xml` 的 `rg_title_mode`:
+  /// 横向 RadioGroup + 3 个 RadioButton(居左/居中/隐藏), padding 3dp, 点击即时切换选中。
   Widget _buildTitleModeSelector() {
     const options = ['居左', '居中', '隐藏'];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('标题模式', style: TextStyle(fontSize: 14)),
-          const SizedBox(height: 4),
-          SegmentedButton<int>(
-            segments: List.generate(3, (i) =>
-              ButtonSegment(value: i, label: Text(options[i])),
-            ),
-            selected: {titleMode},
-            onSelectionChanged: (set) => onTitleModeChanged(set.first),
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
-        ],
+      child: RadioGroup<int>(
+        groupValue: titleMode,
+        onChanged: (v) {
+          if (v == null) return;
+          setState(() => titleMode = v);
+          widget.onTitleModeChanged(v);
+        },
+        child: Row(
+          children: List.generate(3, (i) {
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Radio<int>(
+                  value: i,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                ),
+                Text(options[i], style: const TextStyle(fontSize: 14)),
+                const SizedBox(width: 3),
+              ],
+            );
+          }),
+        ),
       ),
     );
   }
