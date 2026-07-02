@@ -155,6 +155,7 @@ Map<String, dynamic> encodeReadingSettings(ReadingSettings s) {
     'backgroundColor': _colorToJson(s.backgroundColor),
     'textColor': _colorToJson(s.textColor),
     'tipColor': _colorToJson(s.tipColor),
+    'tipDividerColor': s.tipDividerColor == null ? null : _colorToJson(s.tipDividerColor!),
     'fontFamily': _fontToJson(s.fontFamily),
     'backgroundImage': s.backgroundImage,
     'headerConfig': _headerFooterToJson(s.headerConfig),
@@ -197,6 +198,9 @@ ReadingSettings decodeReadingSettings(Map<String, dynamic> json) {
     backgroundColor: _colorFromJson(_asInt(json['backgroundColor'], d.backgroundColor.toARGB32())),
     textColor: _colorFromJson(_asInt(json['textColor'], d.textColor.toARGB32())),
     tipColor: _colorFromJson(_asInt(json['tipColor'], d.tipColor.toARGB32())),
+    tipDividerColor: json['tipDividerColor'] == null
+        ? null
+        : _colorFromJson(_asInt(json['tipDividerColor'], d.tipDividerColor?.toARGB32() ?? 0)),
     fontFamily: _fontFromJson(json['fontFamily']),
     backgroundImage: json['backgroundImage']?.toString(),
     headerConfig: _headerFooterFromJson(

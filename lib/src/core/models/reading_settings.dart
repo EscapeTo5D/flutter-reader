@@ -179,6 +179,10 @@ class ReadingSettings {
   Color backgroundColor;
   Color textColor;
   Color tipColor;
+  /// 页眉/页脚分隔线颜色, 对齐原生 ReadTipConfig.tipDividerColor。
+  /// 原生值 -1=跟随背景, 0=跟随文字, >0=自定义 ARGB; Flutter 用 Color 表达,
+  /// 默认 null=跟随文字(与 tipColor 一致渲染时回退)。
+  Color? tipDividerColor;
   String? fontFamily;
   String? backgroundImage;
   HeaderFooterConfig headerConfig;
@@ -222,6 +226,7 @@ class ReadingSettings {
     this.backgroundColor = const Color(0xFFC0EDC6),
     this.textColor = const Color(0xFF0B0B0B),
     this.tipColor = const Color(0xFF999999),
+    this.tipDividerColor,
     this.fontFamily,
     this.backgroundImage,
     // 对齐原生 legado ReadBookConfig.kt:585-590 默认值:
@@ -269,6 +274,7 @@ class ReadingSettings {
     String? fontFamily,
     String? backgroundImage,
     bool clearBackgroundImage = false,
+    Color? tipDividerColor,
     HeaderFooterConfig? headerConfig,
     HeaderFooterConfig? footerConfig,
     ReaderPadding? padding,
@@ -300,6 +306,7 @@ class ReadingSettings {
       backgroundColor: backgroundColor ?? this.backgroundColor,
       textColor: textColor ?? this.textColor,
       tipColor: tipColor ?? this.tipColor,
+      tipDividerColor: tipDividerColor ?? this.tipDividerColor,
       fontFamily: fontFamily ?? this.fontFamily,
       backgroundImage: clearBackgroundImage ? null : (backgroundImage ?? this.backgroundImage),
       headerConfig: headerConfig ?? this.headerConfig,

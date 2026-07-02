@@ -18,6 +18,14 @@ void main() {
     expect(restored.backgroundColor, original.backgroundColor);
     expect(restored.textColor, original.textColor);
     expect(restored.tipColor, original.tipColor);
+    // tipDividerColor 默认 null(跟随文字), 往返后仍为 null。
+    expect(restored.tipDividerColor, original.tipDividerColor);
+    // 自定义 tipDividerColor 往返(对齐原生 ReadTipConfig.tipDividerColor 自定义 ARGB)。
+    final withDivider = original.copyWith(tipDividerColor: const Color(0xFF123456));
+    expect(
+      decodeReadingSettings(encodeReadingSettings(withDivider)).tipDividerColor,
+      const Color(0xFF123456),
+    );
     expect(restored.fontFamily, original.fontFamily);
     expect(restored.backgroundImage, original.backgroundImage);
     expect(restored.fontWeight, original.fontWeight);

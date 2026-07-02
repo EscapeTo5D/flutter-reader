@@ -290,6 +290,64 @@ Widget _bottomSheetAnimation(
   return SlideTransition(position: offset, child: child);
 }
 
+/// 居中选项列表弹窗, 复刻原生 legado `context.alert{}` / `context.selector{}`
+/// (`AndroidAlertBuilder.show()` + `filletBackground`)。
+///
+/// 原生这六个按钮(字重/字体/缩进/简繁/边距/信息)弹出的都是**居中** AlertDialog
+/// (只有外层 ReadStyleDialog 自身是 Gravity.BOTTOM), 而非 bottom sheet。
+/// AlertDialog 特征: 居中、3dp 圆角(`filletBackground.cornerRadius=3f.dpToPx`)、
+/// 主题背景色填充、标准 dim 遮罩、顶部标题、下方 `setItems(...)` 纯文本列表(无 checkmark)。
+///
+/// 本 helper 同样: 居中、`BorderRadius.circular(3)`、白底、遮罩 0.5、标题在顶、
+/// 下方纯文本列表项点击即选即关。字重/缩进/简繁 三处复用, 也供 TipConfigDialog 各行
+/// 点开 selector 复用。
+void _showOptionList(
+  BuildContext context, {
+  required String title,
+  required List<String> items,
+  required ValueChanged<int> onSelected,
+}) {
+  SmartDialog.show(
+    alignment: Alignment.center,
+    maskColor: Colors.black.withValues(alpha: 0.5),
+    builder: (_) => Container(
+      // 宽自适应内容(列表项最长决定), 不强制撑满, 贴近 AlertDialog 默认宽度。
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        // 对齐原生 filletBackground: 3dp 圆角 + 主题背景色(此处用白)。
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+          ),
+          for (int i = 0; i < items.length; i++)
+            InkWell(
+              onTap: () {
+                SmartDialog.dismiss();
+                onSelected(i);
+              },
+              child: Padding(
+                // 对齐 AlertDialog item 默认 padding 24/12。
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+                child: Text(items[i], style: const TextStyle(fontSize: 15)),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _StyleDialog extends StatefulWidget {
   final ReadingController controller;
   const _StyleDialog({required this.controller});
@@ -535,70 +593,30 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
-  /// 字重选择弹窗(对齐 TextFontWeightConverter.selectType: 选项 正常/粗体/细体)。
+  /// 字重选择弹窗(对齐 TextFontWeightConverter.selectType)。
+  /// 原生: 居中 AlertDialog, 标题"文章字重切换", 选项 正常/粗体/细体, 选中即关。
   void _showWeightPicker() {
-    const options = ['正常', '粗体', '细体'];
-    SmartDialog.show(
-      alignment: Alignment.bottomCenter,
-      maskColor: Colors.black.withValues(alpha: 0.5),
-      animationBuilder: _bottomSheetAnimation,
-      builder: (_) => SafeArea(
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(3, (i) {
-              return ListTile(
-                title: Text(options[i]),
-                trailing: _textBold == i
-                    ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
-                    : null,
-                onTap: () {
-                  setState(() => _textBold = i);
-                  _apply();
-                  SmartDialog.dismiss();
-                },
-              );
-            }),
-          ),
-        ),
-      ),
+    _showOptionList(
+      context,
+      title: '文章字重切换',
+      items: const ['正常', '粗体', '细体'],
+      onSelected: (i) {
+        setState(() => _textBold = i);
+        _apply();
+      },
     );
   }
 
-  /// 简繁选择弹窗(对齐 ChineseConverter.selectType: 不转换/简体/繁体)。
+  /// 简繁选择弹窗(对齐 ChineseConverter.selectType)。
+  /// 原生: 居中 AlertDialog, 标题"中文简繁体转换", 选项 关闭/繁转简/简转繁, 选中即关。
   void _showChinesePicker() {
-    const options = ['不转换', '简体', '繁体'];
-    SmartDialog.show(
-      alignment: Alignment.bottomCenter,
-      maskColor: Colors.black.withValues(alpha: 0.5),
-      animationBuilder: _bottomSheetAnimation,
-      builder: (_) => SafeArea(
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(3, (i) {
-              return ListTile(
-                title: Text(options[i]),
-                trailing: _chineseConverterType == i
-                    ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
-                    : null,
-                onTap: () {
-                  setState(() => _chineseConverterType = i);
-                  SmartDialog.dismiss();
-                },
-              );
-            }),
-          ),
-        ),
-      ),
+    _showOptionList(
+      context,
+      title: '中文简繁体转换',
+      items: const ['关闭', '繁体转简体', '简体转繁体'],
+      onSelected: (i) {
+        setState(() => _chineseConverterType = i);
+      },
     );
   }
 
@@ -1000,66 +1018,32 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
+  /// 缩进选择弹窗(对齐 ReadStyleDialog 的 `context?.selector`)。
+  /// 原生 indent 数组 5 项, 段首缩进 = "　"(全角空格) × index, 故 index ∈ 0..4。
+  /// 标题"缩进", 居中 AlertDialog, 选中即关。
   void _showIndentPicker() {
-    SmartDialog.show(
-      alignment: Alignment.bottomCenter,
-      maskColor: Colors.black.withValues(alpha: 0.5),
-      animationBuilder: _bottomSheetAnimation,
-      builder: (_) => SafeArea(
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: List.generate(9, (i) {
-              final indent = i;
-              return ListTile(
-                title: Text(indent == 0 ? '无缩进' : '缩进 $indent 字符'),
-                trailing: textIndent == indent
-                    ? LegadoIcons.check(size: 18, color: Theme.of(context).colorScheme.primary)
-                    : null,
-                onTap: () {
-                  setState(() => textIndent = indent);
-                  _apply();
-                  SmartDialog.dismiss();
-                },
-              );
-            }),
-          ),
-        ),
-      ),
+    _showOptionList(
+      context,
+      title: '缩进',
+      items: const ['无缩进', '缩进 1 字符', '缩进 2 字符', '缩进 3 字符', '缩进 4 字符'],
+      onSelected: (i) {
+        setState(() => textIndent = i);
+        _apply();
+      },
     );
   }
 
+  /// 信息弹窗(对齐原生 TipConfigDialog)。居中全宽, 默认遮罩。
+  /// 内部自管理 titleMode 等(同步回 _StyleDialog 的 titleMode), 直接读写 controller.settings。
   void _showTipConfig() {
     SmartDialog.show(
       alignment: Alignment.center,
       maskColor: Colors.black.withValues(alpha: 0.5),
       builder: (_) => _TipConfigDialog(
-        titleMode: titleMode,
-        titleSize: widget.controller.settings.titleSize,
-        titleTopSpacing: widget.controller.settings.titleTopSpacing,
-        titleBottomSpacing: widget.controller.settings.titleBottomSpacing,
+        controller: widget.controller,
         onTitleModeChanged: (v) {
           setState(() => titleMode = v);
           _apply();
-        },
-        onTitleSizeChanged: (v) {
-          widget.controller.updateSettings(
-            widget.controller.settings.copyWith(titleSize: v),
-          );
-        },
-        onTitleTopSpacingChanged: (v) {
-          widget.controller.updateSettings(
-            widget.controller.settings.copyWith(titleTopSpacing: v),
-          );
-        },
-        onTitleBottomSpacingChanged: (v) {
-          widget.controller.updateSettings(
-            widget.controller.settings.copyWith(titleBottomSpacing: v),
-          );
         },
       ),
     );
@@ -1167,56 +1151,54 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.8,
           ),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFAFAFA),
-            borderRadius: BorderRadius.circular(8),
+          padding: const EdgeInsets.all(10),
+          // 对齐原生 BaseDialogFragment: 仅 setBackgroundColor, 无圆角。
+          decoration: const BoxDecoration(
+            color: Color(0xFFFAFAFA),
           ),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ── 页眉组 ──
-                _buildSectionTitle('页眉'),
-                _bar('上', _headerTop, 100, (v) =>
-                    setState(() => _headerTop = v.toDouble())),
-                _bar('下', _headerBottom, 100, (v) =>
-                    setState(() => _headerBottom = v.toDouble())),
-                _bar('左', _headerLeft, 100, (v) =>
-                    setState(() => _headerLeft = v.toDouble())),
-                _bar('右', _headerRight, 100, (v) =>
-                    setState(() => _headerRight = v.toDouble())),
-                _buildLineSwitch('显示页眉分隔线', _showHeaderLine, (v) {
+                // ── 页眉组 ── 标题行内联 "显示分隔线" + 复选框(对齐 dialog_read_padding.xml)。
+                _buildSectionTitle('页眉', _showHeaderLine, (v) {
                   setState(() => _showHeaderLine = v);
                   _apply();
                 }),
+                _bar('上边距', _headerTop, 100, (v) =>
+                    setState(() => _headerTop = v.toDouble())),
+                _bar('下边距', _headerBottom, 100, (v) =>
+                    setState(() => _headerBottom = v.toDouble())),
+                _bar('左边距', _headerLeft, 100, (v) =>
+                    setState(() => _headerLeft = v.toDouble())),
+                _bar('右边距', _headerRight, 100, (v) =>
+                    setState(() => _headerRight = v.toDouble())),
                 const SizedBox(height: 8),
-                // ── 正文组 ──
-                _buildSectionTitle('正文'),
-                _bar('上', _bodyTop, 200, (v) =>
+                // ── 正文组 ── 无分隔线开关。
+                _buildSectionTitle('正文', null, null),
+                _bar('上边距', _bodyTop, 200, (v) =>
                     setState(() => _bodyTop = v.toDouble())),
-                _bar('下', _bodyBottom, 100, (v) =>
+                _bar('下边距', _bodyBottom, 100, (v) =>
                     setState(() => _bodyBottom = v.toDouble())),
-                _bar('左', _bodyLeft, 100, (v) =>
+                _bar('左边距', _bodyLeft, 100, (v) =>
                     setState(() => _bodyLeft = v.toDouble())),
-                _bar('右', _bodyRight, 100, (v) =>
+                _bar('右边距', _bodyRight, 100, (v) =>
                     setState(() => _bodyRight = v.toDouble())),
                 const SizedBox(height: 8),
                 // ── 页脚组 ──
-                _buildSectionTitle('页脚'),
-                _bar('上', _footerTop, 100, (v) =>
-                    setState(() => _footerTop = v.toDouble())),
-                _bar('下', _footerBottom, 100, (v) =>
-                    setState(() => _footerBottom = v.toDouble())),
-                _bar('左', _footerLeft, 100, (v) =>
-                    setState(() => _footerLeft = v.toDouble())),
-                _bar('右', _footerRight, 100, (v) =>
-                    setState(() => _footerRight = v.toDouble())),
-                _buildLineSwitch('显示页脚分隔线', _showFooterLine, (v) {
+                _buildSectionTitle('页脚', _showFooterLine, (v) {
                   setState(() => _showFooterLine = v);
                   _apply();
                 }),
+                _bar('上边距', _footerTop, 100, (v) =>
+                    setState(() => _footerTop = v.toDouble())),
+                _bar('下边距', _footerBottom, 100, (v) =>
+                    setState(() => _footerBottom = v.toDouble())),
+                _bar('左边距', _footerLeft, 100, (v) =>
+                    setState(() => _footerLeft = v.toDouble())),
+                _bar('右边距', _footerRight, 100, (v) =>
+                    setState(() => _footerRight = v.toDouble())),
               ],
             ),
           ),
@@ -1225,12 +1207,40 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
     );
   }
 
-  Widget _buildSectionTitle(String text) {
+  /// 分组标题行(对齐原生 `tv_header_padding … showLine cb_show_top_line` 同行)。
+  /// 左侧组名(AccentTextView, 18sp), 右侧"显示分隔线"+ SmoothCheckBox。
+  /// [showLine]/[onToggle] 为 null 时(正文组)仅显示组名。
+  Widget _buildSectionTitle(String text, bool? showLine, ValueChanged<bool>? onToggle) {
     return Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 4),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      padding: const EdgeInsets.only(top: 6, bottom: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 16,
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          if (showLine != null && onToggle != null) ...[
+            Text('显示分隔线', style: const TextStyle(fontSize: 13)),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: Checkbox(
+                value: showLine,
+                onChanged: (v) => onToggle(v ?? false),
+                activeColor: Theme.of(context).colorScheme.primary,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1244,28 +1254,6 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
         max: max,
         display: value.round().toString(),
         onChanged: (v) { onChanged(v); _apply(); },
-      ),
-    );
-  }
-
-  Widget _buildLineSwitch(String label, bool value, ValueChanged<bool> onChanged) {
-    return InkWell(
-      onTap: () => onChanged(!value),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(label, style: const TextStyle(fontSize: 13)),
-            ),
-            Switch(
-              value: value,
-              onChanged: onChanged,
-              activeThumbColor: Theme.of(context).colorScheme.primary,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1548,25 +1536,26 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   }
 }
 
+/// 信息弹窗(对齐原生 TipConfigDialog + dialog_tip_config.xml)。
+/// 居中、近全宽(对齐 MATCH_PARENT)、默认遮罩。直接读写 controller.settings。
+///
+/// 结构(对齐原生):
+/// - 正文标题: RadioGroup(靠左/居中/隐藏) + 3 个 DetailSeekBar(字号/上边距/下边距)
+/// - 页眉/页脚: 每行(显示/左/中/右)可点 → 弹居中 selector(复用 _showOptionList)
+/// - 页眉页脚: 提示颜色 / 分隔线颜色 行可点 → selector(跟随文字/自定义)
+///
+/// 「显示」行: 原生 headerMode 两态(0=显示跟随状态栏, 1=隐藏)。Flutter 映射为
+/// headerConfig.hidden(true=隐藏)。点击 selector 在「显示」/「隐藏」间切。
+/// 「左/中/右」行: 选项 = Flutter 支持的 TipPosition 全集, 选后 clearRepeat 去重
+/// (对齐原生: 同一 tip 在三槽位中唯一, 非 none 不可重复, 重复则清旧槽)。
 class _TipConfigDialog extends StatefulWidget {
-  final int titleMode;
-  final double titleSize;
-  final double titleTopSpacing;
-  final double titleBottomSpacing;
+  final ReadingController controller;
+  /// titleMode 变更同步回外层 _StyleDialog(其 _apply 会一起持久化)。
   final ValueChanged<int> onTitleModeChanged;
-  final ValueChanged<double> onTitleSizeChanged;
-  final ValueChanged<double> onTitleTopSpacingChanged;
-  final ValueChanged<double> onTitleBottomSpacingChanged;
 
   const _TipConfigDialog({
-    required this.titleMode,
-    required this.titleSize,
-    required this.titleTopSpacing,
-    required this.titleBottomSpacing,
+    required this.controller,
     required this.onTitleModeChanged,
-    required this.onTitleSizeChanged,
-    required this.onTitleTopSpacingChanged,
-    required this.onTitleBottomSpacingChanged,
   });
 
   @override
@@ -1574,90 +1563,141 @@ class _TipConfigDialog extends StatefulWidget {
 }
 
 class _TipConfigDialogState extends State<_TipConfigDialog> {
-  late int titleMode;
-  late double titleSize;
-  late double titleTopSpacing;
-  late double titleBottomSpacing;
+  late int _titleMode;
+  late double _titleSize;
+  late double _titleTopSpacing;
+  late double _titleBottomSpacing;
+
+  // TipPosition 名称, 对齐原生 read_tip 数组(取 Flutter 支持的 10 项, 顺序贴近原生)。
+  static const _tipLabels = <TipPosition, String>{
+    TipPosition.none: '无',
+    TipPosition.bookName: '书名',
+    TipPosition.chapterTitle: '标题',
+    TipPosition.time: '时间',
+    TipPosition.battery: '电量',
+    TipPosition.batteryPercent: '电量%',
+    TipPosition.pageNumber: '页数',
+    TipPosition.progress: '进度(%)',
+    TipPosition.timeAndBattery: '时间及电量',
+    TipPosition.pageAndTotal: '页数及进度',
+  };
 
   @override
   void initState() {
     super.initState();
-    titleMode = widget.titleMode;
-    titleSize = widget.titleSize;
-    titleTopSpacing = widget.titleTopSpacing;
-    titleBottomSpacing = widget.titleBottomSpacing;
+    final s = widget.controller.settings;
+    _titleMode = s.titleMode;
+    _titleSize = s.titleSize;
+    _titleTopSpacing = s.titleTopSpacing;
+    _titleBottomSpacing = s.titleBottomSpacing;
+  }
+
+  void _updateSettings(ReadingSettings copy) {
+    widget.controller.updateSettings(copy);
+    setState(() {}); // 刷新行右侧当前值显示。
   }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.7,
-          maxWidth: 340,
-        ),
-        decoration: BoxDecoration(
-          color: Theme.of(context).dialogTheme.backgroundColor ?? Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 正文标题
-              const Text('正文标题', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              _buildTitleModeSelector(),
-              _buildSeekBar('标题字号', titleSize, 20, (v) { setState(() => titleSize = v); widget.onTitleSizeChanged(v); }),
-              _buildSeekBar('上间距', titleTopSpacing, 100, (v) { setState(() => titleTopSpacing = v); widget.onTitleTopSpacingChanged(v); }),
-              _buildSeekBar('下间距', titleBottomSpacing, 100, (v) { setState(() => titleBottomSpacing = v); widget.onTitleBottomSpacingChanged(v); }),
-              const Divider(),
-              // 页头
-              const Text('页头', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              _buildTipRow('显示', '跟随状态栏'),
-              _buildTipRow('左', '章节标题'),
-              _buildTipRow('中', '无'),
-              _buildTipRow('右', '时间'),
-              const Divider(),
-              // 页尾
-              const Text('页尾', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              _buildTipRow('显示', '显示'),
-              _buildTipRow('左', '书名'),
-              _buildTipRow('中', '无'),
-              _buildTipRow('右', '页码/总进度'),
-              const Divider(),
-              // 页头页尾
-              const Text('页头页尾', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              _buildTipRow('提示颜色', '跟随文字'),
-              _buildTipRow('分割线颜色', '跟随文字'),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: () => SmartDialog.dismiss(),
-                  child: const Text('关闭'),
-                ),
+    final s = widget.controller.settings;
+    return Center(
+      child: Padding(
+        // 对齐原生 MATCH_PARENT: 左右各留 16dp 边距 → 近全宽。
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.8,
+            ),
+            decoration: BoxDecoration(
+              color: Theme.of(context).dialogTheme.backgroundColor ??
+                  Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildAccentTitle('正文标题'),
+                  _buildTitleModeSelector(),
+                  _buildTitleSeekBar('字号', _titleSize, 20, (v) {
+                    setState(() => _titleSize = v);
+                    _updateSettings(s.copyWith(titleSize: v));
+                  }),
+                  _buildTitleSeekBar('上边距', _titleTopSpacing, 100, (v) {
+                    setState(() => _titleTopSpacing = v);
+                    _updateSettings(s.copyWith(titleTopSpacing: v));
+                  }),
+                  _buildTitleSeekBar('下边距', _titleBottomSpacing, 100, (v) {
+                    setState(() => _titleBottomSpacing = v);
+                    _updateSettings(s.copyWith(titleBottomSpacing: v));
+                  }),
+                  _buildAccentTitle('页眉'),
+                  _buildTipRow('显示/隐藏', s.headerConfig.hidden ? '隐藏' : '显示',
+                      () => _showHeaderFooterVisibleSelector(isHeader: true)),
+                  _buildTipRow('左', _tipLabels[s.headerConfig.left]!,
+                      () => _showTipSlotSelector(isHeader: true, slot: _Slot.left)),
+                  _buildTipRow('中', _tipLabels[s.headerConfig.center]!,
+                      () => _showTipSlotSelector(isHeader: true, slot: _Slot.center)),
+                  _buildTipRow('右', _tipLabels[s.headerConfig.right]!,
+                      () => _showTipSlotSelector(isHeader: true, slot: _Slot.right)),
+                  _buildAccentTitle('页脚'),
+                  _buildTipRow('显示/隐藏', s.footerConfig.hidden ? '隐藏' : '显示',
+                      () => _showHeaderFooterVisibleSelector(isHeader: false)),
+                  _buildTipRow('左', _tipLabels[s.footerConfig.left]!,
+                      () => _showTipSlotSelector(isHeader: false, slot: _Slot.left)),
+                  _buildTipRow('中', _tipLabels[s.footerConfig.center]!,
+                      () => _showTipSlotSelector(isHeader: false, slot: _Slot.center)),
+                  _buildTipRow('右', _tipLabels[s.footerConfig.right]!,
+                      () => _showTipSlotSelector(isHeader: false, slot: _Slot.right)),
+                  _buildAccentTitle('页眉页脚'),
+                  _buildTipRow(
+                      '提示颜色',
+                      s.tipColor == s.textColor ? '跟随文字' : '#${_hex(s.tipColor)}',
+                      () => _showColorSelector(
+                          isTip: true,
+                          current: s.tipColor,
+                          followColor: s.textColor)),
+                  _buildTipRow(
+                      '分隔线颜色',
+                      _dividerColorLabel(s),
+                      () => _showDividerColorSelector(s)),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  /// 标题模式选择器, 对齐原生 legado `dialog_tip_config.xml` 的 `rg_title_mode`:
-  /// 横向 RadioGroup + 3 个 RadioButton(居左/居中/隐藏), padding 3dp, 点击即时切换选中。
-  Widget _buildTitleModeSelector() {
-    const options = ['居左', '居中', '隐藏'];
+  Widget _buildAccentTitle(String text) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 16,
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  /// 标题模式 RadioGroup(对齐 dialog_tip_config.xml rg_title_mode: 靠左/居中/隐藏)。
+  Widget _buildTitleModeSelector() {
+    const options = ['靠左', '居中', '隐藏'];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: RadioGroup<int>(
-        groupValue: titleMode,
+        groupValue: _titleMode,
         onChanged: (v) {
           if (v == null) return;
-          setState(() => titleMode = v);
+          setState(() => _titleMode = v);
           widget.onTitleModeChanged(v);
         },
         child: Row(
@@ -1680,7 +1720,8 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
     );
   }
 
-  Widget _buildSeekBar(String label, double value, int max, ValueChanged<double> onChanged) {
+  Widget _buildTitleSeekBar(
+      String label, double value, int max, ValueChanged<double> onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -1698,21 +1739,237 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
           ),
           SizedBox(
             width: 28,
-            child: Text(value.toStringAsFixed(0), textAlign: TextAlign.right, style: const TextStyle(fontSize: 13)),
+            child: Text(value.toStringAsFixed(0),
+                textAlign: TextAlign.right, style: const TextStyle(fontSize: 13)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildTipRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
-          Text(value, style: const TextStyle(fontSize: 14, color: Colors.grey)),
-        ],
+  /// 单行(label + 当前值), 整行可点。padding 6dp(对齐 dialog_tip_config.xml 各 ll_* 项)。
+  Widget _buildTipRow(String label, String value, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
+            Text(value, style: const TextStyle(fontSize: 14, color: Colors.black54)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 页眉/页脚「显示/隐藏」selector(对齐原生 headerMode/footerMode 两态)。
+  void _showHeaderFooterVisibleSelector({required bool isHeader}) {
+    final s = widget.controller.settings;
+    final cfg = isHeader ? s.headerConfig : s.footerConfig;
+    _showOptionList(
+      context,
+      title: isHeader ? '页眉显示' : '页脚显示',
+      items: const ['显示', '隐藏'],
+      onSelected: (i) {
+        final newCfg = cfg.copyWith(hidden: i == 1);
+        _updateSettings(s.copyWith(
+          headerConfig: isHeader ? newCfg : null,
+          footerConfig: isHeader ? null : newCfg,
+        ));
+      },
+    );
+  }
+
+  /// 页眉/页脚某槽位的 TipPosition selector(对齐原生 tipNames selector)。
+  /// 选后 clearRepeat: 非 none 的 tip 在两区六槽中唯一, 重复则把旧槽清成 none。
+  void _showTipSlotSelector({required bool isHeader, required _Slot slot}) {
+    final s = widget.controller.settings;
+    final order = _tipLabels.keys.toList(); // 保持 selector 选项顺序稳定。
+    _showOptionList(
+      context,
+      title: '选择显示内容',
+      items: order.map((p) => _tipLabels[p]!).toList(),
+      onSelected: (i) {
+        final chosen = order[i];
+        final updated = _clearRepeat(s, chosen, excludeIsHeader: isHeader, excludeSlot: slot);
+        HeaderFooterConfig h = updated.headerConfig;
+        HeaderFooterConfig f = updated.footerConfig;
+        if (isHeader) {
+          h = _withSlot(h, slot, chosen);
+        } else {
+          f = _withSlot(f, slot, chosen);
+        }
+        _updateSettings(s.copyWith(headerConfig: h, footerConfig: f));
+      },
+    );
+  }
+
+  /// 提示颜色 selector(对齐原生 tipColorNames: 跟随文字 / 自定义)。
+  /// 自定义 → 复用 _PresetEditorDialog 的预设色板网格(独立小弹窗)。
+  void _showColorSelector({
+    required bool isTip,
+    required Color current,
+    required Color followColor,
+  }) {
+    _showOptionList(
+      context,
+      title: isTip ? '提示颜色' : '分隔线颜色',
+      items: const ['跟随文字', '自定义'],
+      onSelected: (i) {
+        if (i == 0) {
+          final s = widget.controller.settings;
+          _updateSettings(s.copyWith(
+            tipColor: isTip ? followColor : null,
+            tipDividerColor: isTip ? null : followColor,
+          ));
+        } else {
+          _showCustomColorSwatch(isTip: isTip);
+        }
+      },
+    );
+  }
+
+  /// 分隔线颜色 selector(原生 tipDividerColorNames: 跟随文字 / 跟随背景 / 自定义)。
+  /// Flutter 端分隔线颜色: null=跟随文字, 用 sentinel #00000000(完全透明) 表示跟随背景。
+  void _showDividerColorSelector(ReadingSettings s) {
+    _showOptionList(
+      context,
+      title: '分隔线颜色',
+      items: const ['跟随文字', '跟随背景', '自定义'],
+      onSelected: (i) {
+        if (i == 0) {
+          _updateSettings(s.copyWith(tipDividerColor: null));
+        } else if (i == 1) {
+          // 透明色作为「跟随背景」标记(page_view 渲染时若遇此色可回退背景)。
+          _updateSettings(s.copyWith(tipDividerColor: const Color(0x00000000)));
+        } else {
+          _showCustomColorSwatch(isTip: false, isDivider: true);
+        }
+      },
+    );
+  }
+
+  /// 自定义颜色: 预设色板网格点选(复用 _PresetEditorDialog 同款 _swatch)。
+  void _showCustomColorSwatch({required bool isTip, bool isDivider = false}) {
+    final s = widget.controller.settings;
+    SmartDialog.show(
+      alignment: Alignment.center,
+      maskColor: Colors.black.withValues(alpha: 0.5),
+      builder: (_) => _ColorSwatchPicker(
+        current: isDivider ? (s.tipDividerColor ?? s.tipColor) : s.tipColor,
+        onPicked: (c) {
+          _updateSettings(s.copyWith(
+            tipColor: isTip && !isDivider ? c : null,
+            tipDividerColor: isDivider ? c : null,
+          ));
+        },
+      ),
+    );
+  }
+
+  String _dividerColorLabel(ReadingSettings s) {
+    if (s.tipDividerColor == null) return '跟随文字';
+    if (s.tipDividerColor!.toARGB32() == 0x00000000) return '跟随背景';
+    return '#${_hex(s.tipDividerColor!)}';
+  }
+
+  /// clearRepeat: 把与 [chosen](非 none) 相同的旧槽位清成 none, 跳过 (excludeIsHeader,excludeSlot)。
+  HeaderFooterConfig _clearConfigRepeat(
+      HeaderFooterConfig cfg, TipPosition chosen, bool isThis, _Slot slot) {
+    if (chosen == TipPosition.none) return cfg;
+    TipPosition clear(TipPosition p, _Slot which) {
+      if (p == chosen && !(isThis && which == slot)) return TipPosition.none;
+      return p;
+    }
+    return cfg.copyWith(
+      left: clear(cfg.left, _Slot.left),
+      center: clear(cfg.center, _Slot.center),
+      right: clear(cfg.right, _Slot.right),
+    );
+  }
+
+  ReadingSettings _clearRepeat(ReadingSettings s, TipPosition chosen,
+      {required bool excludeIsHeader, required _Slot excludeSlot}) {
+    return s.copyWith(
+      headerConfig: _clearConfigRepeat(
+          s.headerConfig, chosen, excludeIsHeader, excludeSlot),
+      footerConfig: _clearConfigRepeat(
+          s.footerConfig, chosen, !excludeIsHeader, excludeSlot),
+    );
+  }
+
+  static HeaderFooterConfig _withSlot(HeaderFooterConfig cfg, _Slot slot, TipPosition v) {
+    switch (slot) {
+      case _Slot.left:
+        return cfg.copyWith(left: v);
+      case _Slot.center:
+        return cfg.copyWith(center: v);
+      case _Slot.right:
+        return cfg.copyWith(right: v);
+    }
+  }
+
+  static String _hex(Color c) {
+    final v = c.toARGB32();
+    return '${(v >> 16) & 0xFF}.${(v >> 8) & 0xFF}.${v & 0xFF}';
+  }
+}
+
+/// TipConfigDialog 内槽位枚举(左/中/右), 仅用于参数传递。
+enum _Slot { left, center, right }
+
+/// 颜色色板点选弹窗(复用 _PresetEditorDialog 的预设色板, 不引第三方颜色选择器)。
+class _ColorSwatchPicker extends StatelessWidget {
+  final Color current;
+  final ValueChanged<Color> onPicked;
+  // 对齐 _PresetEditorDialog._swatch(常用底/字色 + 灰阶)。
+  static const _swatch = <Color>[
+    Color(0xFFC0EDC6), Color(0xFFFFFFFF), Color(0xFFDDC090), Color(0xFFC2D8AA),
+    Color(0xFFDBB8E2), Color(0xFFABCEE0), Color(0xFFF5F5DC), Color(0xFFE8E8E8),
+    Color(0xFF0B0B0B), Color(0xFF3E3422), Color(0xFF596C44), Color(0xFF68516C),
+    Color(0xFF3D4C54), Color(0xFF333333), Color(0xFF666666), Color(0xFF999999),
+  ];
+
+  const _ColorSwatchPicker({required this.current, required this.onPicked});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: MediaQuery.of(context).size.width * 0.7,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 4,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 1,
+          children: _swatch.map((c) {
+            final isSel = c.toARGB32() == current.toARGB32();
+            return GestureDetector(
+              onTap: () {
+                onPicked(c);
+                SmartDialog.dismiss();
+              },
+              child: Container(
+                decoration: BoxDecoration(
+                  color: c,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isSel ? Theme.of(context).colorScheme.primary : Colors.black26,
+                    width: isSel ? 2 : 1,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
       ),
     );
   }
