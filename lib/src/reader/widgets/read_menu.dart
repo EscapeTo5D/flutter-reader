@@ -256,7 +256,9 @@ class _ReadMenuState extends State<ReadMenu> {
   void _showStyleDialog(BuildContext context) {
     SmartDialog.show(
       alignment: Alignment.bottomCenter,
-      maskColor: Colors.black.withValues(alpha: 0.5),
+      // 对齐原生 ReadStyleDialog.onStart: dimAmount=0.0f + clearFlags(DIM_BEHIND),
+      // 阅读页正文完全可见(不被半透明黑遮罩盖住)。
+      maskColor: Colors.transparent,
       animationBuilder: _bottomSheetAnimation,
       builder: (_) => _StyleDialog(controller: widget.controller),
     );
@@ -407,11 +409,10 @@ class _StyleDialogState extends State<_StyleDialog> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    // 对齐原生 ReadStyleDialog: 无圆角(顶部直角), 背景=md_grey_50(#FAFAFA)。
+    // 原生运行时会被主题 bottomBackground 覆盖, 本包无主题系统故取静态值。
     return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
+      color: const Color(0xFFFAFAFA),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -473,10 +474,10 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
-  /// 字重切换器文字 "中/粗/细"(对齐原生中文资源 font_weight_text), 高亮当前项为红色。
-  /// 对齐 TextFontWeightConverter.upUi: 0=正常高亮"中", 1=粗体高亮"粗", 2=细体高亮"细"。
+  /// 字重切换器文字 "N/B/L"(对齐原生 strings.xml font_weight_text="N/B/L"),
+  /// 高亮当前项为红色(对齐 TextFontWeightConverter: 0=N 正常, 1=B 粗体, 2=L 细体)。
   Widget _buildWeightSpans() {
-    const chars = ['中', '粗', '细'];
+    const chars = ['N', 'B', 'L'];
     return RichText(
       text: TextSpan(
         style: _strokeButtonStyle,
@@ -884,17 +885,17 @@ class _StyleDialogState extends State<_StyleDialog> {
                                   decoration: BoxDecoration(
                                     color: _stylePresets[i].bg,
                                     shape: BoxShape.circle,
+                                    // 对齐原生 CircleImageView: border 宽度恒 1dp,
+                                    // 选中态仅 borderColor 从 textColor 变 accentColor
+                                    // (StyleAdapter.convert: 选中 borderColor=accent,
+                                    //  未选 borderColor=item.curTextColor(), 宽度均 1dp)。
                                     border: Border.all(
                                       color: bgColor == _stylePresets[i].bg &&
                                               textColor == _stylePresets[i].text &&
                                               bgImage == null
                                           ? Theme.of(context).colorScheme.primary
                                           : _stylePresets[i].text,
-                                      width: bgColor == _stylePresets[i].bg &&
-                                              textColor == _stylePresets[i].text &&
-                                              bgImage == null
-                                          ? 2
-                                          : 1,
+                                      width: 1,
                                     ),
                                   ),
                                   child: Center(
