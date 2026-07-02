@@ -30,6 +30,11 @@ class PageEngine {
     required String content,
     required Size pageSize,
     required ReadingSettings settings,
+    /// 首段是否为标题。ContentProcessor.getContent(includeTitle) 会把章节标题作为
+    /// 第 0 段插入; 调用方应传 `title.isNotEmpty`。开启后以「位置==0」判定标题,
+    /// 不再依赖 [_isTitle] 正则(正则无法覆盖"楔子"/"序章"/宿主自定义标题等格式)。
+    /// 默认 false: 测试/直接传正文场景不识别标题(向后兼容)。
+    bool firstParagraphIsTitle = false,
   }) {
     if (content.isEmpty) return [];
 
@@ -86,7 +91,11 @@ class PageEngine {
         ));
         continue;
       }
-      final isTitle = _isTitle(para) && i == 0; // 只有首段可能是标题
+      // 标题判定: 以「位置==0 + 调用方声明首段是标题」为主(对齐原生 legado 用
+      // bookChapter.title 显式标记, 不靠正则猜); 兼容旧测试(未传 firstParagraphIsTitle
+      // 时退化为正则识别, 保证 title_center_test 等既有用例不破)。
+      final isTitle = i == 0 &&
+          (firstParagraphIsTitle || _isTitle(para));
 
       // titleMode == 2 时隐藏标题
       if (isTitle && settings.titleMode == 2) continue;

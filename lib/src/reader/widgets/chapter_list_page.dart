@@ -118,9 +118,10 @@ class _ChapterListViewState extends State<_ChapterListView> {
     final book = widget.controller.book;
     if (book == null) return const SizedBox();
     final bottomPadding = MediaQuery.of(context).padding.bottom;
-    final currentChapter = widget.controller.currentChapter;
-    final currentTitle = currentChapter?.title ?? '';
-    final total = book.chapters.length;
+    // 标题/总数统一走 controller(按章加载模式下取自 chapterSource, 否则 book.chapters),
+    // 避免 book.chapters 在按章加载模式下为空导致目录页空白。
+    final currentTitle = widget.controller.chapterTitle(_currentIndex);
+    final total = widget.controller.totalChapters;
 
     return Column(
       children: [
@@ -142,7 +143,7 @@ class _ChapterListViewState extends State<_ChapterListView> {
                     children: [
                       Expanded(
                         child: Text(
-                          book.chapters[i].title,
+                          widget.controller.chapterTitle(i),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

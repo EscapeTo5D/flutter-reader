@@ -54,10 +54,11 @@ class PageView extends StatelessWidget {
       children: [
         if (showHeader) _buildHeader(context),
         if (showHeader && settings.showHeaderDivider)
-          Container(height: 0.5, color: Colors.grey.shade300),
+          // 对齐原生 @color/divider = #66666666 (alpha 0x66≈40% 半透明灰)。
+          Container(height: 0.5, color: const Color(0x66666666)),
         Expanded(child: ClipRect(child: _buildContent())),
         if (showFooter && settings.showFooterDivider)
-          Container(height: 0.5, color: Colors.grey.shade300),
+          Container(height: 0.5, color: const Color(0x66666666)),
         if (showFooter)
           Padding(
             padding: const EdgeInsets.only(top: 2, bottom: 4),

@@ -167,6 +167,17 @@ class ReadingController extends ChangeNotifier {
     return _book?.chapters.length ?? 0;
   }
 
+  /// 第 [index] 章的标题。按章加载模式下取自 [_chapterSource], 否则取自
+  /// [_book.chapters]。供目录页等仅需标题的场景使用(与 [totalChapters] 配套)。
+  /// 越界返回空串。
+  String chapterTitle(int index) {
+    final source = _chapterSource;
+    if (source != null) return source.chapterTitle(index);
+    final chapters = _book?.chapters;
+    if (chapters == null || index < 0 || index >= chapters.length) return '';
+    return chapters[index].title;
+  }
+
   bool get canGoNext =>
       _currentPageIndex < _pages.length - 1 ||
       _currentChapterIndex < totalChapters - 1;
@@ -658,6 +669,11 @@ class ReadingController extends ChangeNotifier {
       return;
     }
     // 按章加载模式。
+    // 先按需失效缓存: settings(字号/行距/titleMode 等)或 pageSize 变化时, 旧分页结果
+    // 作废。否则快路径会复用旧 settings 排好的缓存, 导致改 titleMode 等不生效
+    // (例: 隐藏→显示标题时仍用无标题的旧分页)。_invalidateAdjacentCacheIfNeeded
+    // 内部用 identical 比较 _settings 引用, 无变化时是 O(1) no-op。
+    _invalidateAdjacentCacheIfNeeded();
     // 快路径: 当前章分页缓存命中(预排过) → 同步就绪, 翻章流畅。
     final cached = _adjacentChapterCache[_currentChapterIndex];
     if (cached != null) {
@@ -780,6 +796,8 @@ class ReadingController extends ChangeNotifier {
       content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
+      // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定。
+      firstParagraphIsTitle: title.isNotEmpty,
     );
     debugPrint(
       '[PERF] paginate(章 $chapterIndex, ${pages.length}页): ${tPaginate.elapsedMilliseconds}ms',
@@ -845,6 +863,9 @@ class ReadingController extends ChangeNotifier {
       content: processedContent,
       pageSize: _pageSize,
       settings: _settings,
+      // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定,
+      // 不依赖正则(覆盖"楔子"/"序章"/宿主自定义标题等非"第N章"格式)。
+      firstParagraphIsTitle: chapter.title.isNotEmpty,
     );
     _adjacentChapterCache[chapterIndex] = pages;
     return pages;
