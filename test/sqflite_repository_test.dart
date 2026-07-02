@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -8,6 +9,7 @@ import 'package:flutter_reader/src/core/storage/cached_chapter.dart';
 import 'package:flutter_reader/src/core/storage/sqflite_reader_repository.dart';
 import 'package:flutter_reader/src/core/storage/reader_user.dart';
 import 'package:flutter_reader/src/core/storage/reading_progress.dart';
+import 'package:flutter_reader/src/core/storage/reading_style_preset.dart';
 
 /// SqfliteReaderRepository 集成测试。
 ///
@@ -274,6 +276,78 @@ void main() {
     expect(all.firstWhere((c) => c.chapterIndex == 0).content, 'A2');
     expect(all.firstWhere((c) => c.chapterIndex == 1).content, 'B'); // 未覆盖
     expect(all.firstWhere((c) => c.chapterIndex == 2).content, 'C');
+    await repo.close();
+  });
+
+  // ─────────────────────────── 用户样式预设 ───────────────────────────
+
+  test('saveStylePreset/getStylePresets 往返 + sort_order 升序', () async {
+    final repo = await newRepo();
+    expect(await repo.getStylePresets('u1'), isEmpty);
+
+    final now = DateTime.now();
+    final p0 = ReadingStylePreset(
+        id: 'p0', userId: 'u1', name: '我的预设',
+        bgColor: const Color(0xFFAABBCC), textColor: const Color(0xFF112233),
+        sortOrder: 1, createdAt: now);
+    final p1 = ReadingStylePreset(
+        id: 'p1', userId: 'u1', name: '预设B',
+        bgColor: const Color(0xFFFFFFFF), textColor: const Color(0xFF000000),
+        sortOrder: 0, createdAt: now);
+
+    await repo.saveStylePreset(p0);
+    await repo.saveStylePreset(p1);
+
+    final list = await repo.getStylePresets('u1');
+    expect(list.length, 2);
+    // 按 sort_order 升序
+    expect(list.map((p) => p.id), ['p1', 'p0']);
+    expect(list.first.name, '预设B');
+    // 颜色往返一致(用 ARGB int 比较, 避免颜色空间差异)
+    expect(list.last.bgColor.toARGB32(), 0xFFAABBCC);
+    expect(list.last.textColor.toARGB32(), 0xFF112233);
+    await repo.close();
+  });
+
+  test('预设按用户隔离: u1 看不到 u2 的预设', () async {
+    final repo = await newRepo();
+    final now = DateTime.now();
+    await repo.saveStylePreset(ReadingStylePreset(
+        id: 'pu1', userId: 'u1', name: 'U1预设',
+        bgColor: const Color(0xFFFFFFFF), textColor: const Color(0xFF000000),
+        sortOrder: 0, createdAt: now));
+    await repo.saveStylePreset(ReadingStylePreset(
+        id: 'pu2', userId: 'u2', name: 'U2预设',
+        bgColor: const Color(0xFFF44336), textColor: const Color(0xFF2196F3),
+        sortOrder: 0, createdAt: now));
+
+    expect((await repo.getStylePresets('u1')).map((p) => p.id), ['pu1']);
+    expect((await repo.getStylePresets('u2')).map((p) => p.id), ['pu2']);
+    await repo.close();
+  });
+
+  test('deleteStylePreset + upsert 覆盖', () async {
+    final repo = await newRepo();
+    final now = DateTime.now();
+    await repo.saveStylePreset(ReadingStylePreset(
+        id: 'pd', userId: 'u1', name: '旧名',
+        bgColor: const Color(0xFFFFFFFF), textColor: const Color(0xFF000000),
+        sortOrder: 0, createdAt: now));
+
+    // upsert 覆盖(同 id)
+    await repo.saveStylePreset(ReadingStylePreset(
+        id: 'pd', userId: 'u1', name: '新名',
+        bgColor: const Color(0xFF4CAF50), textColor: const Color(0xFFF44336),
+        sortOrder: 0, createdAt: now));
+    var list = await repo.getStylePresets('u1');
+    expect(list.length, 1);
+    expect(list.first.name, '新名');
+    // 用 ARGB int 比较, 避免颜色空间(colorSpace)导致的 Color 相等性差异。
+    expect(list.first.bgColor.toARGB32(), 0xFF4CAF50);
+
+    // 删除
+    await repo.deleteStylePreset('pd');
+    expect(await repo.getStylePresets('u1'), isEmpty);
     await repo.close();
   });
 }

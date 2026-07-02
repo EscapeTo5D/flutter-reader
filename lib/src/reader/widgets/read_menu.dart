@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
+import '../../core/storage/reading_style_preset.dart';
 import 'chapter_list_page.dart';
 import 'detail_seek_bar.dart';
 import 'legado_icons.dart';
@@ -312,6 +313,8 @@ class _StyleDialogState extends State<_StyleDialog> {
   // 共享排版(对齐原生 ReadBookConfig.shareLayout, 详见 ReadingSettings.shareLayout)。
   // true 时点颜色预设只换 bg/text, 不重置 字号/字距/行距/段距 滑块。
   late bool _shareLayout;
+  // 用户自定义预设(从 DB 异步加载), 追加在内置 6 个之后。
+  List<ReadingStylePreset> _userPresets = const [];
   // 字重三态(对齐原生 ReadBookConfig.textBold: 0=正常 1=粗体 2=细体)。
   // TextFontWeightConverter 显示 "中/粗/细", 高亮当前项为红色。
   late int _textBold;
@@ -378,6 +381,13 @@ class _StyleDialogState extends State<_StyleDialog> {
     } else {
       _textBold = 0;
     }
+    // 异步加载用户自定义预设(无 repository 时为空, 仅显示内置 6 个)。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadUserPresets());
+  }
+
+  Future<void> _loadUserPresets() async {
+    final presets = await widget.controller.loadStylePresets();
+    if (mounted) setState(() => _userPresets = presets);
   }
 
   /// textBold(0/1/2) → FontWeight, 对齐原生正常/粗体/细体。
@@ -792,106 +802,31 @@ class _StyleDialogState extends State<_StyleDialog> {
             ],
           ),
           const SizedBox(height: 8),
-          // 对齐原生: 横向 RecyclerView, 6 个预设圆形 + 末尾"+"添加。
+          // 对齐原生: 横向 RecyclerView, 内置 6 预设 + 用户自定义预设 + 末尾"+"添加。
           // 每 item 占屏宽 1/6(圆 48dp 居中 + 左右等宽间隔), 6 个预设首屏刚好填满不紧贴;
-          // "+"在第 7 格, 需向右滑动才能露出(对齐原生 RecyclerView 滚动行为)。
+          // 用户预设与"+"在第 7 格起, 需向右滑动才能露出(对齐原生 RecyclerView 滚动行为)。
           LayoutBuilder(
             builder: (context, constraints) {
               // 可用宽度扣除 section 的左右 padding(各 16)后的内容区。
               final itemWidth = constraints.maxWidth / 6;
+              final total = _stylePresets.length + _userPresets.length + 1;
               return SizedBox(
                 height: 48,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   padding: EdgeInsets.zero,
-                  itemCount: _stylePresets.length + 1,
+                  itemCount: total,
                   itemBuilder: (ctx, i) {
                     // 最后一项 = "+"添加预设。
-                    final isAdd = i == _stylePresets.length;
+                    final isAdd = i == total - 1;
                     return SizedBox(
                       width: itemWidth,
                       child: Center(
-                        child: GestureDetector(
-                          onTap: isAdd
-                              ? () {}
-                              : () {
-                                  final preset = _stylePresets[i];
-                                  setState(() {
-                                    bgColor = preset.bg;
-                                    textColor = preset.text;
-                                    bgImage = null;
-                                    _clearBgImage = true;
-                                    // 共享排版: true 时只换 bg/text, 不重置排版参数
-                                    // (对齐原生 shareLayout 语义——切样式保留当前排版)。
-                                    if (!_shareLayout) {
-                                      if (preset.fontSize != null) {
-                                        _fontSizeProgress = preset.fontSize!.toInt() - 5;
-                                      }
-                                      if (preset.letterSpacing != null) {
-                                        _letterSpacingProgress =
-                                            (preset.letterSpacing! * 100).toInt() + 50;
-                                      }
-                                      if (preset.lineHeight != null) {
-                                        // progress = lineHeight × 10(对齐原生 lineSpacingExtra 整数语义)
-                                        _lineHeightProgress = (preset.lineHeight! * 10).round();
-                                      }
-                                      if (preset.paragraphSpacing != null) {
-                                        // progress = 字段值(对齐原生 paragraphSpacing 整数语义)
-                                        _paragraphSpacingProgress = preset.paragraphSpacing!.round();
-                                      }
-                                    }
-                                  });
-                                  _apply();
-                                },
-                          // 对齐原生 CircleImageView: 48dp 圆形, 1dp 边框。
-                          // 选中时边框=accentColor 且文字加粗(StyleAdapter.convert)。
-                          child: isAdd
-                              ? Container(
-                                  width: 48,
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.black54),
-                                  ),
-                                  child: Center(
-                                    child: LegadoIcons.add(size: 20, color: Colors.black54),
-                                  ),
-                                )
-                              : Container(
-                                  width: 48,
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    color: _stylePresets[i].bg,
-                                    shape: BoxShape.circle,
-                                    // 对齐原生 CircleImageView: border 宽度恒 1dp,
-                                    // 选中态仅 borderColor 从 textColor 变 accentColor
-                                    // (StyleAdapter.convert: 选中 borderColor=accent,
-                                    //  未选 borderColor=item.curTextColor(), 宽度均 1dp)。
-                                    border: Border.all(
-                                      color: bgColor == _stylePresets[i].bg &&
-                                              textColor == _stylePresets[i].text &&
-                                              bgImage == null
-                                          ? Theme.of(context).colorScheme.primary
-                                          : _stylePresets[i].text,
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      _stylePresets[i].label,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: _stylePresets[i].text,
-                                        fontWeight: bgColor == _stylePresets[i].bg &&
-                                                textColor == _stylePresets[i].text &&
-                                                bgImage == null
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                        ),
+                        child: isAdd
+                            ? _buildAddSwatch()
+                            : (i < _stylePresets.length
+                                ? _buildBuiltinSwatch(i)
+                                : _buildUserSwatch(i - _stylePresets.length)),
                       ),
                     );
                   },
@@ -900,6 +835,166 @@ class _StyleDialogState extends State<_StyleDialog> {
             },
           ),
         ],
+      ),
+    );
+  }
+
+  /// "+"添加预设圆形(对齐原生 footer add swatch)。
+  /// 点击: 用当前 bg/text 新建一个用户预设, 存库, 刷新列表, 自动选中。
+  Widget _buildAddSwatch() {
+    return GestureDetector(
+      onTap: _addUserPreset,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.black54),
+        ),
+        child: Center(
+          child: LegadoIcons.add(size: 20, color: Colors.black54),
+        ),
+      ),
+    );
+  }
+
+  /// 内置预设圆形(0~5)。选中态仅变色(宽度恒 1dp, 对齐原生)。
+  Widget _buildBuiltinSwatch(int i) {
+    final preset = _stylePresets[i];
+    final selected = bgColor == preset.bg &&
+        textColor == preset.text &&
+        bgImage == null;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          bgColor = preset.bg;
+          textColor = preset.text;
+          bgImage = null;
+          _clearBgImage = true;
+          // 共享排版: true 时只换 bg/text, 不重置排版参数(对齐原生 shareLayout)。
+          if (!_shareLayout) {
+            if (preset.fontSize != null) {
+              _fontSizeProgress = preset.fontSize!.toInt() - 5;
+            }
+            if (preset.letterSpacing != null) {
+              _letterSpacingProgress =
+                  (preset.letterSpacing! * 100).toInt() + 50;
+            }
+            if (preset.lineHeight != null) {
+              _lineHeightProgress = (preset.lineHeight! * 10).round();
+            }
+            if (preset.paragraphSpacing != null) {
+              _paragraphSpacingProgress = preset.paragraphSpacing!.round();
+            }
+          }
+        });
+        _apply();
+      },
+      child: _swatchCircle(
+        bg: preset.bg,
+        text: preset.text,
+        label: preset.label,
+        selected: selected,
+      ),
+    );
+  }
+
+  /// 用户自定义预设圆形(从 DB 加载)。
+  /// 长按 → 编辑弹窗(对齐原生 long-press → BgTextConfigDialog)。
+  Widget _buildUserSwatch(int i) {
+    final preset = _userPresets[i];
+    final selected = bgColor == preset.bgColor &&
+        textColor == preset.textColor &&
+        bgImage == null;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          bgColor = preset.bgColor;
+          textColor = preset.textColor;
+          bgImage = null;
+          _clearBgImage = true;
+          // 用户预设不携带排版参数, 点选只换色(等价 shareLayout=true 语义)。
+        });
+        _apply();
+      },
+      onLongPress: () => _showPresetEditor(preset),
+      child: _swatchCircle(
+        bg: preset.bgColor,
+        text: preset.textColor,
+        label: preset.name,
+        selected: selected,
+      ),
+    );
+  }
+
+  /// 通用圆形色块(对齐原生 CircleImageView: 48dp, 1dp 边框恒定, 选中仅变色+加粗)。
+  Widget _swatchCircle({
+    required Color bg,
+    required Color text,
+    required String label,
+    required bool selected,
+  }) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: bg,
+        shape: BoxShape.circle,
+        // 对齐原生 CircleImageView: border 宽度恒 1dp, 选中态 borderColor 从
+        // textColor 变 accentColor(StyleAdapter.convert), 未选 borderColor=textColor。
+        border: Border.all(
+          color: selected ? Theme.of(context).colorScheme.primary : text,
+          width: 1,
+        ),
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            color: text,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 新建用户预设: 用当前 bg/text 色创建, 存库后刷新列表。
+  Future<void> _addUserPreset() async {
+    final uid = widget.controller.userId;
+    if (uid == null) return; // 无 userId(纯内存模式)→ 不持久化。
+    final now = DateTime.now();
+    final preset = ReadingStylePreset(
+      id: 'preset_${now.millisecondsSinceEpoch}',
+      userId: uid,
+      name: '预设${_stylePresets.length + _userPresets.length + 1}',
+      bgColor: bgColor,
+      textColor: textColor,
+      sortOrder: _userPresets.length,
+      createdAt: now,
+    );
+    await widget.controller.saveStylePreset(preset);
+    await _loadUserPresets();
+    // 新建的预设即当前选中色, 选中态会自动高亮。
+  }
+
+  /// 预设编辑弹窗(对齐原生 BgTextConfigDialog, 极简版: 名称 + bg 色 + text 色)。
+  /// 用预设色板网格做颜色选择(不引第三方颜色选择器包)。
+  void _showPresetEditor(ReadingStylePreset preset) {
+    SmartDialog.show(
+      alignment: Alignment.center,
+      maskColor: Colors.transparent,
+      builder: (_) => _PresetEditorDialog(
+        preset: preset,
+        onDelete: () async {
+          await widget.controller.deleteStylePreset(preset.id);
+          await _loadUserPresets();
+        },
+        onSave: (updated) async {
+          await widget.controller.saveStylePreset(updated);
+          await _loadUserPresets();
+        },
       ),
     );
   }
@@ -1171,6 +1266,182 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 预设编辑弹窗(极简版, 对齐原生 BgTextConfigDialog 的子集)。
+/// 字段: 名称 + 背景色 + 文字色。颜色用预设色板网格选(不引第三方颜色选择器)。
+class _PresetEditorDialog extends StatefulWidget {
+  final ReadingStylePreset preset;
+  final Future<void> Function() onDelete;
+  final Future<void> Function(ReadingStylePreset updated) onSave;
+
+  const _PresetEditorDialog({
+    required this.preset,
+    required this.onDelete,
+    required this.onSave,
+  });
+
+  @override
+  State<_PresetEditorDialog> createState() => _PresetEditorDialogState();
+}
+
+class _PresetEditorDialogState extends State<_PresetEditorDialog> {
+  late final TextEditingController _nameController;
+  late Color _bg;
+  late Color _text;
+
+  // 预设色板(对齐原生 readConfig.json 的 6 预设色 + 常用色, 网格点选)。
+  static const _swatch = <Color>[
+    Color(0xFFC0EDC6), Color(0xFFFFFFFF), Color(0xFFDDC090), Color(0xFFC2D8AA),
+    Color(0xFFDBB8E2), Color(0xFFABCEE0), Color(0xFFF5F5DC), Color(0xFFE8E8E8),
+    Color(0xFF0B0B0B), Color(0xFF3E3422), Color(0xFF596C44), Color(0xFF68516C),
+    Color(0xFF3D4C54), Color(0xFF333333), Color(0xFF666666), Color(0xFF999999),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.preset.name);
+    _bg = widget.preset.bgColor;
+    _text = widget.preset.textColor;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dialogWidth = MediaQuery.of(context).size.width * 0.85;
+    return Center(
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: dialogWidth,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFAFAFA),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 名称行
+              Row(
+                children: [
+                  const Text('名称', style: TextStyle(fontSize: 14)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      style: const TextStyle(fontSize: 14),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _colorSection('背景色', _bg, (c) => setState(() => _bg = c)),
+              const SizedBox(height: 8),
+              _colorSection('文字色', _text, (c) => setState(() => _text = c)),
+              const SizedBox(height: 16),
+              // 按钮行: 删除 / 保存
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () async {
+                      await widget.onDelete();
+                      if (mounted) SmartDialog.dismiss();
+                    },
+                    child: const Text('删除',
+                        style: TextStyle(color: Colors.red)),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () async {
+                      final updated = widget.preset.copyWith(
+                        name: _nameController.text.trim().isEmpty
+                            ? '预设'
+                            : _nameController.text.trim(),
+                        bgColor: _bg,
+                        textColor: _text,
+                      );
+                      await widget.onSave(updated);
+                      if (mounted) SmartDialog.dismiss();
+                    },
+                    child: const Text('保存'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _colorSection(
+      String label, Color selected, ValueChanged<Color> onPick) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            children: [
+              Text(label, style: const TextStyle(fontSize: 13)),
+              const SizedBox(width: 8),
+              // 当前选中色预览
+              Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: selected,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.black26),
+                ),
+              ),
+            ],
+          ),
+        ),
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 8,
+          mainAxisSpacing: 6,
+          crossAxisSpacing: 6,
+          childAspectRatio: 1,
+          children: _swatch.map((c) {
+            final isSel = c.toARGB32() == selected.toARGB32();
+            return GestureDetector(
+              onTap: () => onPick(c),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: c,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isSel
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.black12,
+                    width: isSel ? 2 : 1,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 }

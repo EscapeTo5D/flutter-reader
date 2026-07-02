@@ -6,6 +6,7 @@ import '../models/reading_settings.dart';
 import '../models/reading_settings_codec.dart';
 import 'cached_chapter.dart';
 import 'reading_progress.dart';
+import 'reading_style_preset.dart';
 import 'reader_user.dart';
 
 /// 阅读器持久化仓库接口。
@@ -114,6 +115,21 @@ abstract class ReaderRepository {
     String bookId,
     Iterable<CachedChapter> chapters,
   );
+
+  // ─────────────────────────── 用户样式预设 ───────────────────────────
+  //
+  // 用户在「设置弹窗 → 颜色与背景」点「+」新建的自定义预设(bg/text 色),
+  // 按 userId 隔离。内置 6 个预设(微信读书/预设1~5)不在 DB 内, 由 UI 硬编码,
+  // 仅用户自定义预设走 DB。用于持久化用户配色, 重启不丢。
+
+  /// 读取某用户的全部自定义预设(按 sort_order 升序)。
+  Future<List<ReadingStylePreset>> getStylePresets(String userId);
+
+  /// 保存/覆盖预设(按 id upsert)。
+  Future<void> saveStylePreset(ReadingStylePreset preset);
+
+  /// 删除预设(按 id)。
+  Future<void> deleteStylePreset(String presetId);
 
   // ─────────────────────────── 生命周期 ───────────────────────────
 

@@ -12,6 +12,7 @@ import 'cached_chapter.dart';
 import 'reader_repository.dart';
 import 'reader_user.dart';
 import 'reading_progress.dart';
+import 'reading_style_preset.dart';
 
 /// [ReaderRepository] 的 sqflite 默认实现。
 ///
@@ -40,8 +41,9 @@ class SqfliteReaderRepository implements ReaderRepository {
 
   static const _kDbName = 'flutter_reader.db';
   // v2: 新增 chapter_contents 表(章节正文缓存, 用于二次打开秒开)。
+  // v3: 新增 reading_style_presets 表(用户自定义阅读样式预设, bg/text 色)。
   // _onUpgrade 在老库上用 IF NOT EXISTS 增量建表, 已有数据不动。
-  static const _kDbVersion = 2;
+  static const _kDbVersion = 3;
 
   /// 打开(或创建)数据库。
   ///
@@ -138,6 +140,21 @@ class SqfliteReaderRepository implements ReaderRepository {
     batch.execute(
       'CREATE INDEX IF NOT EXISTS idx_chapter_contents_book ON chapter_contents(book_id, chapter_index)',
     );
+    // 用户样式预设(v3)。按 userId 隔离, 仅存 bg/text 色(不存排版参数)。
+    batch.execute('''
+      CREATE TABLE IF NOT EXISTS reading_style_presets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '预设',
+        bg_color INTEGER NOT NULL,
+        text_color INTEGER NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    batch.execute(
+      'CREATE INDEX IF NOT EXISTS idx_style_presets_user ON reading_style_presets(user_id, sort_order)',
+    );
     await batch.commit(noResult: true);
   }
 
@@ -160,6 +177,23 @@ class SqfliteReaderRepository implements ReaderRepository {
       ''');
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_chapter_contents_book ON chapter_contents(book_id, chapter_index)',
+      );
+    }
+    // v3 新增 reading_style_presets(用户自定义样式预设)。
+    if (oldVersion < 3) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS reading_style_presets (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL DEFAULT '预设',
+          bg_color INTEGER NOT NULL,
+          text_color INTEGER NOT NULL,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_style_presets_user ON reading_style_presets(user_id, sort_order)',
       );
     }
   }
@@ -478,6 +512,37 @@ class SqfliteReaderRepository implements ReaderRepository {
       chapterIndex: row['chapter_index'] as int,
       title: (row['title'] as String?) ?? '',
       content: (row['content'] as String?) ?? '',
+    );
+  }
+
+  // ─────────────────────────── 用户样式预设 ───────────────────────────
+
+  @override
+  Future<List<ReadingStylePreset>> getStylePresets(String userId) async {
+    final rows = await _db.query(
+      'reading_style_presets',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'sort_order ASC, created_at ASC',
+    );
+    return rows.map(ReadingStylePreset.fromRow).toList();
+  }
+
+  @override
+  Future<void> saveStylePreset(ReadingStylePreset preset) async {
+    await _db.insert(
+      'reading_style_presets',
+      preset.toRow(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  @override
+  Future<void> deleteStylePreset(String presetId) async {
+    await _db.delete(
+      'reading_style_presets',
+      where: 'id = ?',
+      whereArgs: [presetId],
     );
   }
 }

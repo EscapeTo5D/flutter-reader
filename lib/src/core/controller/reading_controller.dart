@@ -11,6 +11,7 @@ import '../../reader/engine/paginate_isolate.dart';
 import '../content_processor.dart';
 import '../storage/reader_repository.dart';
 import '../storage/reading_progress.dart';
+import '../storage/reading_style_preset.dart';
 
 /// 预取(peek)的翻页目标信息。
 ///
@@ -629,6 +630,34 @@ class ReadingController extends ChangeNotifier {
     _bookmarks.removeWhere((b) => b.bookId == book.id);
     _bookmarks.addAll(stored);
     notifyListeners();
+  }
+
+  // ─────────────────────────── 用户样式预设 ───────────────────────────
+  //
+  // 透传 repository 的预设 CRUD。无 repository 时返回空/无操作(纯内存模式退化,
+  // UI 此时只显示内置 6 预设, 「+」无效果——对齐「无 repo = 无持久化」语义)。
+
+  /// 读取当前用户的自定义样式预设(按 sort_order 升序)。
+  /// 无 repository 时返回空列表。
+  Future<List<ReadingStylePreset>> loadStylePresets() async {
+    final repo = _repository;
+    final uid = _userId;
+    if (repo == null || uid == null) return const [];
+    return repo.getStylePresets(uid);
+  }
+
+  /// 保存/覆盖预设。无 repository 时无操作。
+  Future<void> saveStylePreset(ReadingStylePreset preset) async {
+    final repo = _repository;
+    if (repo == null) return;
+    await repo.saveStylePreset(preset);
+  }
+
+  /// 删除预设。无 repository 时无操作。
+  Future<void> deleteStylePreset(String presetId) async {
+    final repo = _repository;
+    if (repo == null) return;
+    await repo.deleteStylePreset(presetId);
   }
 
   bool isCurrentPageBookmarked() {
