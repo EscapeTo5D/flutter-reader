@@ -8,11 +8,14 @@
 - 包代码在 `lib/`，运行示例 app 在 `example/`。
 - 阅读排版配置模型: `lib/src/core/models/reading_settings.dart`（对应原生 `Config` / `ReadTipConfig`）。注意：2026-06-26 远程重构后文件已移到 `core/` 和 `reader/` 下。
 
-## ⚠️ 关于"翻页架构重构"那条线
+## ⚠️ 关于"翻页架构重构"那条线（已删除）
 
-历史曾存在分支 `backup/pre-refactor-2026-06-26`（PageDelegate 基类 + NoAnimPageDelegate + 把 `scroll_mode_handler.dart` 迁出 `page_animations/` + 整套 legado 技术文档 docs/legado_reader/ 00~11 章）。**该分支已于 2026-06-29 前被删除，本地/远程/reflog 均无残留，不可恢复。** master 上的 `912604b feat: implement scroll page mode aligned with legado ScrollPageDelegate` 是 master 自身提交，与该分支无关。
-- 后果：master 上 `page_animations/` 目录缺失（详见文末"待办"），根包暂不可整体编译。
+历史曾存在分支 `backup/pre-refactor-2026-06-26`（PageDelegate 基类 + NoAnimPageDelegate + 把 `scroll_mode_handler.dart` 迁出 `page_animations/` + 整套 legado 技术文档 docs/legado_reader/ 00~11 章）。该分支含 10 个未合并到 master 的提交（`7a89790`~`8967075`，含 page_delegates 架构、padding/高度修复、delegate 文档），master 走的是 isolate 排版优化路线，未接续这条线。
+- **该分支已于 2026-07-02 用 `git branch -D` 强制删除（本地，含 10 个未合并提交，不可恢复）。** 删除前从未 push 到远程，故远程无需清理。
+- ⚠️ 上一版 AGENTS.md 曾写"该分支已于 2026-06-29 前被删除，本地/远程/reflog 均无残留"——**那条记录有误**，分支实际一直存活到 2026-07-02 才删。
+- master 上的 `912604b feat: implement scroll page mode aligned with legado ScrollPageDelegate` 是 master 自身提交，与该分支无关。
 - 如未来要重做"翻页架构重构"，只能从零开始，无法从那个分支接续。
+- 另：同日还删了已完全合并的 `feat/perf-chapter-loading-isolate`（`git branch -d`，零风险）。现本地仅剩 `master`。
 
 ## 原生项目 (legado) 位置 ⚠️ 重要
 
