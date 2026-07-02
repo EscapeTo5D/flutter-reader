@@ -44,6 +44,9 @@ class _ChapterListPageState extends State<ChapterListPage>
 
   void _enterSearch() {
     setState(() => _searchMode = true);
+    // TextField 用 Visibility 常驻树里(visible 切换), 不可见时无法获焦; 切到可见后
+    // 需在下一帧重新请求焦点唤起键盘。这一帧的延迟换来首次唤起省掉 ~80ms 首次 layout
+    // 开销(对齐 legado SearchView 预 inflate)。
     WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
   }
 
@@ -65,11 +68,42 @@ class _ChapterListPageState extends State<ChapterListPage>
           icon: LegadoIcons.arrowBack(size: 24, color: Colors.black87),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: _searchMode
-            ? TextField(
+        title: Stack(
+          children: [
+            // 对齐 legado TocActivity: SearchView 作为 menu actionView 在 Activity 启动时
+            // 就 inflate 好(只是 iconified 收起), 点搜索只切 isIconified, 无首次 layout。
+            // Flutter 等价: TextField 与 TabBar 都常驻挂载, 用 Visibility 切显隐。
+            // Visibility(maintainState/Size/Animation: true) 保留 RenderObject 与已算好
+            // 的 layout, 故 EditableText 的首次 layout 在页面进入时(用户无感)完成,
+            // 点搜索时无 ~120ms 首次 layout 开销。
+            Visibility(
+              visible: !_searchMode,
+              maintainState: true,
+              maintainSize: true,
+              maintainAnimation: true,
+              child: TabBar(
+                controller: _tabController,
+                // 对齐原生 TabLayout: 居中, indicator 仅随 label 宽度(非整宽), 强调色下划线。
+                labelColor: Colors.black87,
+                unselectedLabelColor: Colors.black54,
+                indicatorColor: accent,
+                indicatorSize: TabBarIndicatorSize.label,
+                tabAlignment: TabAlignment.center,
+                dividerHeight: 0,
+                tabs: const [
+                  Tab(text: '目录'),
+                  Tab(text: '书签'),
+                ],
+              ),
+            ),
+            Visibility(
+              visible: _searchMode,
+              maintainState: true,
+              maintainSize: true,
+              maintainAnimation: true,
+              child: TextField(
                 controller: _searchEdit,
                 focusNode: _searchFocus,
-                autofocus: true,
                 style: const TextStyle(fontSize: 16, color: Colors.black87),
                 decoration: InputDecoration(
                   isDense: true,
@@ -84,21 +118,10 @@ class _ChapterListPageState extends State<ChapterListPage>
                         ),
                 ),
                 onChanged: (v) => setState(() => _chapterQuery = v.trim()),
-              )
-            : TabBar(
-                controller: _tabController,
-                // 对齐原生 TabLayout: 居中, indicator 仅随 label 宽度(非整宽), 强调色下划线。
-                labelColor: Colors.black87,
-                unselectedLabelColor: Colors.black54,
-                indicatorColor: accent,
-                indicatorSize: TabBarIndicatorSize.label,
-                tabAlignment: TabAlignment.center,
-                dividerHeight: 0,
-                tabs: const [
-                  Tab(text: '目录'),
-                  Tab(text: '书签'),
-                ],
               ),
+            ),
+          ],
+        ),
         actions: [
           if (!_searchMode)
             IconButton(
