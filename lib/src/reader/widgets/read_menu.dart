@@ -1080,8 +1080,9 @@ class _StylePreset {
 /// (`dialog_read_padding.xml`)。居中弹窗(无 dim), 3 组×4 向 = 12 滑块
 /// + 页眉/页脚分隔线开关。值整数 dp(对齐原生 DetailSeekBar 无 valueFormat)。
 ///
-/// 默认值对齐原生 ReadBookConfig.Config: 正文 6/6/16/16, 页眉 0/0/16/16,
-/// 页脚 6/6/16/16; showHeaderLine=false, showFooterLine=true。
+/// 默认值: 正文 6/6/16/16、页眉 0/0/16/16(对齐原生 ReadBookConfig.Config);
+/// 页脚 2/4/16/16、footerHeight 22(用户偏好, 覆盖原生 6/6, 保持记忆中的页脚比例);
+/// showHeaderLine=false, showFooterLine=true。
 class _PaddingConfigDialog extends StatefulWidget {
   final ReadingController controller;
   const _PaddingConfigDialog({required this.controller});

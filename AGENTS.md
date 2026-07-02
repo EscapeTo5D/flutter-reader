@@ -250,7 +250,7 @@ lineHeight=1.5 → 偏下 12px
 - checkbox 接线 `_shareLayout`，label 改「共享排版」。
 
 ### WS2 PaddingConfigDialog 边距弹窗（commit f0057cf）
-- `ReaderPadding` 从 6 字段扩展为 14：body 原 top/bottom/left/right 保留；新增 header/footer 各 top/bottom/left/right（默认对齐原生 0/0/16/16、6/6/16/16）。`copyWith` + codec 同步（向后兼容）。
+- `ReaderPadding` 从 6 字段扩展为 14：body 原 top/bottom/left/right 保留；新增 header/footer 各 top/bottom/left/right（默认：header 0/0/16/16 对齐原生；footer **2/4/16/16 + footerHeight 22**，⚠️ 这是用户偏好，覆盖原生默认 6/6/16/16，保持记忆中的页脚高度比例——别"对齐原生"改回 6/6）。`copyWith` + codec 同步（向后兼容）。
 - **`nonContentHeight` 计算**：header 总高 = `headerHeight + headerTop + headerBottom`，footer 同理（旧实现 footer 硬编码 `+6`，现读字段）。
 - `page_view` 的 header/footer 渲染改用各向外边距（`headerLeft/Right/Top/Bottom` 等），删除 footer 外层冗余 `Padding(top:2,bottom:4)`（避免与 footerTop/Bottom 双重 padding）。
 - 新增 `_PaddingConfigDialog`：居中弹窗（0.9 宽，无 dim），3 组（页眉/正文/页脚）×4 向 = 12 滑块 + 2 分隔线开关（复用 `showHeaderDivider/showFooterDivider`）。body top max=200，其余 max=100，值整数 dp。

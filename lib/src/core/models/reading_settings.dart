@@ -57,7 +57,8 @@ class ReaderPadding {
   final double headerBottom;
   final double headerLeft;
   final double headerRight;
-  // 页脚外层四向内边距(对齐原生 footerPaddingTop/Bottom/Left/Right, 默认 6/6/16/16)。
+  // 页脚外层四向内边距。原生默认 6/6/16/16, 本包按用户偏好改为 2/4/16/16
+  // (覆盖原生, 保持记忆中的页脚高度比例)。
   final double footerTop;
   final double footerBottom;
   final double footerLeft;
@@ -69,13 +70,15 @@ class ReaderPadding {
     this.left = 16,
     this.right = 16,
     this.headerHeight = 24,
-    this.footerHeight = 24,
+    // footerHeight 22(用户偏好, 覆盖原生; 原生无此字段, 由 12sp 文字行高决定)。
+    this.footerHeight = 22,
     this.headerTop = 0,
     this.headerBottom = 0,
     this.headerLeft = 16,
     this.headerRight = 16,
-    this.footerTop = 6,
-    this.footerBottom = 6,
+    // footer 顶/底内边距: 用户偏好 2/4(覆盖原生默认 6/6, 保持记忆中的页脚高度比例)。
+    this.footerTop = 2,
+    this.footerBottom = 4,
     this.footerLeft = 16,
     this.footerRight = 16,
   });
