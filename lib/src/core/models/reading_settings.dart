@@ -70,8 +70,8 @@ class ReaderPadding {
     this.left = 16,
     this.right = 16,
     this.headerHeight = 24,
-    // footerHeight 22(用户偏好, 覆盖原生; 原生无此字段, 由 12sp 文字行高决定)。
-    this.footerHeight = 22,
+    // footerHeight 23(用户偏好, 覆盖原生; 原生无此字段, 由 12sp 文字行高决定)。
+    this.footerHeight = 23,
     this.headerTop = 0,
     this.headerBottom = 0,
     this.headerLeft = 16,
