@@ -240,7 +240,7 @@ lineHeight=1.5 → 偏下 12px
 ### WS1 视觉对齐（commit b632d74）
 - **去背景遮罩**：`_showStyleDialog` 的 `maskColor` 从 50% 黑改 `Colors.transparent`，对齐原生 `dimAmount=0.0f`（阅读页正文完全可见，不被半透明遮罩盖）。
 - **去顶部圆角**：弹窗 Container 去掉 `borderRadius`，对齐原生无圆角（顶部直角贴屏底）。
-- **字重文字** `中/粗/细`→`N/B/L`：对齐原生 `strings.xml font_weight_text="N/B/L"`（`TextFontWeightConverter` 显示）。
+- **字重文字**：原生 `strings.xml font_weight_text="N/B/L"`（英文），WS1 曾按「源码为准」改成 `N/B/L`，**后按用户偏好改回中文 `中/粗/细`**（commit 2162323）。教训：UI 文案/语言是用户偏好，**覆盖**「源码为准」原则——中文 App 用中文标签更直观，别为严格匹配原生英文 strings 而改语言。
 - **预设选中边框**：宽度恒 1dp，仅 `borderColor` 从 textColor 变 accentColor（旧实现选中变宽 1→2px，错）。对齐原生 `CircleImageView` border 宽度恒定。
 - **背景色** `#FFFFFF`→`#FAFAFA`：对齐原生 `md_grey_50`（原生运行时被主题 `bottomBackground` 覆盖，本包无主题系统故取静态值）。
 
@@ -268,6 +268,29 @@ lineHeight=1.5 → 偏下 12px
 - ❌ 「字体」按钮（保持空实现；原生从文件系统选 .ttf/.otf 需 file_picker 依赖 + FontLoader）。
 - ❌ 简繁实际文本转换（本包无 CJK 转换库，仅记录选中态）。
 - ❌ 预设的 day/night/eink 三套色 + bgImage + bgAlpha + textAccent（原生 BgTextConfigDialog 全功能）。
+
+## 顶部 6 按钮的子弹窗对齐原生（2026-07-03，commit 91926e9）
+
+**问题**：点开「界面」→ _StyleDialog 后，顶部 6 个按钮（字重/字体/缩进/简繁/边距/信息）弹出的**子弹窗**与原生不对齐。**根因**：原生里这 6 个子弹窗**全部居中**（只有外层 ReadStyleDialog 自身是 `Gravity.BOTTOM`），但 Flutter 旧实现把字重/缩进/简繁做成了**底部滑出 sheet**，边距/信息位置对但样式/交互错。
+
+**关键结论（务必记住）**：`context.alert{}` / `context.selector{}`（`AndroidAlertBuilder.show()` + `applyTint()` 的 `filletBackground`）= **居中 AlertDialog**：居中、3dp 圆角、主题背景色填充、标准 dim 遮罩、顶部标题、`setItems(...)` 纯文本列表（**无 checkmark**）、点击即选即关。**不是 bottom sheet。** 字重/缩进/简繁 都用它；TipConfigDialog 内部各 selector 也用它。
+
+**本轮改动**（`read_menu.dart` 为主）：
+- **新增 `_showOptionList` helper**：复刻上述居中 AlertDialog（`SmartDialog.show(alignment: Alignment.center, maskColor: 0.5黑)`，Container 3dp 圆角白底、标题在顶、纯文本 InkWell 列表）。字重/缩进/简繁/TipConfigDialog 各 selector 全部复用。
+- **字重**：底部 sheet → 居中，标题「文章字重切换」，项 正常/粗体/细体（对齐 `R.array.text_font_weight` + 标题 `text_font_weight_converter`）。
+- **缩进**：底部 sheet → 居中，标题「缩进」，**项数 9→5**（对齐 `R.array.indent` 5 项；原生公式 `paragraphIndent = "　".repeat(index)`，故 index ∈ 0..4，最多 4 全角空格）。`textIndent` 存 0..4。
+- **简繁**：底部 sheet → 居中，标题「中文简繁体转换」，项 关闭/繁体转简体/简体转繁体（对齐 `R.array.chinese_mode`）。
+- **边距弹窗 `_PaddingConfigDialog`**：圆角 **8→0**（原生 `BaseDialogFragment.onViewCreated` 仅 `setBackgroundColor`，无圆角）；分组标题行**内联**「显示分隔线」+ Checkbox（对齐 `dialog_read_padding.xml` 的 `tv_header_padding … showLine cb_show_top_line` 同行 LinearLayout）；正文组无开关。删 `_buildLineSwitch`（不再用 Switch）。padding 16→10（对齐 xml `padding=10dp`）。
+- **信息弹窗 `_TipConfigDialog` 全宽 + 接通实际读写**：
+  - 去掉 `maxWidth:340`，改 `Padding(horizontal:16)` 近全宽（对齐 `setLayout(MATCH_PARENT, WRAP_CONTENT)`）。
+  - 每行（显示/左/中/右/提示颜色/分隔线颜色）**可点** → 弹居中 selector，直接 `controller.updateSettings` 读写：headerConfig/footerConfig 的 `hidden`/`left`/`center`/`right`、`tipColor`、`tipDividerColor`。
+  - 「显示」selector 2 项（显示/隐藏）→ 写 `headerConfig.hidden`/`footerConfig.hidden`（true=隐藏，对齐原生 headerMode/footerMode 两态）。
+  - 「左/中/右」selector = TipPosition 全集（Flutter 10 项：无/书名/标题/时间/电量/电量%/页数/进度(%)/时间及电量/页数及进度，对齐 `R.array.read_tip` 取 Flutter 支持项）。选后 **clearRepeat**：非 none 的 tip 在两区六槽中唯一，重复则把旧槽清成 none（对齐原生 `TipConfigDialog.clearRepeat`）。
+  - 提示颜色 selector（跟随文字/自定义）+ 分隔线颜色 selector（跟随文字/跟随背景/自定义），自定义 → `_ColorSwatchPicker` 预设色板网格点选（复用 `_PresetEditorDialog._swatch`，不引第三方颜色选择器）。
+  - 标题区 RadioGroup（靠左/居中/隐藏）+ 3 DetailSeekBar（字号/上边距/下边距）保留并接通。titleMode 变更同步回外层 _StyleDialog（`onTitleModeChanged` 回调 → setState + `_apply` 一起持久化）。
+- **模型加 `Color? tipDividerColor`**（对齐 `ReadTipConfig.tipDividerColor`）：默认 null=跟随文字；`Color(0x00000000)` 作 sentinel=跟随背景；其余=自定义 ARGB。+ copyWith + codec（forward-compat：缺失字段回落 null）。serialization_test 补默认值+自定义值往返断言。
+
+**渲染侧未接 tipDividerColor**：page_view.dart 的分隔线颜色目前仍硬编码，本轮只接通配置/持久化，渲染消费留待后续（与原生「分隔线颜色单独配」语义一致，避免本轮改动面过大）。
 
 ## 持久化架构（2026-06-29 实现：进度/设置/书签/书架/用户绑定）
 
