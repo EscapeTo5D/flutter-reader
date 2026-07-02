@@ -314,3 +314,20 @@ controller 仍读 `book.chapters[i].content`。「本地优先」逻辑放 examp
 ## 待办（先不做动画）
 
 - ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。
+
+## 键盘 viewInsets 引发的 rebuild 卡顿（2026-07-03 修复，commit 78d289a）
+
+**场景**：目录页搜索框弹键盘 → 点左上角返回 → 阅读页卡顿 ~10 帧。
+
+**根因（重要，别再只盯 _rePaginate）**：键盘收起时 `viewInsets.bottom` 在多帧里连续变化（日志实测 743→746→747→748）。`Scaffold` 默认 `resizeToAvoidBottomInset: true` 每帧重算 body 高度 → `LayoutBuilder` 每帧拿到不同 constraints → **整个 reader 子树每帧 rebuild + relayout**（GestureDetector/Stack/CustomPainter/peek 缓存等累加开销），持续多帧卡顿。
+
+⚠️ 这条卡顿链**不经过排版**——controller 侧 `updatePageSize` 加了防抖挡住 `_rePaginate`（~170ms/次）后日志无 `paginate` 行，但卡顿依旧。因为 rebuild/relayout 本身就吃帧，重排只是其中最重的一环。**修 rebuild 必须从源头切断 viewInsets 传导**，光防抖重排无效。
+
+**对照 legado**：目录/搜索是独立 `Activity`（`ReadBookActivity.kt:1191-1212` 用 ActivityResultContract 启动 `TocActivity`/`SearchContentActivity`），键盘弹在另一 window，底层阅读 View 根本不被 resize，从源头无 rebuild 链。Flutter 同 Navigator 栈无 Activity 隔离。
+
+**修复（两层，从源头切断）**：
+- **宿主层** `example/lib/main.dart`：`Scaffold(resizeToAvoidBottomInset: false)`，键盘收起时 body 高度不变。
+- **包内层** `lib/src/reader/widgets/reader_view.dart`：`MediaQuery.removeViewInsets(removeBottom: true)` 包住 LayoutBuilder 子树。无论宿主怎么配，reader 内部子树都看到「无键盘」的稳定布局环境——包的健壮性，不依赖宿主正确配置。
+- **兜底**（对齐 `ChapterProvider.upViewSize` 的 300ms 延迟 + 反弹取消）：`reading_controller.updatePageSize` 改防抖——尺寸变化延迟 300ms 执行，期间反弹回原值则取消；首次进入（`_pageSize == Size.zero`，loadBook 关键路径）同步不延迟。应对真正改变尺寸的场景（旋转/分屏/系统栏显隐）的连续帧，是 rebuild 链之外的额外保险。
+
+**语义**：正文被键盘/搜索框遮挡时本就无需适配其高度，移除 viewInsets 不影响视觉。`SearchMenu` 当前用 `MediaQuery.padding`（系统栏）定位、不消费 viewInsets，故不受 `removeViewInsets` 影响。
