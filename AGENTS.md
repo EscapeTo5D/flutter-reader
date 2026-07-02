@@ -214,7 +214,7 @@ lineHeight=1.5 → 偏下 12px
 - **预设1~5 切换语义**：原生 JSON 只存颜色，其余字段回退到 `ReadBookConfig.Config` 类默认值（textSize=20, letterSpacing=0.1, lineSpacingExtra=12→lineHeight 1.2, paragraphSpacing=2）。故 Flutter `_StylePreset` 给预设1~5 显式补全这些默认文字参数——切换时重置滑块，而非保留当前值。对齐原生"切预设即重置排版参数"语义。
 - **lineSpacingExtra↔lineHeight 换算**：微信读书 lineSpacingExtra=10 → lineHeight=1.0；预设1~5 = 12 → 1.2。
 - **颜色 alpha**：原生微信读书色带 `#ff` 前缀（完全不透明），Flutter 用 `Color(0xFFxxxxxx)` 等价；预设1~5 色原生不带 alpha，Flutter 同样用 `0xFF` 前缀（不透明），视觉一致。
-- **未对齐项（留待后续）**：原生预设还含 padding(paddingTop5/Bottom4/Left22/Right22 等)、titleSize/titleMode、tipColor、header/footer padding、翻页等，Flutter `_StylePreset` 暂只支持 fontSize/letterSpacing/lineHeight/paragraphSpacing + 颜色 6 项。padding 等涉及 `ReaderPadding` 模型与尺寸重算，本轮未做。
+- **未对齐项（留待后续）**：原生预设还含 day/night/eink 三套色 + bgImage + bgAlpha + textAccent，以及 titleSize/titleMode、tipColor、翻页动画的实际绘制。Flutter `_StylePreset`/用户预设暂只存单套 bg/text 色 + fontSize/letterSpacing/lineHeight/paragraphSpacing。padding 边距已对齐（见下条「设置弹窗全量对齐」）。「字体」按钮暂为空实现。
 
 ## 页脚尺寸计算（已修复 2026-06-26）
 
@@ -223,13 +223,51 @@ lineHeight=1.5 → 偏下 12px
 **对齐后的条件**（`page_view` 与 `reader_view` 必须同步）：
 - `showHeader = settings.hideStatusBar && !settings.headerConfig.hidden`
 - `showFooter = !settings.footerConfig.hidden`
-- header 高度: 仅 `showHeader` 时计入 `headerHeight`
-- footer 高度: 仅 `showFooter` 时计入 `footerHeight + 6`(footer 外层 Padding top2+bottom4)
+- header 高度: 仅 `showHeader` 时计入 `headerHeight + headerTop + headerBottom`
+  （2026-07-03 后 `ReaderPadding` 扩展为各向 padding; header 外层上下边距 `headerTop/headerBottom` 单独计入）
+- footer 高度: 仅 `showFooter` 时计入 `footerHeight + footerTop + footerBottom`
+  （旧实现硬编码 `+6` 即 top2+bottom4, 现改为读 `footerTop/footerBottom` 字段, 默认 6/6）
 - 分隔线 0.5: 跟随各自 show + showHeaderDivider/showFooterDivider
 
 **设计约定（对齐原生 legado）**：
 - 翻页模式（含 scroll）不影响 chrome 显隐，只改变翻页方式。scroll 模式也显示页眉页脚。
 - 页眉页脚整体显隐只看 `hidden` 字段；三槽全 none 时页脚仍占位（对齐原生"容器始终在"）。
+
+## 设置弹窗全量对齐原生（2026-07-03）
+
+对齐原生 `ReadStyleDialog` + `dialog_read_book_style.xml` + `PaddingConfigDialog`，分 4 个工作流：
+
+### WS1 视觉对齐（commit b632d74）
+- **去背景遮罩**：`_showStyleDialog` 的 `maskColor` 从 50% 黑改 `Colors.transparent`，对齐原生 `dimAmount=0.0f`（阅读页正文完全可见，不被半透明遮罩盖）。
+- **去顶部圆角**：弹窗 Container 去掉 `borderRadius`，对齐原生无圆角（顶部直角贴屏底）。
+- **字重文字** `中/粗/细`→`N/B/L`：对齐原生 `strings.xml font_weight_text="N/B/L"`（`TextFontWeightConverter` 显示）。
+- **预设选中边框**：宽度恒 1dp，仅 `borderColor` 从 textColor 变 accentColor（旧实现选中变宽 1→2px，错）。对齐原生 `CircleImageView` border 宽度恒定。
+- **背景色** `#FFFFFF`→`#FAFAFA`：对齐原生 `md_grey_50`（原生运行时被主题 `bottomBackground` 覆盖，本包无主题系统故取静态值）。
+
+### WS4 共享排版 shareLayout（commit 4a334f1）
+- `ReadingSettings` 加 `bool shareLayout`（默认 false）+ codec 字段。
+- **Flutter 语义重定义**（原生「跨样式槽共享」在扁平配置无对应）：`shareLayout=true` 时点颜色预设**只换 bg/text，不重置** 字号/字距/行距/段距 滑块；false 时切预设连同排版参数一起重置（原生默认行为）。这正是「共享排版」的用户可感知本质。
+- checkbox 接线 `_shareLayout`，label 改「共享排版」。
+
+### WS2 PaddingConfigDialog 边距弹窗（commit f0057cf）
+- `ReaderPadding` 从 6 字段扩展为 14：body 原 top/bottom/left/right 保留；新增 header/footer 各 top/bottom/left/right（默认对齐原生 0/0/16/16、6/6/16/16）。`copyWith` + codec 同步（向后兼容）。
+- **`nonContentHeight` 计算**：header 总高 = `headerHeight + headerTop + headerBottom`，footer 同理（旧实现 footer 硬编码 `+6`，现读字段）。
+- `page_view` 的 header/footer 渲染改用各向外边距（`headerLeft/Right/Top/Bottom` 等），删除 footer 外层冗余 `Padding(top:2,bottom:4)`（避免与 footerTop/Bottom 双重 padding）。
+- 新增 `_PaddingConfigDialog`：居中弹窗（0.9 宽，无 dim），3 组（页眉/正文/页脚）×4 向 = 12 滑块 + 2 分隔线开关（复用 `showHeaderDivider/showFooterDivider`）。body top max=200，其余 max=100，值整数 dp。
+- 抽共享组件 `lib/src/reader/widgets/detail_seek_bar.dart`（`DetailSeekBar`，复刻原生 `DetailSeekBar`：`[标题60dp][−][Slider][+][值60dp]`），两个弹窗复用。
+
+### WS3 用户自定义预设 DB 持久化（commit 39effe0）
+- 新模型 `ReadingStylePreset { id, userId, name, bgColor, textColor, sortOrder, createdAt }`（极简，只存预设弹窗能选的 bg/text 色，不存排版参数——对齐 shareLayout 语义）。
+- **schema v3**：新表 `reading_style_presets(id PK, user_id, name, bg_color, text_color, sort_order, created_at)` + 索引。`_onCreate` batch 加表，`_onUpgrade` 加 `if(oldVersion<3)` 块（照搬 v2/chapter_contents 模式）。
+- repository 抽象 + sqflite 实现各加 3 方法：`getStylePresets(userId)` / `saveStylePreset`（upsert）/ `deleteStylePreset`。
+- controller 透传 3 方法（无 repository 时返回空/无操作，纯内存退化）。
+- `_StyleDialog`：initState 异步 `loadStylePresets`，内置 6 + 用户预设合并显示；「+」onTap 新建预设（用当前 bg/text 色，时间戳 id）存库刷新；长按预设 → `_PresetEditorDialog`（极简版 BgTextConfigDialog：名称输入 + bg/text 色板网格 8×2，删除/保存按钮）。颜色选择器用预设色板网格（不引第三方包）。
+- **测试**：`sqflite_repository_test.dart` 加 3 用例（往返+升序、用户隔离、upsert+删除），共 85 测试通过。⚠️ 颜色断言用 `toARGB32()` int 比较，**不要直接 `==`** 比较两个 `Color`——不同 colorSpace（sRGB vs wide-gamut）会判不等（`Colors.green` vs `Color(0xFF4CAF50)`）。
+
+### 不做的（本轮显式排除）
+- ❌ 「字体」按钮（保持空实现；原生从文件系统选 .ttf/.otf 需 file_picker 依赖 + FontLoader）。
+- ❌ 简繁实际文本转换（本包无 CJK 转换库，仅记录选中态）。
+- ❌ 预设的 day/night/eink 三套色 + bgImage + bgAlpha + textAccent（原生 BgTextConfigDialog 全功能）。
 
 ## 持久化架构（2026-06-29 实现：进度/设置/书签/书架/用户绑定）
 
