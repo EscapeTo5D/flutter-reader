@@ -106,6 +106,14 @@ class ReadingController extends ChangeNotifier {
   /// 进度/设置防抖延迟。1.5s 覆盖典型连续翻页节奏, 又不至于太晚(用户秒退也兜得住)。
   static const Duration _progressSaveDebounce = Duration(milliseconds: 1500);
 
+  /// 页尺寸变更防抖定时器。对齐 legado `ChapterProvider.upViewSize`: 尺寸变化不立即
+  /// 重排, 延迟 [_pageSizeDebounce] 后才真正执行; 期间若尺寸反弹回原值(键盘收起过渡
+  /// 帧抖动、路由 pop 瞬变)则取消重排。避免 ~170ms/次的重排连续砸主线程卡死。
+  Timer? _pageSizeTimer;
+
+  /// 页尺寸防抖延迟。对齐 legado 的 300ms。
+  static const Duration _pageSizeDebounce = Duration(milliseconds: 300);
+
   /// 是否已 dispose。异步恢复(loadBook/restoreProgress)回调里用它防止
   /// dispose 后还 notifyListeners(ChangeNotifier 此版本无 mounted getter, 自管标志位)。
   bool _disposed = false;
@@ -350,15 +358,59 @@ class ReadingController extends ChangeNotifier {
     _scheduleProgressSave();
   }
 
+  /// 页尺寸更新入口(reader_view 的 LayoutBuilder PostFrame 调用)。
+  ///
+  /// **防抖 + 反弹取消**(对齐 legado `ChapterProvider.upViewSize`):
+  /// 软键盘弹/收、目录页 pop 等会让 LayoutBuilder constraints 在多帧里连续变化, 每帧
+  /// 调到这里。若每帧都立即重排(~170ms/次), 主线程被占满 → 肉眼卡顿。legado 原生靠
+  /// 「目录/搜索是独立 Activity, 键盘弹在另一 window, 底层 View 不 resize」天然规避;
+  /// Flutter 同 Navigator 栈无此隔离, 故在代码层复刻 legado 的兜底机制:
+  ///
+  ///  - 尺寸跟当前 _pageSize 相同: 不做任何事(命中频率最高, O(1) 跳过)。
+  ///  - 尺寸不同: 不立即重排, 挂一个 [_pageSizeDebounce] 后执行的定时器; 其间又收到
+  ///    更新会覆盖它(取最新尺寸)。
+  ///  - 若在定时器到期前尺寸又变回 _pageSize(反弹, 典型键盘收起过渡), 取消定时器,
+  ///    当作无事发生 —— 这正是「键盘瞬变」场景能被吸收的关键。
+  ///  - 真正的尺寸稳定变化(旋转/分屏/系统栏显隐)最终都会到期执行一次重排。
+  ///
+  /// 首次进入(_pageSize == Size.zero)时不能延迟: 那是 loadBook 流程的关键路径, 延迟
+  /// 会让首屏空内容多停 300ms。直接同步执行。
   void updatePageSize(Size size) {
-    if (_pageSize != size) {
-      _pageSize = size;
-      _rePaginate();
-      notifyListeners();
-      // 尺寸就绪后, 若仓库里有进度且尚未恢复(loadBook 时可能 pageSize 还是 zero), 现在恢复。
-      if (_repository != null && _userId != null && _book != null) {
-        restoreProgress();
+    // 尺寸没变: 若有挂起的重排且尺寸恰好弹回当前值, 取消它(反弹取消); 否则 no-op。
+    if (_pageSize == size) {
+      if (_pageSizeTimer != null) {
+        _pageSizeTimer!.cancel();
+        _pageSizeTimer = null;
       }
+      return;
+    }
+    // 首次进入(loadBook 关键路径): 同步执行, 不走防抖。
+    if (_pageSize == Size.zero) {
+      _applyPageSize(size);
+      return;
+    }
+    // 尺寸变了: 防抖。记下最新目标尺寸, 300ms 内若无新变化(或反弹回原值被上面分支
+    // 取消)才真正重排。覆盖新尺寸到 _pendingPageSize, 定时器到期时读它。
+    _pendingPageSize = size;
+    _pageSizeTimer?.cancel();
+    _pageSizeTimer = Timer(_pageSizeDebounce, () {
+      _pageSizeTimer = null;
+      if (_pendingPageSize != null && _pageSize != _pendingPageSize) {
+        _applyPageSize(_pendingPageSize!);
+      }
+    });
+  }
+
+  Size? _pendingPageSize;
+
+  void _applyPageSize(Size size) {
+    if (_pageSize == size) return;
+    _pageSize = size;
+    _rePaginate();
+    notifyListeners();
+    // 尺寸就绪后, 若仓库里有进度且尚未恢复(loadBook 时可能 pageSize 还是 zero), 现在恢复。
+    if (_repository != null && _userId != null && _book != null) {
+      restoreProgress();
     }
   }
 
@@ -1031,6 +1083,7 @@ class ReadingController extends ChangeNotifier {
     final pending = _currentProgress();
     _progressSaveTimer?.cancel();
     _settingsSaveTimer?.cancel();
+    _pageSizeTimer?.cancel();
     if (pending != null && _repository != null) {
       unawaited(_repository!.saveProgress(pending).catchError((_) {}));
     }

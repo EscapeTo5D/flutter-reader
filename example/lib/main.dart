@@ -309,7 +309,12 @@ class _ReaderPageState extends State<ReaderPage> {
         ),
       );
     }
+    // resizeToAvoidBottomInset: false —— 阅读页正文不随键盘压缩。键盘只在目录/搜索页
+    // (独立路由) 或 SearchMenu(同路由覆盖层)弹起, 正文本就被遮挡, 无需 resize。
+    // 切断键盘收起时 viewInsets 多帧变化 → body LayoutBuilder 连续 rebuild → 卡顿。
+    // 对齐 legado: 目录/搜索是独立 Activity, 底层阅读 View 根本不被 resize。
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       body: ReaderView(controller: _controller),
     );
   }

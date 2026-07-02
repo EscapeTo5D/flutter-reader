@@ -292,8 +292,17 @@ class _ReaderViewState extends State<ReaderView>
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
+    // 切断键盘 viewInsets 对子树的影响: 键盘弹/收时 viewInsets.bottom 在多帧里变化,
+    // 会逐帧让子树(MediaQuery 依赖者, 如 SafeArea / page_view 的 Padding) rebuild +
+    // relayout, 持续 ~10 帧卡顿。正文被键盘/搜索框遮挡时本就无需适配其高度, 故移除
+    // viewInsets 让子树始终看到「无键盘」的稳定布局环境。对齐 legado「目录/搜索是独立
+    // Activity, 底层阅读 View 不 resize」; Flutter 同 Navigator 栈无 Activity 隔离,
+    // 用 MediaQuery.removeViewInsets 在 widget 层复刻等效隔离。
+    return MediaQuery.removeViewInsets(
+      context: context,
+      removeBottom: true,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
         final settings = widget.controller.settings;
         // 页眉/页脚显隐条件必须与 page_view.build() 完全一致, 否则预算高度
         // (喂给排版引擎的可用高度) 与实际渲染占用会错位, 导致正文与页脚重叠/留白。
@@ -336,6 +345,10 @@ class _ReaderViewState extends State<ReaderView>
           // 同时屏蔽「本路由被覆盖」期间(目录页/菜单等 push 到上层)的排版: 此时 reader
           // 不可见, 但键盘弹起会让 viewInsets 多帧变化 → constraints 变 → 反复触发重排
           // 卡死主线程。仅当本路由是 current route 时才响应。
+          //
+          // 键盘收起/路由 pop 时的尺寸瞬变由 controller 侧 updatePageSize 的防抖 +
+          // 反弹取消处理(对齐 legado ChapterProvider.upViewSize: 仅高度变延迟 300ms,
+          // 期间尺寸反弹回原值则取消重排)。此处不重复判断。
           if (_routeReady && _isCurrentRoute) {
             widget.controller.updatePageSize(size);
           }
@@ -383,6 +396,7 @@ class _ReaderViewState extends State<ReaderView>
           ),
         );
       },
+      ),
     );
   }
 
