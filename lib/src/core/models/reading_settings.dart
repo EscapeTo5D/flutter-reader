@@ -44,7 +44,10 @@ class HeaderFooterConfig {
 }
 
 class ReaderPadding {
-  // 正文区内边距(对齐原生 ReadBookConfig.paddingTop/Bottom/Left/Right, 默认 6/6/16/16)。
+  // 正文区内边距(对齐原生「微信读书」预设 readConfig.json: paddingTop=5/Bottom=4/Left=22/Right=22)。
+  // ⚠️ 注意: 原生 ReadBookConfig.kt 里 Config data class 默认值是 6/6/16/16, 但那只在
+  // 预设1~5(JSON 缺 padding 字段)时被 Gson 回退用; 运行时真正默认预设是微信读书,
+  // 其 padding 来自 assets/defaultData/readConfig.json, 故以此为准。
   final double top;
   final double bottom;
   final double left;
@@ -52,35 +55,34 @@ class ReaderPadding {
   // 页眉/页脚内容行高(原生无此字段, 由文字行高+padding 决定; 此处抽象为固定行高)。
   final double headerHeight;
   final double footerHeight;
-  // 页眉外层四向内边距(对齐原生 headerPaddingTop/Bottom/Left/Right, 默认 0/0/16/16)。
+  // 页眉外层四向内边距(对齐原生微信读书预设: headerPadding Top=10/Bottom=0/Left=19/Right=16)。
   final double headerTop;
   final double headerBottom;
   final double headerLeft;
   final double headerRight;
-  // 页脚外层四向内边距。原生默认 6/6/16/16, 本包按用户偏好改为 2/4/16/16
-  // (覆盖原生, 保持记忆中的页脚高度比例)。
+  // 页脚外层四向内边距(对齐原生微信读书预设: footerPadding Top=0/Bottom=10/Left=13/Right=17)。
   final double footerTop;
   final double footerBottom;
   final double footerLeft;
   final double footerRight;
 
   const ReaderPadding({
-    this.top = 16,
-    this.bottom = 16,
-    this.left = 16,
-    this.right = 16,
+    this.top = 5,
+    this.bottom = 4,
+    this.left = 22,
+    this.right = 22,
     this.headerHeight = 24,
-    // footerHeight 23(用户偏好, 覆盖原生; 原生无此字段, 由 12sp 文字行高决定)。
-    this.footerHeight = 23,
-    this.headerTop = 0,
+    // footerHeight 22.5(原生无此字段, 由 wrap_content 自适应: 实测 12sp 文字高≈12 + 控件内
+    // padding 3+3 ≈ 18; 此处按视觉偏好取 22.5, 抽象为固定行高)。
+    this.footerHeight = 22.5,
+    this.headerTop = 10,
     this.headerBottom = 0,
-    this.headerLeft = 16,
+    this.headerLeft = 19,
     this.headerRight = 16,
-    // footer 顶/底内边距: 用户偏好 2/4(覆盖原生默认 6/6, 保持记忆中的页脚高度比例)。
-    this.footerTop = 2,
-    this.footerBottom = 4,
-    this.footerLeft = 16,
-    this.footerRight = 16,
+    this.footerTop = 0,
+    this.footerBottom = 10,
+    this.footerLeft = 13,
+    this.footerRight = 17,
   });
 
   ReaderPadding copyWith({
@@ -232,21 +234,24 @@ class ReadingSettings {
     this.tipDividerColor,
     this.fontFamily,
     this.backgroundImage,
-    // 对齐原生 legado ReadBookConfig.kt:585-590 默认值:
-    // 页眉 左=time 中=none 右=battery; 页脚 左=chapterTitle 中=none 右=pageAndTotal。
+    // 对齐原生微信读书预设 readConfig.json:
+    // 页眉 左=time(2) 中=none 右=battery(3);
+    // 页脚 左=bookName(7) 中=none 右=pageAndTotal(6)。
     this.headerConfig = const HeaderFooterConfig(
       left: TipPosition.time,
       center: TipPosition.none,
       right: TipPosition.battery,
     ),
     this.footerConfig = const HeaderFooterConfig(
-      left: TipPosition.chapterTitle,
+      // 对齐原生微信读书预设 readConfig.json: tipFooterLeft=7(bookName) / Right=6(pageAndTotal)。
+      left: TipPosition.bookName,
       center: TipPosition.none,
       right: TipPosition.pageAndTotal,
     ),
     this.padding = const ReaderPadding(),
     this.clickConfig = const ClickRegionConfig(),
-    this.showHeaderDivider = false,
+    // 对齐原生微信读书预设 readConfig.json: showHeaderLine=true / showFooterLine=true。
+    this.showHeaderDivider = true,
     this.showFooterDivider = true,
     this.textIndent = 2,
     this.keepScreenOn = true,

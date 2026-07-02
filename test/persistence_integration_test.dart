@@ -94,9 +94,20 @@ void main() {
 
   test('改字号重排后, 用 charOffset 仍定位到对应内容(不跳页)', () async {
     final repo = await newRepo();
+    // 用零 padding 的设置: 本用例只验证「字号变化 → charOffset 仍落同一内容位置」,
+    // 不应受 padding 默认值漂移影响(默认 padding 随预设对齐会变)。
+    final baseSettings = ReadingSettings();
+    final zeroPaddingSettings = baseSettings.copyWith(
+      padding: const ReaderPadding(
+        top: 0, bottom: 0, left: 0, right: 0,
+        headerTop: 0, headerBottom: 0, headerLeft: 0, headerRight: 0,
+        footerTop: 0, footerBottom: 0, footerLeft: 0, footerRight: 0,
+      ),
+    );
     // 设备 A: 字号 20, 翻到某页
     final cA = ReadingController(repository: repo, userId: 'u1');
     cA.loadBook(makeBook());
+    cA.updateSettings(zeroPaddingSettings.copyWith(fontSize: 20));
     cA.updatePageSize(const Size(120, 200));
     await Future.delayed(const Duration(milliseconds: 50));
     cA.goToPage(1);
@@ -110,7 +121,7 @@ void main() {
     // 设备 B: 字号更大(30) → 每页字数少 → 页数变多。但 charOffset 不变。
     final cB = ReadingController(repository: repo, userId: 'u1');
     cB.loadBook(makeBook());
-    cB.updateSettings(ReadingSettings().copyWith(fontSize: 30));
+    cB.updateSettings(zeroPaddingSettings.copyWith(fontSize: 30));
     cB.updatePageSize(const Size(120, 200));
     await Future.delayed(const Duration(milliseconds: 100));
 

@@ -109,7 +109,8 @@ batteryPercentage=10 totalProgress1=11
   - `HeaderFooterConfig { left, center, right, hidden }`（比原生多中槽，是兼容超集；`hidden` 对应原生 headerMode/footerMode 整体显隐）
   - `TipPosition` 枚举
 - 渲染: `lib/src/reader/widgets/page_view.dart` 的 `_buildFooter()` / `_buildTip()`
-- 默认 footer: 左=bookName, 中=none, 右=pageAndTotal
+- 默认 footer: 左=bookName(7), 中=none, 右=pageAndTotal(6) —— 对齐原生微信读书预设 readConfig.json(tipFooterLeft=7/Right=6)。2026-07-03 修正：左槽曾误为 chapterTitle，现改回 bookName。
+- ⚠️ header 默认值**未对齐原生微信读书**：Flutter 现 左=time(2)/右=battery(3)，但原生微信读书 JSON 是 `tipHeaderLeft=1`(chapterTitle) / `tipHeaderRight=2`(time)，即 左=章节标题/右=时间。如需对齐需另行修改（用户本轮只要求改 footer 书名）。
 
 ## 行距/段距模型对齐（2026-06-26，commit 9cee39c）
 
@@ -226,7 +227,7 @@ lineHeight=1.5 → 偏下 12px
 - header 高度: 仅 `showHeader` 时计入 `headerHeight + headerTop + headerBottom`
   （2026-07-03 后 `ReaderPadding` 扩展为各向 padding; header 外层上下边距 `headerTop/headerBottom` 单独计入）
 - footer 高度: 仅 `showFooter` 时计入 `footerHeight + footerTop + footerBottom`
-  （旧实现硬编码 `+6` 即 top2+bottom4, 现改为读 `footerTop/footerBottom` 字段, 默认 6/6）
+  （旧实现硬编码 `+6` 即 top2+bottom4, 现改为读 `footerTop/footerBottom` 字段; 默认值见下「设置弹窗全量对齐 / WS2」节, 以微信读书 JSON 预设为准）
 - 分隔线 0.5: 跟随各自 show + showHeaderDivider/showFooterDivider
 
 **设计约定（对齐原生 legado）**：
@@ -249,10 +250,18 @@ lineHeight=1.5 → 偏下 12px
 - **Flutter 语义重定义**（原生「跨样式槽共享」在扁平配置无对应）：`shareLayout=true` 时点颜色预设**只换 bg/text，不重置** 字号/字距/行距/段距 滑块；false 时切预设连同排版参数一起重置（原生默认行为）。这正是「共享排版」的用户可感知本质。
 - checkbox 接线 `_shareLayout`，label 改「共享排版」。
 
-### WS2 PaddingConfigDialog 边距弹窗（commit f0057cf）
-- `ReaderPadding` 从 6 字段扩展为 14：body 原 top/bottom/left/right 保留；新增 header/footer 各 top/bottom/left/right（默认：header 0/0/16/16 对齐原生；footer **2/4/16/16 + footerHeight 23**，⚠️ 这是用户偏好，覆盖原生默认 6/6/16/16，保持记忆中的页脚高度比例——别"对齐原生"改回 6/6）。`copyWith` + codec 同步（向后兼容）。
+### WS2 PaddingConfigDialog 边距弹窗（commit f0057cf；默认值 2026-07-03 修正）
+- `ReaderPadding` 从 6 字段扩展为 14：body 原 top/bottom/left/right 保留；新增 header/footer 各 top/bottom/left/right。`copyWith` + codec 同步（向后兼容）。
+- ⚠️ **默认值真相（2026-07-03 修正，推翻此前所有关于 padding 默认值的记录）**：原生 legado 的 padding 运行时默认值来自 `assets/defaultData/readConfig.json` 的「微信读书」预设（`configList[0]`，由 `DefaultData.readConfigs` 加载，`initConfigs`/`resetAll` 都用它），**不是** `ReadBookConfig.kt` 里 `Config` data class 的字段默认值（`6/6/16/16` 等）。data class 的 `=6` 只在预设1~5（JSON 缺 padding 字段）被 Gson 反序列化时回退用，而 Flutter 默认预设 = 微信读书。**核对默认值永远以 `readConfig.json` 的微信读书条目为准，别再看 `Config` data class。** `ReaderPadding` 默认构造现已全套对齐该 JSON：
+  - 正文 `top/bottom/left/right` = **5/4/22/22**
+  - header `top/bottom/left/right` = **10/0/19/16**
+  - footer `top/bottom/left/right` = **0/10/13/17**
+  - `headerHeight` = 24、`footerHeight` = **22.5**（均原生无此字段，抽象为固定行高。原生页脚行高是 `wrap_content` 自适应：12sp 文字(高≈12) + `BatteryView` 控件内 padding(上3下3) ≈ 18；22.5 为视觉偏好值，非原生实测，Flutter 用 `SizedBox` 写死高度故需一个数）
+  - `showHeaderDivider`/`showFooterDivider` 默认均 **true**（对齐 JSON `showHeaderLine=true/showFooterLine=true`；此前 `showHeaderDivider` 误为 false）
+  - 注意这套值**不对称**（headerLeft 19 ≠ headerRight 16 等），这是 legado 原始数据，照搬。
+- **此前误记（已作废）**：曾长期记录"原生默认 6/6/16/16、用户偏好 footer 2/4 覆盖之、别改回 6/6"——这套建立在错误的 data-class 默认值上。footer 真正默认是 0/10（上0下10，用户手机所见即此）。footerHeight 与 footer padding 是两个独立维度：前者是 Flutter 抽象的固定行高（原生无此字段，wrap_content 自适应），后者已改回 JSON 真值。
 - **`nonContentHeight` 计算**：header 总高 = `headerHeight + headerTop + headerBottom`，footer 同理（旧实现 footer 硬编码 `+6`，现读字段）。
-- `page_view` 的 header/footer 渲染改用各向外边距（`headerLeft/Right/Top/Bottom` 等），删除 footer 外层冗余 `Padding(top:2,bottom:4)`（避免与 footerTop/Bottom 双重 padding）。
+- `page_view` 的 header/footer 渲染改用各向外边距（`headerLeft/Right/Top/Bottom` 等），删除 footer 外层冗余 `Padding`（避免与 footerTop/Bottom 双重 padding）。
 - 新增 `_PaddingConfigDialog`：居中弹窗（0.9 宽，无 dim），3 组（页眉/正文/页脚）×4 向 = 12 滑块 + 2 分隔线开关（复用 `showHeaderDivider/showFooterDivider`）。body top max=200，其余 max=100，值整数 dp。
 - 抽共享组件 `lib/src/reader/widgets/detail_seek_bar.dart`（`DetailSeekBar`，复刻原生 `DetailSeekBar`：`[标题60dp][−][Slider][+][值60dp]`），两个弹窗复用。
 
