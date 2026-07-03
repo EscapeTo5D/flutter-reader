@@ -7,6 +7,7 @@ export 'src/core/models/chapter_source.dart';
 export 'src/core/controller/reading_controller.dart';
 export 'src/core/content_processor.dart';
 export 'src/core/storage/reader_repository.dart';
+export 'src/core/storage/reading_style_preset.dart';
 export 'src/core/storage/cached_chapter.dart';
 export 'src/core/storage/cached_chapter_source.dart';
 export 'src/core/storage/reader_user.dart';
