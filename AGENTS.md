@@ -381,6 +381,52 @@ controller 仍读 `book.chapters[i].content`。「本地优先」逻辑放 examp
 - `getCachedChapter` 单章 + upsert 覆盖。
 - `removeBook` 级联清章节缓存。全 62 测试通过。
 
+## 仿真翻页（simulation，2026-07-03 MVP 实现）
+
+学习原生 legado `SimulationPageDelegate.kt`（612 行）做的贝塞尔卷曲翻页。分阶段实现，本次为 **MVP（~80% 观感）**。
+
+### 文件结构
+- `lib/src/reader/page_animations/simulation_geometry.dart` — **纯 Dart 几何核心**（无 Canvas 依赖，可单测）。`SimGeometry.calcCornerXY/getCross/calcPoints` 逐行翻译原生算法。
+- `lib/src/reader/page_animations/simulation_painter.dart` — `SimulationPainter extends CustomPainter`，4 层绘制。
+- `lib/src/reader/widgets/reader_view.dart` — 加模式分发 + 仿真手势 + onAnimStart 终点计算。
+- `test/simulation_geometry_test.dart` — 几何核心 23 个单测。
+
+### 核心算法（务必记住）
+**几何灵魂**：touch 到 corner 的**垂直平分线作折痕**，折痕与 corner 两条邻边（水平 y=cornerY、垂直 x=cornerX）的交点 = 两段二次贝塞尔的控制点。`calcPoints` 输出 start/control/vertex/end 共 8 个点（vertex 是贝塞尔 t=0.5 处 = `(start+2·control+end)/4`），painter 用这些点构造 path0（卷曲边封闭路径）做裁剪。
+
+**4 层绘制顺序**（从底到顶，对齐原生 onDraw NEXT 247-268）：
+1. `drawCurrentPageArea` — 翻起页裁掉翻起区（差集裁剪）露出下层
+2. `drawNextPageAreaAndShadow` — 底层目标页 + 卷曲投影（backShadow 渐变）
+3. `drawCurrentBackArea` — 翻起页背面
+
+### MVP 已做 vs 未做（第二阶段）
+- ✅ 贝塞尔几何 + 边界钳制（原生 543-574 镜像修正）+ 除零保护
+- ✅ 当前页裁剪 + 下一页 + 背面投影 + 折痕阴影 + 背面铺背景色
+- ❌ **背面 Householder 反射矩阵**（背面镜像文字，"像纸"的灵魂，留第二阶段）
+- ❌ 正面高光阴影（`drawCurrentPageShadow` 4 个 frontShadow 渐变）
+- ❌ ColorMatrix 滤镜（仅反射 bitmap 时需要）
+
+### ⚠️ 与原生的关键差异（踩过的坑）
+0. **`control1X` 补除零保护（线上崩溃修复）**：原生 `calcPoints` 算 `control1.x = middleX - (cornerY-middleY)²/(cornerX-middleX)` **无除零保护**。当 `touchX == cornerX`（如点击翻页把初始 touch 精确设在 corner 上、或手指落在角柱正上方）时 `middleX == cornerX` → 分母 0 → Infinity/NaN 传染到 start1/end1/vertex1/degrees → Canvas 抛 `Offset argument contained a NaN value`。Android 静默吸收 NaN 故原生不崩，Flutter `Path` 严格会崩。修复：抽 `_control1X` 辅助函数，分母 0 时用 0.1（对齐已有的 `_control2Y` 保护策略）。回归测试 `touchX == cornerX 不产生 NaN` 锁定。
+1. **`getCross` 改用参数化行列式法**：原生 `y=ax+b` 公式遇到竖直线（touchX == control1.x 时）会除零 → NaN。Flutter `Path` 对 NaN 比 Android 严格（会崩），故改用 `P1 + t·(P2-P1) = P3 + u·(P4-P3)` 的 2×2 行列式解，对竖直线鲁棒。非竖直场景与原生数学等价。测试里"水平线×竖直线交于 (3,5)"专门锁定此修复。
+2. **Flutter `Canvas.clipPath` 无 `ClipOp.difference`**（仅 `clipRect` 支持 ClipOp）。原生 `clipOutPath(path0)` 的差集裁剪，在 Flutter 用 `Path.combine(PathOperation.difference, 全屏矩形, path0)` 预算"全屏减翻起区"再 intersect-clip。
+3. **`dart:math` 无 `hypot`**（Kotlin `math.hypot`），用 `sqrt(x*x+y*y)` 替代。
+4. **位图截图用 `RepaintBoundary.toImage`**（原生 `View.draw(Canvas)` 离屏截图）。三页 RepaintBoundary 加 GlobalKey，方向确定时 fire-and-forget 异步 `toImage`，完成前 painter 走纯色降级（progress≈0 卷曲极小，肉眼无感）。
+5. **颜色换算**：原生 Kotlin Int（如 `-0xeeeeef`=`0xFF111111`、`0x333333`=`0x00333333`、`-0x4fcccccd`=`0xB0333333`）→ Flutter `0xAARRGGBB`，painter 顶部集中定义。
+
+### reader_view 仿真状态机接线（关键设计点）
+- 仿真模式三页 Stack **始终挂载**（供截图），翻页进行中（`_animDir != none`）在其上覆盖一层 `CustomPaint` 由 painter 接管卷曲绘制；静止态不覆盖（避免无谓重绘）。
+- `_simTouch`（二维，含 Y 锁边）/ `_simCorner` / `_simCur/Next/Prev`（ui.Image 缓存）/ `_simAnimFrom/To`（动画起止 touch 点）。
+- **touchY 锁边**（对齐原生 onTouch MOVE 173-183）：startY 在中部（H/3~2H/3）或 PREV → 锁到底边 viewH；startY 在上 1/3~1/2 且 NEXT → 锁到顶 1。
+- **onAnimStart 终点计算**（对齐原生 208-238）：shouldCommit 推到对边，否则拉回 corner 同侧。用 `_pageAnim` + `_onSimAnimTick` 每帧插值 `_simTouch`。
+- **图片 dispose 时序**：`_resetAnimState`（停动画）必须在 `_resetSimState`（dispose ui.Image）**之前**调用，否则动画进行中 dispose painter 正在用的 image。
+- **点击翻页（`_turnByAnim`）**：仿真模式从对应角（NEXT 右下 / PREV 左下）起翻，先截图再下一帧启动落地动画。
+- **手势状态机骨架完全复用**：`_animDir`/`_isCancel`/`_animGen`/`_deferredCommit`/`peekNext`/`commitTurn` 零改动，仿真只替换"如何把 progress 画出来"。
+- slide/none 模式行为不变（仿真分支只在 `pageAnimMode == simulation` 进入）。
+
+### 测试覆盖（23 用例全过，全套 108 测试通过）
+`simulation_geometry_test.dart`：calcCornerXY 四角 + getCross（含竖直线鲁棒/平行退化）+ calcPoints 结构不变量（控制点落 corner 邻边、vertex 公式、touchToCornerDis、degrees）+ 除零保护 + 边界钳制 + 四角覆盖。几何核心不依赖渲染即可验证"形状对不对"。
+
 ## 待办（先不做动画）
 
 - ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。

@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import '../../core/battery_provider.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import '../../core/system_ui_controller.dart';
 import '../entities/text_page.dart';
+import '../page_animations/simulation_geometry.dart';
+import '../page_animations/simulation_painter.dart';
 import 'page_view.dart' as pv;
 import 'read_menu.dart';
 import 'search_menu.dart';
@@ -30,7 +34,10 @@ const int _pageAnimSpeedMs = 300;
 /// - 点击翻页: 程序化启动 300ms 全宽滑动动画。
 /// - 拖拽: 跟手(实时偏移), 松手后按阈值补完或回弹(匀速 300ms)。
 /// - 动画中触摸: 中断并提交当前方向(对齐原生 HorizontalPageDelegate.abortAnim)。
-/// 动画类型由 `ReadingSettings.pageAnimMode` 决定; slide/none 已实现, cover/simulation/scroll 后续。
+/// 动画类型由 `ReadingSettings.pageAnimMode` 决定:
+/// - slide/none/simulation 已实现(simulation 为贝塞尔仿真翻页, MVP 阶段见
+///   `page_animations/simulation_painter.dart`)。
+/// - cover/scroll 后续。
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
 
@@ -72,6 +79,37 @@ class _ReaderViewState extends State<ReaderView>
   /// 拖拽是否反向(松手时应回弹而非翻页)。对齐原生 isCancel。
   /// NEXT 时右移(偏移变正)即为 cancel; PREV 时左移(偏移变负)即为 cancel。
   bool _isCancel = false;
+
+  // --- 仿真翻页状态(simulation 模式专用) ---
+  /// 仿真翻页的二维触摸点(对齐原生 mTouchX/mTouchY)。slide 模式仍用 _dragOffset。
+  /// Y 由 _onDragUpdate 的锁边逻辑约束(对齐原生 onTouch MOVE 173-183)。
+  Offset _simTouch = Offset.zero;
+
+  /// 仿真翻页的拖拽角(由 down 时的触摸点经 calcCornerXY 算出)。
+  SimCorner? _simCorner;
+
+  /// 仿真翻页三页位图缓存(对齐原生 SimulationPageDelegate.setBitmap 截三页)。
+  /// 由 RepaintBoundary.toImage 异步截图填充, _simBitmapsReady 标记就绪。
+  ui.Image? _simCur;
+  ui.Image? _simNext;
+  ui.Image? _simPrev;
+
+  /// 截图就绪标志。未就绪时 SimulationPainter 走纯色降级(卷曲形状仍可见)。
+  /// 通过 painter 的 image null 判断即可驱动降级, 此字段用于调试/防御性判断。
+  // ignore: unused_field
+  bool _simBitmapsReady = false;
+
+  /// 三个 RepaintBoundary 的 key, 用于截图(toImage)。
+  final GlobalKey _curBoundaryKey = GlobalKey();
+  final GlobalKey _nextBoundaryKey = GlobalKey();
+  final GlobalKey _prevBoundaryKey = GlobalKey();
+
+  /// 手势按下点(逻辑像素), 用于仿真翻页的 touchY 锁边判定(对齐原生 startY)。
+  Offset _simStartLocal = Offset.zero;
+
+  /// 仿真动画的起止触摸点(由 _onDragEnd/_turnByAnim 设置, _onSimAnimTick 插值)。
+  Offset? _simAnimFrom;
+  Offset? _simAnimTo;
 
   /// 邻接页缓存(常驻预热)。渲染层用统一 Stack[cur,prev,next] 让 peek 页
   /// 在静止态就常驻屏外完成首次排版+绘制, 拖拽/动画时 element 复用 → 零首帧 hitch。
@@ -464,22 +502,34 @@ class _ReaderViewState extends State<ReaderView>
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
+        final height = constraints.maxHeight;
         final progress = _currentProgress(width);
         final isNext = _animDir == _PageDirection.next;
         final isPrev = _animDir == _PageDirection.prev;
+        final isSim =
+            controller.settings.pageAnimMode == PageAnimMode.simulation;
 
+        // 仿真模式: 三页 Stack 始终挂载(供 RepaintBoundary 截图), 但翻页进行中
+        // (_animDir != none) 在其上覆盖一层 CustomPaint 由 SimulationPainter 接管
+        // 绘制卷曲效果(对齐原生 setBitmap 后整页由 bitmap 绘制)。静止态不覆盖,
+        // 直接显示当前页, 避免无谓的 CustomPaint 重绘。
         final curWidget = RepaintBoundary(
+          key: isSim ? _curBoundaryKey : null,
           child: _buildPage(pages[currentIndex], currentIndex),
         );
         // 屏外页用 IgnorePointer 避免接收不到手势(都在屏外, 本就不会被点, 但保险)。
         final nextWidget = _nextCache == null
             ? const SizedBox.shrink()
             : IgnorePointer(
-                child: RepaintBoundary(child: _buildPeekPage(_nextCache!)));
+                child: RepaintBoundary(
+                    key: isSim ? _nextBoundaryKey : null,
+                    child: _buildPeekPage(_nextCache!)));
         final prevWidget = _prevCache == null
             ? const SizedBox.shrink()
             : IgnorePointer(
-                child: RepaintBoundary(child: _buildPeekPage(_prevCache!)));
+                child: RepaintBoundary(
+                    key: isSim ? _prevBoundaryKey : null,
+                    child: _buildPeekPage(_prevCache!)));
 
         // cur 偏移: NEXT 向左(-p·w), PREV 向右(+p·w), none 留在原位。
         final curOffsetX = isNext ? -progress * width
@@ -492,10 +542,37 @@ class _ReaderViewState extends State<ReaderView>
 
         // 层级 [prev, cur, next]: NEXT 时 next 在最上层覆盖 cur; PREV 时 prev 在 cur 下,
         // 但 PREV 过程中 cur 右移露出 prev, prev 不被覆盖, 视觉正确。
-        return Stack(children: [
+        final pageStack = Stack(children: [
           Transform.translate(offset: Offset(prevOffsetX, 0), child: prevWidget),
           Transform.translate(offset: Offset(curOffsetX, 0), child: curWidget),
           Transform.translate(offset: Offset(nextOffsetX, 0), child: nextWidget),
+        ]);
+
+        if (!isSim || _animDir == _PageDirection.none) {
+          return pageStack;
+        }
+        // 仿真覆盖层: 翻起页(cur)与目标页(next/prev)的位图由 painter 绘制卷曲。
+        // PREV 时翻起页应是 prev(底层), 故 painter 的 curImage 传 prev 位图、
+        // targetImage 传 cur 位图(对齐原生 onDraw PREV 分支: drawCurrentPageArea(prevBitmap),
+        // drawNextPageAreaAndShadow(curBitmap))。
+        final turningImage = isNext ? _simCur : _simPrev;
+        final baseImage = isNext ? _simNext : _simCur;
+        return Stack(children: [
+          pageStack,
+          Positioned.fill(
+            child: CustomPaint(
+              painter: SimulationPainter(
+                curImage: turningImage,
+                targetImage: baseImage,
+                isNext: isNext,
+                touch: _simTouch,
+                corner: _simCorner ?? const SimCorner(cornerX: 0, cornerY: 0, isRtOrLb: false),
+                bgColor: controller.settings.backgroundColor,
+                viewSize: Size(width, height),
+                devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+              ),
+            ),
+          ),
         ]);
       },
     );
@@ -608,7 +685,9 @@ class _ReaderViewState extends State<ReaderView>
   }) {
     if (gen != _animGen) return; // 已被新动画接管
     if (_animDir != dir) return; // 方向已被改变(防御)
+    // 先停动画再 dispose 位图, 避免动画进行中 dispose painter 正在用的 image。
     _resetAnimState();
+    _resetSimState();
     if (shouldCommit && target != null) {
       controller.commitTurn(target);
     } else {
@@ -628,7 +707,9 @@ class _ReaderViewState extends State<ReaderView>
     _isCancel = false;
     _dragOffset = 0;
     if (_pageAnimCurved != null) {
+      // 两种动画监听都先移除(slide 用 _onAnimTick, sim 用 _onSimAnimTick), 防御性双移除。
       _pageAnimCurved!.removeListener(_onAnimTick);
+      _pageAnimCurved!.removeListener(_onSimAnimTick);
       _pageAnimCurved = null;
     }
     if (_pageAnim.isAnimating) _pageAnim.stop();
@@ -697,6 +778,29 @@ class _ReaderViewState extends State<ReaderView>
       controller.commitTurn(target);
       return;
     }
+    // 仿真翻页: 点击翻页从对应角启动卷曲动画(对齐原生点击翻页)。起始 touch 点
+    // 设在起翻角: NEXT 从右下角起翻(touch 在右下), PREV 从左下角起翻。
+    if (controller.settings.pageAnimMode == PageAnimMode.simulation) {
+      final size = MediaQuery.of(context).size;
+      final isNext = dir == _PageDirection.next;
+      _animDir = dir;
+      _isCancel = false;
+      _isDragging = false;
+      // 起翻角: NEXT → 右下角(corner 右下); PREV → 左下角。
+      _simCorner = SimGeometry.calcCornerXY(
+          isNext ? size.width : 0, size.height, size.width, size.height);
+      _simStartLocal = Offset(isNext ? size.width : 0, size.height);
+      // 初始 touch 设在起翻角附近(卷曲量 0), 然后截图 + 直接启动落地动画。
+      _simTouch = Offset(isNext ? size.width : 0, size.height);
+      _captureSimBitmaps();
+      setState(() {});
+      // 等一帧让截图开始(降级绘制), 再启动动画; shouldCommit=true 直接翻页落地。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _animDir != dir) return;
+        _startSimAnim(shouldCommit: true);
+      });
+      return;
+    }
     _animDir = dir;
     _isCancel = false;
     _isDragging = false;
@@ -736,6 +840,8 @@ class _ReaderViewState extends State<ReaderView>
     _dragOffset = 0;
     _isCancel = false;
     _animDir = _PageDirection.none;
+    // 仿真翻页: 记录按下点(用于 touchY 锁边判定, 对齐原生 startY)。
+    _simStartLocal = details.localPosition;
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
@@ -750,6 +856,11 @@ class _ReaderViewState extends State<ReaderView>
       } else if (_dragOffset > 0 && controller.canGoPrevious) {
         _animDir = _PageDirection.prev;
       }
+      // 仿真翻页: 方向确定时算出拖拽角并异步截图三页(对齐原生 setBitmap)。
+      if (_animDir != _PageDirection.none &&
+          controller.settings.pageAnimMode == PageAnimMode.simulation) {
+        _initSimForDrag(details.localPosition);
+      }
     }
 
     // 反向移动判定 cancel(对齐原生 isCancel)。
@@ -759,6 +870,12 @@ class _ReaderViewState extends State<ReaderView>
     } else if (_animDir == _PageDirection.prev) {
       // PREV 基准是右滑(正), 变负即反向。
       _isCancel = _dragOffset < 0;
+    }
+
+    // 仿真翻页: 更新二维触摸点(含 touchY 锁边, 对齐原生 onTouch MOVE 173-183)。
+    if (controller.settings.pageAnimMode == PageAnimMode.simulation &&
+        _animDir != _PageDirection.none) {
+      _updateSimTouch(details.localPosition);
     }
     if (mounted) setState(() {});
   }
@@ -800,6 +917,7 @@ class _ReaderViewState extends State<ReaderView>
     // 松手时多出一个多余的动画/抖动一帧(对齐原生 Scroller 距离为 0 时立即 finish 的行为)。
     if ((fromProgress - toProgress).abs() < 0.001) {
       final target = _animDir == _PageDirection.next ? _nextCache : _prevCache;
+      _resetSimState();
       _resetAnimState();
       if (shouldCommit && target != null) {
         controller.commitTurn(target);
@@ -808,7 +926,175 @@ class _ReaderViewState extends State<ReaderView>
       }
       return;
     }
+    // 仿真翻页: 启动 touch 点滑动动画(从松手点滑到目标角/回弹点), 而非 slide 的
+    // progress 0→1。计算 onAnimStart 的目标 dx/dy(对齐原生 208-238), 用 _simAnimFrom/To
+    // 记录起止 touch, _onSimAnimTick 每帧插值 _simTouch。
+    if (controller.settings.pageAnimMode == PageAnimMode.simulation) {
+      _startSimAnim(shouldCommit: shouldCommit);
+      return;
+    }
     _startPageAnim(from: fromProgress, to: toProgress);
+  }
+
+  // ===================== 仿真翻页 =====================
+
+  /// 拖拽方向首次确定时: 计算拖拽角 + 异步截图三页(对齐原生 setBitmap)。
+  void _initSimForDrag(Offset localPosition) {
+    final size = MediaQuery.of(context).size;
+    final isNext = _animDir == _PageDirection.next;
+    final startX = _simStartLocal.dx;
+    final startY = _simStartLocal.dy;
+    // 对齐原生 setDirection: PREV 不出现对角(强制底角); NEXT 仅左半屏拖拽才设对角。
+    if (isNext) {
+      if (size.width / 2 > startX) {
+        _simCorner = SimGeometry.calcCornerXY(
+            size.width - startX, startY, size.width, size.height);
+      } else {
+        // 右半屏 NEXT: 用 down 点本身算角(默认走右下角)。
+        _simCorner = SimGeometry.calcCornerXY(
+            startX, startY, size.width, size.height);
+      }
+    } else {
+      // PREV: 强制 touchY = viewHeight(底角, 不对角), 对齐原生 setDirection。
+      if (startX > size.width / 2) {
+        _simCorner = SimGeometry.calcCornerXY(
+            startX, size.height, size.width, size.height);
+      } else {
+        _simCorner = SimGeometry.calcCornerXY(
+            size.width - startX, size.height, size.width, size.height);
+      }
+    }
+    _captureSimBitmaps();
+  }
+
+  /// 更新仿真触摸点, 应用 touchY 锁边(对齐原生 onTouch MOVE 173-183):
+  /// - startY 在中部(viewH/3 ~ 2·viewH/3) 或方向=PREV → touchY 锁到底边 viewH
+  /// - startY 在上 1/3~1/2 且 NEXT → touchY 锁到顶 1
+  void _updateSimTouch(Offset localPosition) {
+    final size = MediaQuery.of(context).size;
+    final startY = _simStartLocal.dy;
+    var ty = localPosition.dy;
+    final isNext = _animDir == _PageDirection.next;
+    if ((startY > size.height / 3 && startY < size.height * 2 / 3) || !isNext) {
+      ty = size.height;
+    }
+    if (startY > size.height / 3 &&
+        startY < size.height / 2 &&
+        isNext) {
+      ty = 1.0;
+    }
+    _simTouch = Offset(localPosition.dx, ty);
+  }
+
+  /// 异步截图三页 RepaintBoundary → ui.Image(对齐原生 setBitmap)。
+  /// fire-and-forget: 截图完成前 painter 走纯色降级(progress≈0 卷曲极小, 肉眼无感)。
+  void _captureSimBitmaps() async {
+    _simBitmapsReady = false;
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    final boundary1 = _curBoundaryKey.currentContext?.findRenderObject()
+        as RenderRepaintBoundary?;
+    final boundary2 = _nextBoundaryKey.currentContext?.findRenderObject()
+        as RenderRepaintBoundary?;
+    final boundary3 = _prevBoundaryKey.currentContext?.findRenderObject()
+        as RenderRepaintBoundary?;
+    if (boundary1 == null) return;
+    try {
+      _simCur = await boundary1.toImage(pixelRatio: ratio);
+      if (boundary2 != null) {
+        _simNext = await boundary2.toImage(pixelRatio: ratio);
+      }
+      if (boundary3 != null) {
+        _simPrev = await boundary3.toImage(pixelRatio: ratio);
+      }
+      _simBitmapsReady = true;
+      if (mounted) setState(() {});
+    } catch (e) {
+      // 截图失败不阻塞, painter 用纯色降级继续。
+      debugPrint('sim toImage failed: $e');
+    }
+  }
+
+  /// 启动仿真翻页动画: 从松手时的 touch 点滑动到目标点(翻页落地或回弹)。
+  ///
+  /// 对齐原生 `onAnimStart`(`SimulationPageDelegate.kt:208-238`) 的 dx/dy 计算:
+  /// - shouldCommit=true(翻页落地): touch 推到对边
+  /// - shouldCommit=false(回弹): touch 拉回 corner 同侧原位
+  /// 用 AnimationController + Tween 插值 _simTouch, 每帧 _onSimAnimTick 重绘。
+  void _startSimAnim({required bool shouldCommit}) {
+    final size = MediaQuery.of(context).size;
+    final cornerX = _simCorner?.cornerX ?? size.width;
+    final cornerY = _simCorner?.cornerY ?? size.height;
+    final isNext = _animDir == _PageDirection.next;
+    var fromX = _simTouch.dx;
+    var fromY = _simTouch.dy;
+    if (fromX == 0) fromX = 0.1;
+    if (fromY == 0) fromY = 0.1;
+
+    double dx;
+    double dy;
+    if (!shouldCommit) {
+      // 回弹: 拉回原位(corner 同侧)。
+      if (cornerX > 0 && isNext) {
+        dx = size.width - fromX;
+      } else {
+        dx = -fromX;
+      }
+      if (!isNext) {
+        dx = -(size.width + fromX);
+      }
+      dy = cornerY > 0 ? size.height - fromY : -fromY;
+    } else {
+      // 翻页: 推到对边。
+      if (cornerX > 0 && isNext) {
+        dx = -(size.width + fromX);
+      } else {
+        dx = size.width - fromX;
+      }
+      dy = cornerY > 0 ? size.height - fromY : (1 - fromY);
+    }
+    _simAnimFrom = Offset(fromX, fromY);
+    _simAnimTo = Offset(fromX + dx, fromY + dy);
+
+    // 时长按原生公式 speed * |dx| / viewWidth, 满页约 300ms。
+    final durationMs = (_pageAnimSpeedMs * dx.abs() / size.width)
+        .round()
+        .clamp(1, _pageAnimSpeedMs * 2);
+    _pageAnim.duration = Duration(milliseconds: durationMs);
+    _pageAnimCurved = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _pageAnim, curve: Curves.linear),
+    );
+    _pageAnimCurved!.addListener(_onSimAnimTick);
+    _pageAnim.forward(from: 0);
+  }
+
+  /// 仿真动画逐帧: 用 controller value 在 _simAnimFrom → _simAnimTo 间线性插值 touch。
+  void _onSimAnimTick() {
+    final v = _pageAnimCurved?.value ?? 0;
+    final from = _simAnimFrom;
+    final to = _simAnimTo;
+    if (from != null && to != null) {
+      _simTouch = Offset(
+        from.dx + (to.dx - from.dx) * v,
+        from.dy + (to.dy - from.dy) * v,
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// 清空仿真翻页临时状态(位图缓存保留供下次复用, 仅重置 touch/corner/动画插值)。
+  void _resetSimState() {
+    _simCorner = null;
+    _simTouch = Offset.zero;
+    _simAnimFrom = null;
+    _simAnimTo = null;
+    _simBitmapsReady = false;
+    // 释放位图避免内存累积(下次拖拽会重截)。
+    _simCur?.dispose();
+    _simNext?.dispose();
+    _simPrev?.dispose();
+    _simCur = null;
+    _simNext = null;
+    _simPrev = null;
   }
 
   /// 中断动画并按当前方向提交(对齐原生 HorizontalPageDelegate.abortAnim)。
@@ -817,11 +1103,13 @@ class _ReaderViewState extends State<ReaderView>
     if (_pageAnim.isAnimating) _pageAnim.stop();
     if (_pageAnimCurved != null) {
       _pageAnimCurved!.removeListener(_onAnimTick);
+      _pageAnimCurved!.removeListener(_onSimAnimTick);
     }
     final dir = _animDir;
     final target = dir == _PageDirection.next ? _nextCache : _prevCache;
     final wasCancel = _isCancel;
     _resetAnimState();
+    _resetSimState();
     if (!wasCancel && target != null) {
       controller.commitTurn(target);
     } else if (mounted) {
