@@ -531,14 +531,22 @@ class _ReaderViewState extends State<ReaderView>
                     key: isSim ? _prevBoundaryKey : null,
                     child: _buildPeekPage(_prevCache!)));
 
+        // 仿真模式: 翻页视觉完全由上层覆盖层 SimulationPainter 画卷曲承担, 底层
+        // pageStack 必须静止在原位(offset=0)作为截图源 + 底层支撑。否则 pageStack 按
+        // progress 平移会与覆盖层的卷曲叠加 → 用户看到 next 页"滑进来"+"卷曲"双重效果,
+        // 即"内容提前变"(卷曲还没完成, 底层 next 已经滑到屏幕中央)。
+        // slide/none 模式才用 progress 偏移做翻页。
+        final effProgress = isSim ? 0.0 : progress;
+        final effIsNext = isSim ? false : isNext;
+        final effIsPrev = isSim ? false : isPrev;
         // cur 偏移: NEXT 向左(-p·w), PREV 向右(+p·w), none 留在原位。
-        final curOffsetX = isNext ? -progress * width
-            : isPrev ? progress * width
+        final curOffsetX = effIsNext ? -effProgress * width
+            : effIsPrev ? effProgress * width
             : 0.0;
         // next 偏移: NEXT 从屏右滑入((1-p)·w → 0); 否则屏外(+width)。
-        final nextOffsetX = isNext ? width - progress * width : width;
+        final nextOffsetX = effIsNext ? width - effProgress * width : width;
         // prev 偏移: PREV 从屏左滑入((p-1)·w → 0); 否则屏外(-width)。
-        final prevOffsetX = isPrev ? progress * width - width : -width;
+        final prevOffsetX = effIsPrev ? effProgress * width - width : -width;
 
         // 层级 [prev, cur, next]: NEXT 时 next 在最上层覆盖 cur; PREV 时 prev 在 cur 下,
         // 但 PREV 过程中 cur 右移露出 prev, prev 不被覆盖, 视觉正确。
@@ -648,23 +656,40 @@ class _ReaderViewState extends State<ReaderView>
 
   /// 动画状态监听: 动画完成时提交翻页(对齐 SlidePageDelegate.onAnimStop)。
   ///
+  /// 动画状态监听: 动画完成时提交翻页(对齐 SlidePageDelegate.onAnimStop)。
+  ///
   /// ⚠️ 完成帧时序陷阱: AnimationController 在一帧的 transient 阶段把 value 推到 1.0,
   /// 紧接着触发 status=completed。若在这里立即 _resetAnimState + commitTurn, 两个
   /// setState(completion 回调里的 tick + 这里)会被 Flutter 合并成同一次 rebuild,
   /// 于是 progress=1.0 那一帧根本没机会渲染 → 目标页从 ~0.97w 瞬跳到 0, 看着像
   /// 「末尾卡顿一下、整页左偏/右偏」(NEXT 左偏、PREV 右偏)。
   ///
-  /// 修复: completion 时**不**重置状态, 只把 progress 钉在 1.0 等当前帧画完,
-  /// 在 addPostFrameCallback 里再做状态切换 + commit。代际号 _animGen 守护:
-  /// 其间若新翻页/拖拽触发了 _resetAnimState, _animGen 自增 → 挂起的回调失效。
+  /// **slide/none 模式**: 用 PostFrame 延迟 commit, 让 completion 帧 progress=1.0 先渲染。
+  ///
+  /// **仿真模式**: 反过来, 必须**立即** commit, 不延迟。因为仿真动画末态 touch 被推到
+  /// 屏外(`to.x = -width` 或 `2·width`), calcPoints 算出的 path0 几何会严重变形 →
+  /// 覆盖层画出扭曲的卷曲形状。延迟到 PostFrame 会让这帧扭曲几何先渲染 → 用户看到
+  /// 末态扭曲跳变。立即 commit 让 completion 帧直接渲染 commit 后的静止态(底层
+  /// pageStack 已是新页, 覆盖层因 _animDir=none 不挂), 视觉自然过渡, 无扭曲帧。
   void _onPageAnimStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed) return;
     if (_animDir == _PageDirection.none) return;
-    // 记下本次提交参数, 推迟到下一帧执行。
+    // 记下本次提交参数。
     final shouldCommit = !_isCancel;
     final dir = _animDir;
     final target = dir == _PageDirection.next ? _nextCache : _prevCache;
     final gen = _animGen;
+    // 仿真模式: 立即提交, 不让末态扭曲几何渲染。
+    if (controller.settings.pageAnimMode == PageAnimMode.simulation) {
+      _deferredCommit(
+        gen: gen,
+        shouldCommit: shouldCommit,
+        dir: dir,
+        target: target,
+      );
+      return;
+    }
+    // slide/none 模式: 推迟到下一帧, 让 completion 帧 progress=1.0 先渲染。
     WidgetsBinding.instance.addPostFrameCallback((_) => _deferredCommit(
           gen: gen,
           shouldCommit: shouldCommit,
@@ -790,13 +815,13 @@ class _ReaderViewState extends State<ReaderView>
       _simCorner = SimGeometry.calcCornerXY(
           isNext ? size.width : 0, size.height, size.width, size.height);
       _simStartLocal = Offset(isNext ? size.width : 0, size.height);
-      // 初始 touch 设在起翻角附近(卷曲量 0), 然后截图 + 直接启动落地动画。
       _simTouch = Offset(isNext ? size.width : 0, size.height);
-      _captureSimBitmaps();
+      // 等截图完成后再启动动画。setState 进入叠加态(覆盖层挂载), 但 painter 在
+      // curImage==null 时透明不画 → 底层静止 pageStack 显示当前页, 无闪烁; 截图完成
+      // 内部 setState → painter 拿到位图开始画卷曲 → then 启动动画, 零跳跃。
       setState(() {});
-      // 等一帧让截图开始(降级绘制), 再启动动画; shouldCommit=true 直接翻页落地。
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _animDir != dir) return;
+      _captureSimBitmaps().then((ok) {
+        if (!mounted || _animDir != dir || !ok) return;
         _startSimAnim(shouldCommit: true);
       });
       return;
@@ -992,8 +1017,14 @@ class _ReaderViewState extends State<ReaderView>
   }
 
   /// 异步截图三页 RepaintBoundary → ui.Image(对齐原生 setBitmap)。
-  /// fire-and-forget: 截图完成前 painter 走纯色降级(progress≈0 卷曲极小, 肉眼无感)。
-  void _captureSimBitmaps() async {
+  ///
+  /// 返回 `Future<bool>`: true=截图成功, false=失败(boundary 为空/异常)。
+  /// **点击翻页**需 await 它完成后再启动落地动画, 否则截图未就绪的前几帧 painter
+  /// 在 curImage==null 时整体不画(透明), 覆盖层透明期间底层静止 pageStack 显示当前页
+  /// (不闪), 但动画已走了一段, 截图回来后卷曲"突然出现"会有跳跃感。
+  /// **拖拽翻页**可 fire-and-forget: 用户手指按下到方向确定(~8dp 滑动)有几帧时间,
+  /// 截图通常已就绪; 且 painter 透明降级底层显示当前页, 无闪烁。
+  Future<bool> _captureSimBitmaps() async {
     _simBitmapsReady = false;
     final ratio = MediaQuery.devicePixelRatioOf(context);
     final boundary1 = _curBoundaryKey.currentContext?.findRenderObject()
@@ -1002,7 +1033,7 @@ class _ReaderViewState extends State<ReaderView>
         as RenderRepaintBoundary?;
     final boundary3 = _prevBoundaryKey.currentContext?.findRenderObject()
         as RenderRepaintBoundary?;
-    if (boundary1 == null) return;
+    if (boundary1 == null) return false;
     try {
       _simCur = await boundary1.toImage(pixelRatio: ratio);
       if (boundary2 != null) {
@@ -1013,9 +1044,11 @@ class _ReaderViewState extends State<ReaderView>
       }
       _simBitmapsReady = true;
       if (mounted) setState(() {});
+      return true;
     } catch (e) {
-      // 截图失败不阻塞, painter 用纯色降级继续。
+      // 截图失败不阻塞, painter 在 curImage==null 时透明降级继续。
       debugPrint('sim toImage failed: $e');
+      return false;
     }
   }
 

@@ -95,6 +95,11 @@ class SimulationPainter extends CustomPainter {
 
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
+    // 截图未就绪(curImage == null)时**整体不绘制**: 让覆盖层保持透明, 底层静止态
+    // pageStack 透出来正常显示当前页(仿真模式 pageStack 静止在 offset=0), 无闪烁。
+    // 截图异步完成后 reader_view setState 触发重绘, painter 拿到位图自然开始画卷曲。
+    // 这比"纯色降级"好 —— 纯色会整屏盖一层背景色闪一下; 透明则底层正常页直接可见。
+    if (curImage == null) return;
     // 触摸点不为 0(对齐原生 mTouchX/Y 初始化 0.1 的除零保护)。
     final t = Offset(touch.dx == 0 ? 0.1 : touch.dx, touch.dy == 0 ? 0.1 : touch.dy);
     final pts = SimGeometry.calcPoints(
