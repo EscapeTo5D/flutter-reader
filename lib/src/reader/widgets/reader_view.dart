@@ -803,19 +803,34 @@ class _ReaderViewState extends State<ReaderView>
       controller.commitTurn(target);
       return;
     }
-    // 仿真翻页: 点击翻页从对应角启动卷曲动画(对齐原生点击翻页)。起始 touch 点
-    // 设在起翻角: NEXT 从右下角起翻(touch 在右下), PREV 从左下角起翻。
+    // 仿真翻页: 点击翻页从对应角启动卷曲动画(对齐原生点击翻页)。
+    // ⚠️ corner 与 touch 起始点对齐原生 nextPageByAnim/prevPageByAnim:
+    // - **NEXT**: corner = 右下角(W,H); touch 起始 = (W·0.9, H·0.9 或 1)。
+    //   原生 nextPageByAnim: setDirection 后 setStartPoint(W·0.9, y)。touch 靠近
+    //   corner(卷曲≈0), 动画把 touch 推向屏左(远离 corner)→ 卷曲越来越大, 整页翻过去。
+    // - **PREV**: corner = **右下角(W,H)**(不是左下角!); touch 起始 = (0, H) 左下角。
+    //   原生 prevPageByAnim: setDirection(PREV) 里 calcCornerXY 镜像 startX 后恒得
+    //   右下角; setStartPoint(0, H)。touch 远离 corner(卷曲最大, prev 页卷在右下),
+    //   动画把 touch 推向 corner(右下)→ 卷曲展开覆盖 cur, 结束整屏 prev。
+    //
+    // ⚠️ touch 起始不能精确等于 corner(否则 calcPoints 的 middleX==cornerX 分母 0,
+    // 触发除零保护, 几何偏差)。故 NEXT 用 W·0.9 而非 W。
     if (controller.settings.pageAnimMode == PageAnimMode.simulation) {
       final size = MediaQuery.of(context).size;
       final isNext = dir == _PageDirection.next;
       _animDir = dir;
       _isCancel = false;
       _isDragging = false;
-      // 起翻角: NEXT → 右下角(corner 右下); PREV → 左下角。
+      // corner 两方向都用右下角(对齐原生 setDirection 镜像逻辑)。
       _simCorner = SimGeometry.calcCornerXY(
-          isNext ? size.width : 0, size.height, size.width, size.height);
-      _simStartLocal = Offset(isNext ? size.width : 0, size.height);
-      _simTouch = Offset(isNext ? size.width : 0, size.height);
+          size.width, size.height, size.width, size.height);
+      _simStartLocal = isNext
+          ? Offset(size.width * 0.9, size.height * 0.9)
+          : Offset(0, size.height);
+      // touch 起始: NEXT 靠近 corner(卷曲≈0); PREV 在左下角(远离 corner, 卷曲最大)。
+      _simTouch = isNext
+          ? Offset(size.width * 0.9, size.height * 0.9)
+          : Offset(0, size.height);
       // 等截图完成后再启动动画。setState 进入叠加态(覆盖层挂载), 但 painter 在
       // curImage==null 时透明不画 → 底层静止 pageStack 显示当前页, 无闪烁; 截图完成
       // 内部 setState → painter 拿到位图开始画卷曲 → then 启动动画, 零跳跃。
