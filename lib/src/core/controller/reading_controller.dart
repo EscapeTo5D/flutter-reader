@@ -26,10 +26,17 @@ class PeekInfo {
   final int chapterIndex;
   final int pageIndex;
 
+  /// 该页所属章节的总页数(章内预取 = 当前章 totalPages; 跨章预取 = 目标章页数)。
+  ///
+  /// 用于页脚渲染跨章预取页时显示正确的 "页码/总页数"。null 表示未知(此时
+  /// 渲染端可用 pageIndex+1 近似降级, 翻页提交后 controller 重排会用准确值)。
+  final int? chapterPageCount;
+
   const PeekInfo({
     required this.page,
     required this.chapterIndex,
     required this.pageIndex,
+    this.chapterPageCount,
   });
 }
 
@@ -984,6 +991,7 @@ class ReadingController extends ChangeNotifier {
         page: _pages[_currentPageIndex + 1],
         chapterIndex: _currentChapterIndex,
         pageIndex: _currentPageIndex + 1,
+        chapterPageCount: _pages.length,
       );
     }
     // 当前章末页 → 下一章首页
@@ -996,6 +1004,7 @@ class ReadingController extends ChangeNotifier {
           page: nextChapterPages.first,
           chapterIndex: nextIdx,
           pageIndex: 0,
+          chapterPageCount: nextChapterPages.length,
         );
       }
     }
@@ -1012,6 +1021,7 @@ class ReadingController extends ChangeNotifier {
         page: _pages[_currentPageIndex - 1],
         chapterIndex: _currentChapterIndex,
         pageIndex: _currentPageIndex - 1,
+        chapterPageCount: _pages.length,
       );
     }
     // 当前章首页 → 上一章末页
@@ -1024,6 +1034,7 @@ class ReadingController extends ChangeNotifier {
           page: prevChapterPages.last,
           chapterIndex: prevIdx,
           pageIndex: prevChapterPages.length - 1,
+          chapterPageCount: prevChapterPages.length,
         );
       }
     }

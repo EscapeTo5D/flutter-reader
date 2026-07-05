@@ -634,11 +634,13 @@ class _ReaderViewState extends State<ReaderView>
       page: info.page,
       settings: c.settings,
       pageIndex: info.pageIndex,
-      // 跨章预取页无法可靠知道目标章总页数(需完整分页), 用 pageIndex+1 近似页脚显示,
-      // 翻页提交后 controller 重排会用准确值。章内则用当前章 totalPages。
-      totalPages: info.chapterIndex == c.currentChapterIndex
-          ? c.totalPages
-          : info.pageIndex + 1,
+      // 跨章预取页用 PeekInfo.chapterPageCount(目标章总页数, 由 peek 时填入);
+      // 章内预取用当前章 totalPages; 都没有则用 pageIndex+1 近似(翻页提交后
+      // controller 重排会用准确值)。修复跨章拖拽时页脚"页码/总页数"显示错误。
+      totalPages: info.chapterPageCount ??
+          (info.chapterIndex == c.currentChapterIndex
+              ? c.totalPages
+              : info.pageIndex + 1),
       chapterIndex: info.chapterIndex,
       chapterSize: c.totalChapters,
       chapterTitle: c.getChapter(info.chapterIndex)?.title,
@@ -654,8 +656,6 @@ class _ReaderViewState extends State<ReaderView>
 
   // ===================== 翻页动画核心 =====================
 
-  /// 动画状态监听: 动画完成时提交翻页(对齐 SlidePageDelegate.onAnimStop)。
-  ///
   /// 动画状态监听: 动画完成时提交翻页(对齐 SlidePageDelegate.onAnimStop)。
   ///
   /// ⚠️ 完成帧时序陷阱: AnimationController 在一帧的 transient 阶段把 value 推到 1.0,
