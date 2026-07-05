@@ -77,7 +77,10 @@ class _ReaderViewState extends State<ReaderView>
   double _dragOffset = 0;
 
   /// 拖拽是否反向(松手时应回弹而非翻页)。对齐原生 isCancel。
-  /// NEXT 时右移(偏移变正)即为 cancel; PREV 时左移(偏移变负)即为 cancel。
+  /// **逐帧判定**(对齐原生 HorizontalPageDelegate.onScroll:105 `isCancel = (NEXT
+  /// 时 sumX > lastX) 或 (PREV 时 sumX < lastX)`): 用本帧 delta.dx 符号, 而非累积
+  /// 位移符号。这样「拖到一半反悔、回缩松开」会回弹(尊重最后意图)。
+  /// NEXT 时本帧右移(delta>0)即 cancel; PREV 时本帧左移(delta<0)即 cancel。
   bool _isCancel = false;
 
   // --- 仿真翻页状态(simulation 模式专用) ---
@@ -863,13 +866,17 @@ class _ReaderViewState extends State<ReaderView>
       }
     }
 
-    // 反向移动判定 cancel(对齐原生 isCancel)。
+    // 反向移动判定 cancel(对齐原生 onScroll: isCancel 用「本帧 X vs 上帧 X」逐帧判定,
+    // 而非累积位移符号)。原生 HorizontalPageDelegate.kt:105:
+    //   isCancel = (NEXT 时 sumX > lastX) 或 (PREV 时 sumX < lastX)
+    // delta.dx 即本帧相对上帧的增量, 符号直接反映松手瞬间的运动趋势。
+    // 这样「拖到一半反悔、回缩松开」会回弹(尊重最后意图), 与原生手感一致。
     if (_animDir == _PageDirection.next) {
-      // NEXT 基准是左滑(负), 变正即反向。
-      _isCancel = _dragOffset > 0;
+      // NEXT 基准是左滑(delta<0), 本帧 delta>0 即反向。
+      _isCancel = details.delta.dx > 0;
     } else if (_animDir == _PageDirection.prev) {
-      // PREV 基准是右滑(正), 变负即反向。
-      _isCancel = _dragOffset < 0;
+      // PREV 基准是右滑(delta>0), 本帧 delta<0 即反向。
+      _isCancel = details.delta.dx < 0;
     }
 
     // 仿真翻页: 更新二维触摸点(含 touchY 锁边, 对齐原生 onTouch MOVE 173-183)。
@@ -883,22 +890,23 @@ class _ReaderViewState extends State<ReaderView>
   void _onDragEnd(DragEndDetails details) {
     if (!_isDragging) return;
     final width = MediaQuery.of(context).size.width;
-    final threshold = width * 0.25;
     _isDragging = false;
 
     if (_animDir == _PageDirection.none) {
-      // 未确定方向(位移太小), 直接回静止。
+      // 未确定方向(位移 < 8dp), 直接回静止(对齐原生 isMoved=false 时 UP 不进翻页)。
       _resetAnimState();
       if (mounted) setState(() {});
       return;
     }
 
     final fromProgress = _dragOffset.abs() / width;
-    final beyondThreshold = _dragOffset.abs() > threshold;
-    // 翻页条件: 超阈值 且 非取消。否则回弹。
-    final shouldCommit = beyondThreshold && !_isCancel;
+    // 翻页条件: 方向已确定 且 非取消。**无位移阈值** ——
+    // 对齐原生 HorizontalPageDelegate: ACTION_UP → onAnimStart 直接读 isCancel,
+    // 不判断移动距离; onAnimStop: if (!isCancel) fillPage()。
+    // 即只要拖动方向没反向(且超过 touch slop 确定了方向), 松手就翻页。
+    final shouldCommit = !_isCancel;
 
-    // 无动画模式: 拖拽过阈值直接提交, 不播滑入/回弹动画
+    // 无动画模式: 直接提交, 不播滑入/回弹动画
     // (对齐原生 NoAnimPageDelegate, 拖拽与点击共用同一 delegate)。
     if (controller.settings.pageAnimMode == PageAnimMode.none) {
       final target = _animDir == _PageDirection.next ? _nextCache : _prevCache;
