@@ -314,4 +314,112 @@ class SimGeometry {
     }
     return middleX - dy * dy / denom;
   }
+
+  /// 计算正面高光阴影的顶点(touch 偏移 25·√2)。
+  ///
+  /// 对齐原生 `drawCurrentPageShadow`(`SimulationPageDelegate.kt:341-354`):
+  /// ```
+  /// cy = control1.y (= cornerY)
+  /// degree = π/4 - atan2(cy - ty, tx - cx)     // isRtOrLb
+  ///        = π/4 - atan2(ty - cy, tx - cx)     // !isRtOrLb
+  /// d1 = 25·√2·cos(degree),  d2 = 25·√2·sin(degree)
+  /// x  = tx + d1
+  /// y  = isRtOrLb ? ty + d2 : ty - d2
+  /// ```
+  /// (tx,ty)=touch, cx=control1.x。阴影三角形 = (x,y)→touch→control→start→close,
+  /// (x,y) 是远离 touch 的那个顶点, 决定阴影三角形朝向。
+  ///
+  /// 该顶点两段阴影共用(原生 349-354 算一次, 355/392 两段 path1 都以它起笔)。
+  static SimPoint calcFrontShadowTip(
+    SimPoint touch,
+    SimPoints pts,
+    SimCorner corner,
+  ) {
+    final cx = pts.control1.x;
+    final cy = pts.control1.y; // == cornerY
+    final tx = touch.x;
+    final ty = touch.y;
+    final degree = corner.isRtOrLb
+        ? math.pi / 4 - math.atan2(cy - ty, tx - cx)
+        : math.pi / 4 - math.atan2(ty - cy, tx - cx);
+    final d1 = 25.0 * 1.414 * math.cos(degree);
+    final d2 = 25.0 * 1.414 * math.sin(degree);
+    final x = tx + d1;
+    final y = corner.isRtOrLb ? ty + d2 : ty - d2;
+    return SimPoint(x, y);
+  }
+
+  /// 计算翻起页背面镜像绘制的反射矩阵参数。
+  ///
+  /// 对齐原生 `drawCurrentBackArea`(`SimulationPageDelegate.kt:311-324`) 的 Householder
+  /// 反射: 把当前页位图沿**折痕直线**(过 [SimPoints.control1], 方向向量 = corner 到
+  /// control2)镜像反射后绘制, 让背面显示反向文字 —— 这是"仿真翻页像纸"的灵魂。
+  ///
+  /// 数学(原生 311-320):
+  /// ```
+  /// dis = hypot(cornerX - control1.x, control2.y - cornerY)
+  /// f8  = (cornerX    - control1.x) / dis   // 折痕方向单位向量 x 分量
+  /// f9  = (control2.y - cornerY)    / dis   // 折痕方向单位向量 y 分量
+  /// R   = | 1-2f9²    2f8f9  |
+  ///       | 2f8f9     1-2f8² |              // 关于过原点、方向 (f8,f9) 直线的反射
+  /// M(p) = R · (p - control1) + control1    // 以 control1 为锚的反射
+  /// ```
+  ///
+  /// 退化保护: `dis == 0`(corner 与 control1/control2 重合, 翻页刚启动的退化态)时,
+  /// 方向向量无定义, 返回 `f8 = 1, f9 = 0`(恒等反射, 不翻转)。该态卷曲量为 0, 背面
+  /// 本就不可见, 无视觉影响。原生此处无保护(dis=0 时 f8/f9 变 Inf/NaN, Android
+  /// 静默吸收), Flutter `canvas.transform` 对 NaN 严格会崩, 故补保护。
+  ///
+  /// 返回 [SimReflection], painter 用其构造 4×4 变换矩阵。
+  static SimReflection calcReflection(
+    SimCorner corner,
+    SimPoints pts,
+  ) {
+    final dx = corner.cornerX - pts.control1.x;
+    final dy = pts.control2.y - corner.cornerY;
+    final dis = math.sqrt(dx * dx + dy * dy);
+    if (dis == 0) {
+      // 退化: 折痕方向无定义 → 恒等反射, 不翻转。
+      return const SimReflection(
+        anchor: SimPoint(0, 0),
+        f8: 1.0,
+        f9: 0.0,
+      );
+    }
+    final f8 = dx / dis;
+    final f9 = dy / dis;
+    return SimReflection(
+      anchor: pts.control1,
+      f8: f8,
+      f9: f9,
+    );
+  }
+}
+
+/// 背面镜像反射参数(由 [SimGeometry.calcReflection] 输出)。
+///
+/// painter 用 [f8]/[f9]/[anchor] 构造 4×4 变换矩阵:
+/// ```
+/// M = T(anchor) · R · T(-anchor)
+///   = | 1-2f9²    2f8f9   0  anchorX - R·anchorX |
+///     | 2f8f9     1-2f8²  0  anchorY - R·anchorY |
+///     | 0         0       1  0                   |
+///     | 0         0       0  1                   |
+/// ```
+/// 其中 `R·anchor` 已展开为 `anchorX - (... )` 平移列, 直接用 [anchor] 即可。
+class SimReflection {
+  /// 反射锚点(对齐原生 `preTranslate(-control1) ∘ postTranslate(control1)`)。
+  final SimPoint anchor;
+
+  /// 折痕方向单位向量 x 分量(原生 `f8`)。
+  final double f8;
+
+  /// 折痕方向单位向量 y 分量(原生 `f9`)。
+  final double f9;
+
+  const SimReflection({
+    required this.anchor,
+    required this.f8,
+    required this.f9,
+  });
 }

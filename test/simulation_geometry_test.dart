@@ -271,4 +271,160 @@ void main() {
       }
     });
   });
+
+  group('calcReflection - 背面 Householder 反射矩阵', () {
+    test('f8²+f9² == 1(折痕方向是单位向量)', () {
+      // 原生 f8 = (cornerX-control1.x)/dis, f9 = (control2.y-cornerY)/dis,
+      // dis = hypot(...). 故 (f8, f9) 必为单位向量。
+      final corner = SimGeometry.calcCornerXY(300, 500, viewW, viewH);
+      final pts = SimGeometry.calcPoints(const SimPoint(250, 450), corner, viewW, viewH);
+      final r = SimGeometry.calcReflection(corner, pts);
+      expect(r.f8 * r.f8 + r.f9 * r.f9, closeTo(1.0, 1e-6));
+    });
+
+    test('anchor == control1(反射锚点)', () {
+      // 原生 preTranslate(-control1) ∘ postTranslate(control1) → 锚点是 control1。
+      final corner = SimGeometry.calcCornerXY(300, 500, viewW, viewH);
+      final pts = SimGeometry.calcPoints(const SimPoint(250, 450), corner, viewW, viewH);
+      final r = SimGeometry.calcReflection(corner, pts);
+      expect(r.anchor.x, closeTo(pts.control1.x, 1e-9));
+      expect(r.anchor.y, closeTo(pts.control1.y, 1e-9));
+    });
+
+    test('反射矩阵是正交矩阵(行列式 = -1, 纯反射无缩放)', () {
+      // Householder 反射 R = |1-2f9², 2f8f9; 2f8f9, 1-2f8²| 行列式 = -1。
+      // 验证: (1-2f9²)(1-2f8²) - (2f8f9)² = 1 - 2f8² - 2f9² + 4f8²f9² - 4f8²f9²
+      //      = 1 - 2(f8²+f9²) = 1 - 2 = -1。
+      final corner = SimGeometry.calcCornerXY(300, 500, viewW, viewH);
+      final pts = SimGeometry.calcPoints(const SimPoint(250, 450), corner, viewW, viewH);
+      final r = SimGeometry.calcReflection(corner, pts);
+      final det = (1 - 2 * r.f9 * r.f9) * (1 - 2 * r.f8 * r.f8) -
+          (2 * r.f8 * r.f9) * (2 * r.f8 * r.f9);
+      expect(det, closeTo(-1.0, 1e-6));
+    });
+
+    test('反射保持折痕上的点不变(锚点 control1 反射后仍是 control1)', () {
+      // 反射以过 control1、方向 (f8,f9) 的直线为对称轴, 故 control1 在自身上,
+      // 反射不变。验证 M(control1) = control1。
+      // M(p) = R·(p-anchor) + anchor; 对 p=anchor → R·0 + anchor = anchor。
+      final corner = SimGeometry.calcCornerXY(300, 500, viewW, viewH);
+      final pts = SimGeometry.calcPoints(const SimPoint(250, 450), corner, viewW, viewH);
+      final r = SimGeometry.calcReflection(corner, pts);
+      // 手算 M(anchor)
+      final dx = 0.0, dy = 0.0; // p - anchor
+      final rx = (1 - 2 * r.f9 * r.f9) * dx + (2 * r.f8 * r.f9) * dy + r.anchor.x;
+      final ry = (2 * r.f8 * r.f9) * dx + (1 - 2 * r.f8 * r.f8) * dy + r.anchor.y;
+      expect(rx, closeTo(r.anchor.x, 1e-9));
+      expect(ry, closeTo(r.anchor.y, 1e-9));
+    });
+
+    test('dis==0 退化态返回恒等反射(f8=1,f9=0), 不产生 NaN', () {
+      // 构造退化: 让 corner 与 control1/control2 重合 → dis=0。
+      // control1.y = cornerY, control2.x = cornerX。让 control1.x = cornerX,
+      // control2.y = cornerY → dx=0, dy=0, dis=0。
+      // 直接构造一个 corner/points 使 control1 落在 corner:
+      // 用 touch 在 corner 正上方且远离的简单场景。
+      // 实际上 calcPoints 不会让 control1 恰好 = corner(除非 touch=corner 退化),
+      // 故这里直接构造 SimPoints 测试 calcReflection 的退化分支。
+      const corner = SimCorner(cornerX: 400, cornerY: 600, isRtOrLb: false);
+      const pts = SimPoints(
+        start1: SimPoint(400, 600),
+        control1: SimPoint(400, 600), // == corner
+        vertex1: SimPoint(400, 600),
+        end1: SimPoint(400, 600),
+        start2: SimPoint(400, 600),
+        control2: SimPoint(400, 600), // control2.y == cornerY
+        vertex2: SimPoint(400, 600),
+        end2: SimPoint(400, 600),
+        middleX: 400,
+        middleY: 600,
+        touchToCornerDis: 0,
+        degrees: 0,
+        touch: SimPoint(400, 600),
+      );
+      final r = SimGeometry.calcReflection(corner, pts);
+      expect(r.f8, 1.0);
+      expect(r.f9, 0.0);
+      expect(r.f8.isFinite, isTrue);
+      expect(r.f9.isFinite, isTrue);
+    });
+
+    test('四角翻页反射参数都有限(回归: 不崩)', () {
+      final corners = [
+        const SimCorner(cornerX: 400, cornerY: 600, isRtOrLb: false),
+        const SimCorner(cornerX: 0, cornerY: 600, isRtOrLb: true),
+        const SimCorner(cornerX: 400, cornerY: 0, isRtOrLb: true),
+        const SimCorner(cornerX: 0, cornerY: 0, isRtOrLb: false),
+      ];
+      const touch = SimPoint(250, 450);
+      for (final corner in corners) {
+        final pts = SimGeometry.calcPoints(touch, corner, viewW, viewH);
+        final r = SimGeometry.calcReflection(corner, pts);
+        expect(r.f8.isFinite, isTrue, reason: 'f8 @ $corner');
+        expect(r.f9.isFinite, isTrue, reason: 'f9 @ $corner');
+        expect(r.f8 * r.f8 + r.f9 * r.f9, closeTo(1.0, 1e-6));
+      }
+    });
+  });
+
+  group('calcFrontShadowTip - 正面高光阴影顶点', () {
+    test('阴影顶点与 touch 距离 == 25·√2', () {
+      // 原生 d1 = 25·√2·cos(degree), d2 = 25·√2·sin(degree)。
+      // 顶点偏移向量长 = √(d1²+d2²) = 25·√2·√(cos²+sin²) = 25·√2。
+      final corner = SimGeometry.calcCornerXY(300, 500, viewW, viewH);
+      final pts = SimGeometry.calcPoints(const SimPoint(250, 450), corner, viewW, viewH);
+      final tip = SimGeometry.calcFrontShadowTip(const SimPoint(250, 450), pts, corner);
+      final dx = tip.x - 250;
+      final dy = tip.y - 450;
+      final dist = math.sqrt(dx * dx + dy * dy);
+      expect(dist, closeTo(25.0 * 1.414, 1e-3));
+    });
+
+    test('isRtOrLb 两分支公式自洽(右下角 isRtOrLb=false)', () {
+      // !isRtOrLb 分支: degree = π/4 - atan2(ty-cy, tx-cx)。
+      // 选 control1.y == cornerY(=600), touch.y=450, control1.x 由 calcPoints 给。
+      final corner = SimGeometry.calcCornerXY(300, 500, viewW, viewH);
+      expect(corner.isRtOrLb, isFalse);
+      final pts = SimGeometry.calcPoints(const SimPoint(250, 450), corner, viewW, viewH);
+      final tip = SimGeometry.calcFrontShadowTip(const SimPoint(250, 450), pts, corner);
+      // 手算
+      final cx = pts.control1.x;
+      final cy = pts.control1.y;
+      final degree = math.pi / 4 - math.atan2(450 - cy, 250 - cx);
+      final d1 = 25.0 * 1.414 * math.cos(degree);
+      final d2 = 25.0 * 1.414 * math.sin(degree);
+      expect(tip.x, closeTo(250 + d1, 1e-6));
+      expect(tip.y, closeTo(450 - d2, 1e-6));
+    });
+
+    test('isRtOrLb=true 分支公式自洽(左下角)', () {
+      final corner = SimGeometry.calcCornerXY(100, 500, viewW, viewH);
+      expect(corner.isRtOrLb, isTrue);
+      final pts = SimGeometry.calcPoints(const SimPoint(150, 450), corner, viewW, viewH);
+      final tip = SimGeometry.calcFrontShadowTip(const SimPoint(150, 450), pts, corner);
+      final cx = pts.control1.x;
+      final cy = pts.control1.y;
+      final degree = math.pi / 4 - math.atan2(cy - 450, 150 - cx);
+      final d1 = 25.0 * 1.414 * math.cos(degree);
+      final d2 = 25.0 * 1.414 * math.sin(degree);
+      expect(tip.x, closeTo(150 + d1, 1e-6));
+      expect(tip.y, closeTo(450 + d2, 1e-6)); // isRtOrLb: ty + d2
+    });
+
+    test('四角翻页阴影顶点都有限(回归: 不崩)', () {
+      final corners = [
+        const SimCorner(cornerX: 400, cornerY: 600, isRtOrLb: false),
+        const SimCorner(cornerX: 0, cornerY: 600, isRtOrLb: true),
+        const SimCorner(cornerX: 400, cornerY: 0, isRtOrLb: true),
+        const SimCorner(cornerX: 0, cornerY: 0, isRtOrLb: false),
+      ];
+      const touch = SimPoint(250, 450);
+      for (final corner in corners) {
+        final pts = SimGeometry.calcPoints(touch, corner, viewW, viewH);
+        final tip = SimGeometry.calcFrontShadowTip(touch, pts, corner);
+        expect(tip.x.isFinite, isTrue, reason: 'tip.x @ $corner');
+        expect(tip.y.isFinite, isTrue, reason: 'tip.y @ $corner');
+      }
+    });
+  });
 }

@@ -1,21 +1,22 @@
 import 'dart:math' as math;
+import 'dart:typed_data' show Float64List;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import 'simulation_geometry.dart';
 
-/// 仿真翻页绘制器(MVP 阶段)。
+/// 仿真翻页绘制器。
 ///
-/// 逐层翻译原生 legado `SimulationPageDelegate.onDraw` 的 4 个绘制函数, 但**省略
-/// 背面 bitmap 反射矩阵**(第二阶段补)与正面高光阴影(`drawCurrentPageShadow`)。
-/// 即使如此, 已能呈现仿真翻页约 80% 观感: 卷曲形状 + 当前页裁剪露出下层 +
-/// 下一页 + 背面投影 + 折痕暗影 + 背面铺背景色(看起来像翻起的纸背)。
+/// 逐层翻译原生 legado `SimulationPageDelegate.onDraw` 的 4 个绘制函数, 已全部实现:
+/// 卷曲形状 + 当前页裁剪露出下层 + 下一页 + 背面投影 + 正面高光阴影 + 背面镜像文字
+/// + 折痕暗影。达到与原生一致的观感。
 ///
 /// 绘制顺序(从底到顶, 对齐原生 `onDraw` NEXT 分支 247-268):
 /// 1. [drawCurrentPageArea]   当前页裁掉翻起区(clipOutPath) → 露出下层页
 /// 2. [drawNextPageAreaAndShadow] 下层目标页 + 卷曲投影
-/// 3. [drawCurrentBackArea]   翻起页背面(MVP: 铺背景色 + 折痕阴影, 不画镜像文字)
+/// 3. [drawCurrentPageShadow]   翻起页正面高光阴影(两段 frontShadow)
+/// 4. [drawCurrentBackArea]   翻起页背面(铺背景色 + Householder 镜像文字 + 折痕阴影)
 ///
 /// ⚠️ 颜色换算(原生 Kotlin Int → Flutter 0xAARRGGBB):
 /// - `0x333333`        = `0x00333333` (alpha 0, folder shadow 起点)
@@ -72,6 +73,10 @@ class SimulationPainter extends CustomPainter {
   // 背面投影(back): 起点 nearly 不透明深色 → 终点透明。
   static const Color _backShadowStart = Color(0xFF111111);
   static const Color _backShadowEnd = Color(0x00111111);
+  // 正面高光阴影(front): 起点半透明深色 → 终点透明。
+  // 对齐原生 mFrontShadowColors = {-0x7feeeeef(=0x80111111), 0x111111(=0x00111111)}。
+  static const Color _frontShadowStart = Color(0x80111111);
+  static const Color _frontShadowEnd = Color(0x00111111);
 
   /// 对角线长(用于阴影矩形高度, 对齐原生 `mMaxLength = hypot(W, H)`)。
   double get _maxLength =>
@@ -95,7 +100,8 @@ class SimulationPainter extends CustomPainter {
 
     _drawCurrentPageArea(canvas, pts, turningImage);
     _drawNextPageAreaAndShadow(canvas, pts, baseImage);
-    _drawCurrentBackArea(canvas, pts);
+    _drawCurrentPageShadow(canvas, pts, SimPoint(t.dx, t.dy));
+    _drawCurrentBackArea(canvas, pts, turningImage);
   }
 
   /// ① 绘制翻起页正面(屏幕剩余区)。
@@ -158,9 +164,11 @@ class SimulationPainter extends CustomPainter {
     } else {
       leftX = start1X - projWidth;
       rightX = start1X;
+      // 渐变方向 from=折痕端 start1(深) → to=远端(透明)。对齐原生 RL 语义
+      // (colors[0]=深在 right=start1, colors[1]=透明在 left=start1-projW)。
       gradient = ui.Gradient.linear(
-        Offset(leftX, start1Y),
         Offset(rightX, start1Y),
+        Offset(leftX, start1Y),
         [_backShadowStart, _backShadowEnd],
       );
     }
@@ -182,17 +190,152 @@ class SimulationPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// ③ 绘制翻起页背面(MVP 简化版)。
+  /// ③ 绘制翻起页正面高光阴影(两段 frontShadow)。
   ///
-  /// 对齐原生 `drawCurrentBackArea`(`SimulationPageDelegate.kt:273-335`)的**结构**,
-  /// 但**省略 bitmap 反射矩阵**(第二阶段补)。MVP 阶段:
+  /// 对齐原生 `drawCurrentPageShadow`(`SimulationPageDelegate.kt:340-435`)。
+  /// 在翻起页**正面**靠近折痕处画两道渐变高光, 让纸面有立体反光质感。
+  /// 两段阴影的几何基座共用一个顶点(touch 偏移 25·√2, 由
+  /// [SimGeometry.calcFrontShadowTip] 算出), 分别沿 control1 / control2 边绘制。
+  ///
+  /// **第一段**(原生 355-390): 沿 control1 边的竖直渐变(VLR/VRL)。
+  /// - path1 = (tip) → touch → control1 → start1 → close
+  /// - 裁剪: clipOutPath(path0) ∩ path1 —— 仅在「未卷起区 + 阴影三角形」交集内画
+  /// - 25px 宽竖直渐变, 绕 control1 旋转到折痕法线方向
+  ///
+  /// **第二段**(原生 392-434): 沿 control2 边的水平渐变(HTB/HBT)。
+  /// - path1 = (tip) → touch → control2 → start2 → close
+  /// - 裁剪同第一段: clipOutPath(path0) ∩ path1
+  /// - 25px 高水平渐变, 绕 control2 旋转; 含 control2.y<0 时的边界 hmg 修正
+  ///
+  /// ⚠️ Flutter `Canvas.clipPath` 无 `ClipOp.difference`, clipOutPath 用
+  /// `Path.combine(PathOperation.difference, 全屏, path0)` 预算后 intersect-clip。
+  void _drawCurrentPageShadow(ui.Canvas canvas, SimPoints pts, SimPoint touch) {
+    final tip = SimGeometry.calcFrontShadowTip(touch, pts, corner);
+    final path0 = _buildPath0(pts);
+    // clipOutPath(path0) 的 Flutter 等价: 全屏 - path0(差集)。
+    final fullRect = ui.Path()..addRect(Offset.zero & viewSize);
+    final outsidePath0 =
+        ui.Path.combine(ui.PathOperation.difference, fullRect, path0);
+    final maxLen = _maxLength;
+
+    // ---- 第一段: 沿 control1 边的竖直渐变 ----
+    final path1A = ui.Path()
+      ..moveTo(tip.x, tip.y)
+      ..lineTo(pts.touch.x, pts.touch.y)
+      ..lineTo(pts.control1.x, pts.control1.y)
+      ..lineTo(pts.start1.x, pts.start1.y)
+      ..close();
+    canvas.save();
+    canvas.clipPath(outsidePath0);
+    canvas.clipPath(path1A);
+    final c1x = pts.control1.x;
+    final c1y = pts.control1.y;
+    final gradA = corner.isRtOrLb
+        ? ui.Gradient.linear(
+            // LR: 深在左(control), 透明在右(c1x+25)。
+            Offset(c1x, c1y),
+            Offset(c1x + 25, c1y),
+            [_frontShadowStart, _frontShadowEnd],
+          )
+        : ui.Gradient.linear(
+            // RL: 深在右(control), 透明在左(c1x-25)。对齐原生 VRL 语义
+            // (colors[0]=深在 right=c1x+1, colors[1]=透明在 left=c1x-25)。
+            Offset(c1x + 1, c1y),
+            Offset(c1x - 25, c1y),
+            [_frontShadowStart, _frontShadowEnd],
+          );
+    final leftA = corner.isRtOrLb ? c1x : c1x - 25;
+    final rightA = corner.isRtOrLb ? c1x + 25 : c1x + 1;
+    // 旋转到折痕法线方向: rotateDegrees = atan2(touchX-control1.x, control1.y-touchY)。
+    final rotA = math.atan2(
+            pts.touch.x - c1x, c1y - pts.touch.y) *
+        180 /
+        math.pi;
+    canvas.translate(c1x, c1y);
+    canvas.rotate(rotA * math.pi / 180);
+    canvas.translate(-c1x, -c1y);
+    canvas.drawRect(
+      Rect.fromLTRB(leftA, c1y - maxLen, rightA, c1y),
+      Paint()..shader = gradA,
+    );
+    canvas.restore();
+
+    // ---- 第二段: 沿 control2 边的水平渐变 ----
+    final path1B = ui.Path()
+      ..moveTo(tip.x, tip.y)
+      ..lineTo(pts.touch.x, pts.touch.y)
+      ..lineTo(pts.control2.x, pts.control2.y)
+      ..lineTo(pts.start2.x, pts.start2.y)
+      ..close();
+    canvas.save();
+    canvas.clipPath(outsidePath0);
+    canvas.clipPath(path1B);
+    final c2x = pts.control2.x;
+    final c2y = pts.control2.y;
+    final gradB = corner.isRtOrLb
+        ? ui.Gradient.linear(
+            // HTB: 深在上(control2.y), 透明在下(c2y+25)。
+            Offset(c2x, c2y),
+            Offset(c2x, c2y + 25),
+            [_frontShadowStart, _frontShadowEnd],
+          )
+        : ui.Gradient.linear(
+            // HBT: 深在下(control2.y), 透明在上(c2y-25)。对齐原生 HBT 语义
+            // (colors[0]=深在 bottom=c2y+1, colors[1]=透明在 top=c2y-25)。
+            Offset(c2x, c2y + 1),
+            Offset(c2x, c2y - 25),
+            [_frontShadowStart, _frontShadowEnd],
+          );
+    final leftB = corner.isRtOrLb ? c2y : c2y - 25;
+    final rightB = corner.isRtOrLb ? c2y + 25 : c2y + 1;
+    final rotB = math.atan2(
+            c2y - pts.touch.y, c2x - pts.touch.x) *
+        180 /
+        math.pi;
+    canvas.translate(c2x, c2y);
+    canvas.rotate(rotB * math.pi / 180);
+    canvas.translate(-c2x, -c2y);
+    // 边界修正(对齐原生 419-432): control2.y<0 时按 hmg 平移阴影矩形。
+    final temp = c2y < 0 ? c2y - viewSize.height : c2y;
+    final hmg = math.sqrt(c2x * c2x + temp * temp);
+    double rectLeft;
+    double rectRight;
+    if (hmg > maxLen) {
+      rectLeft = c2x - 25 - hmg;
+      rectRight = c2x + maxLen - hmg;
+    } else {
+      rectLeft = c2x - maxLen;
+      rectRight = c2x;
+    }
+    // 注意: 原生第二段 setBounds(leftX=control2.y, ..., rightX=control2.y+25) 把
+    // y 当 left/right 用 —— 因 rotate 后矩形的"宽"实际是竖直方向高度。Flutter 这里的
+    // leftB/rightB 是渐变方向(竖直), 配合上面 rotate 后 drawRect 的 x 维度。
+    canvas.drawRect(
+      Rect.fromLTRB(rectLeft, leftB, rectRight, rightB),
+      Paint()..shader = gradB,
+    );
+    canvas.restore();
+  }
+
+  /// ④ 绘制翻起页背面(Householder 反射镜像版)。
+  ///
+  /// 对齐原生 `drawCurrentBackArea`(`SimulationPageDelegate.kt:273-335`):
   /// - clip path0 ∩ path1(卷曲三角形区域)
-  /// - 铺背景色(对齐原生 `canvas.drawColor(bgMeanColor)` —— 看起来像翻起的纸背底色)
+  /// - 铺背景色(对齐原生 `canvas.drawColor(bgMeanColor)` —— 纸背底色)
+  /// - **沿折痕反射镜像绘制当前页位图**(原生 311-326 行 Householder 矩阵) →
+  ///   背面显示反向文字, "像纸"的灵魂
   /// - 按折痕方向画一道 folderShadow 暗影(折痕处更深, 让背面有立体感)
   ///
-  /// 第二阶段会在此处加 Householder 反射矩阵(`Matrix4` + `canvas.transform`),
-  /// 把当前页位图沿折痕镜像绘制, 让背面显示镜像文字 —— 那才是"像纸"的灵魂。
-  void _drawCurrentBackArea(ui.Canvas canvas, SimPoints pts) {
+  /// 反射矩阵构造(对齐原生 `mMatrix.setValues` + pre/postTranslate):
+  /// ```
+  /// M = T(anchor) · R · T(-anchor)
+  ///   anchor = control1, R = | 1-2f9²    2f8f9  |
+  ///                           | 2f8f9     1-2f8² |
+  /// ```
+  /// 由 [SimGeometry.calcReflection] 算出 (f8, f9, anchor), 这里展开成 4×4 列主序矩阵
+  /// 喂给 `canvas.transform`。Flutter `Canvas.transform` 接受 `Float64List`(16 元素,
+  /// 列主序), 与 `Matrix4.storage` 同布局, 故直接构造 `Matrix4`。
+  void _drawCurrentBackArea(ui.Canvas canvas, SimPoints pts, ui.Image? image) {
     // f3 = 折痕阴影宽度(对齐原生 f3 = min(f1, f2))。
     final f1 = ((pts.start1.x + pts.control1.x) / 2 - pts.control1.x).abs();
     final f2 = ((pts.start2.y + pts.control2.y) / 2 - pts.control2.y).abs();
@@ -211,11 +354,47 @@ class SimulationPainter extends CustomPainter {
     canvas.clipPath(path0);
     canvas.clipPath(path1);
 
-    // 铺背景色(纸背底色)。
+    // 铺背景色(纸背底色, 对齐原生 canvas.drawColor(bgMeanColor))。
     canvas.drawRect(
       Rect.fromLTWH(0, 0, viewSize.width, viewSize.height),
       Paint()..color = bgColor,
     );
+
+    // 沿折痕反射镜像绘制翻起页位图(背面显示反向文字)。
+    // 对齐原生 311-326: Householder 反射矩阵 + preTranslate(-control1) + postTranslate(control1)。
+    if (image != null) {
+      final r = SimGeometry.calcReflection(corner, pts);
+      // 构造 4×4 列主序变换矩阵 M = T(anchor) · R · T(-anchor)。
+      // R = | 1-2f9²    2f8f9  |
+      //     | 2f8f9     1-2f8² |
+      final m00 = 1 - 2 * r.f9 * r.f9;
+      final m01 = 2 * r.f8 * r.f9;
+      final m10 = 2 * r.f8 * r.f9;
+      final m11 = 1 - 2 * r.f8 * r.f8;
+      // 平移列: M·p = R·(p - anchor) + anchor = R·p + (anchor - R·anchor)。
+      final tx = r.anchor.x - (m00 * r.anchor.x + m01 * r.anchor.y);
+      final ty = r.anchor.y - (m10 * r.anchor.x + m11 * r.anchor.y);
+      // Flutter Canvas.transform 接受列主序 Float64List(16)。
+      // 列主序: [m00,m10,m20,m30, m01,m11,m21,m31, m02,m12,m22,m32, m03,m13,m23,m33]
+      // 2D 仿射: m00,m01,m10,m11 非零, m22=m33=1, 其余 0。
+      final matrix = Float64List.fromList(<double>[
+        m00, m10, 0, 0, //
+        m01, m11, 0, 0, //
+        0,   0,   1, 0, //
+        tx,  ty,  0, 1,
+      ]);
+      canvas.save();
+      canvas.transform(matrix);
+      final src = Rect.fromLTWH(
+        0,
+        0,
+        image.width.toDouble(),
+        image.height.toDouble(),
+      );
+      final dst = Rect.fromLTWH(0, 0, viewSize.width, viewSize.height);
+      canvas.drawImageRect(image, src, dst, Paint());
+      canvas.restore();
+    }
 
     // 折痕阴影: 从 start1 沿 isRtOrLb 方向渐变(f3 宽)。
     final start1X = pts.start1.x;
