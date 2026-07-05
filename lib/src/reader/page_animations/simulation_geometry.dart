@@ -315,14 +315,14 @@ class SimGeometry {
     return middleX - dy * dy / denom;
   }
 
-  /// 计算正面高光阴影的顶点(touch 偏移 25·√2)。
+  /// 计算正面高光阴影的顶点(touch 偏移 [shadowWidth]·√2)。
   ///
   /// 对齐原生 `drawCurrentPageShadow`(`SimulationPageDelegate.kt:341-354`):
   /// ```
   /// cy = control1.y (= cornerY)
   /// degree = π/4 - atan2(cy - ty, tx - cx)     // isRtOrLb
   ///        = π/4 - atan2(ty - cy, tx - cx)     // !isRtOrLb
-  /// d1 = 25·√2·cos(degree),  d2 = 25·√2·sin(degree)
+  /// d1 = W·√2·cos(degree),  d2 = W·√2·sin(degree)   // W = shadowWidth
   /// x  = tx + d1
   /// y  = isRtOrLb ? ty + d2 : ty - d2
   /// ```
@@ -330,11 +330,15 @@ class SimGeometry {
   /// (x,y) 是远离 touch 的那个顶点, 决定阴影三角形朝向。
   ///
   /// 该顶点两段阴影共用(原生 349-354 算一次, 355/392 两段 path1 都以它起笔)。
+  ///
+  /// [shadowWidth] 默认 25(对齐原生硬编码 25px)。⚠️ 原生在 px 域, Flutter 在 dp 域,
+  /// 调用方(painter)需传 `25 / devicePixelRatio` 才能让阴影视觉宽度与原生一致。
   static SimPoint calcFrontShadowTip(
     SimPoint touch,
     SimPoints pts,
-    SimCorner corner,
-  ) {
+    SimCorner corner, {
+    double shadowWidth = 25.0,
+  }) {
     final cx = pts.control1.x;
     final cy = pts.control1.y; // == cornerY
     final tx = touch.x;
@@ -342,8 +346,8 @@ class SimGeometry {
     final degree = corner.isRtOrLb
         ? math.pi / 4 - math.atan2(cy - ty, tx - cx)
         : math.pi / 4 - math.atan2(ty - cy, tx - cx);
-    final d1 = 25.0 * 1.414 * math.cos(degree);
-    final d2 = 25.0 * 1.414 * math.sin(degree);
+    final d1 = shadowWidth * 1.414 * math.cos(degree);
+    final d2 = shadowWidth * 1.414 * math.sin(degree);
     final x = tx + d1;
     final y = corner.isRtOrLb ? ty + d2 : ty - d2;
     return SimPoint(x, y);

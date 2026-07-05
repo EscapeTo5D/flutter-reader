@@ -82,6 +82,17 @@ class SimulationPainter extends CustomPainter {
   double get _maxLength =>
       math.sqrt(viewSize.width * viewSize.width + viewSize.height * viewSize.height);
 
+  /// 阴影渐变宽度(dp)。
+  ///
+  /// 原生 Android 的 `Canvas`/`viewWidth` 都是 **物理像素(px)**, 故硬编码的 `25` 是
+  /// 25px。Flutter `Canvas`/`viewSize` 是**逻辑像素(dp)**, 直接用 25 会让阴影在
+  /// DPR=2.5~3 的设备上放大 2.5~3 倍 —— 用户反馈的"阴影扩散范围比原生大"根因。
+  /// 故按 DPR 反算: `25 dp → 25/dpr px` 等效于原生的 25px。
+  ///
+  /// 对齐原生 `mFrontShadowColors`/`drawCurrentPageShadow` 的 25、`mBackShadowDrawable`
+  /// 不受影响(它用 `touchToCornerDis/4`, 是 dp 域的比例量)。
+  double get _shadowWidth => 25.0 / devicePixelRatio;
+
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
     // 触摸点不为 0(对齐原生 mTouchX/Y 初始化 0.1 的除零保护)。
@@ -100,7 +111,7 @@ class SimulationPainter extends CustomPainter {
 
     _drawCurrentPageArea(canvas, pts, turningImage);
     _drawNextPageAreaAndShadow(canvas, pts, baseImage);
-    _drawCurrentPageShadow(canvas, pts, SimPoint(t.dx, t.dy));
+    _drawCurrentPageShadow(canvas, pts);
     _drawCurrentBackArea(canvas, pts, turningImage);
   }
 
@@ -194,23 +205,32 @@ class SimulationPainter extends CustomPainter {
   ///
   /// 对齐原生 `drawCurrentPageShadow`(`SimulationPageDelegate.kt:340-435`)。
   /// 在翻起页**正面**靠近折痕处画两道渐变高光, 让纸面有立体反光质感。
-  /// 两段阴影的几何基座共用一个顶点(touch 偏移 25·√2, 由
+  /// 两段阴影的几何基座共用一个顶点(touch 偏移 shadowWidth·√2, 由
   /// [SimGeometry.calcFrontShadowTip] 算出), 分别沿 control1 / control2 边绘制。
   ///
   /// **第一段**(原生 355-390): 沿 control1 边的竖直渐变(VLR/VRL)。
   /// - path1 = (tip) → touch → control1 → start1 → close
   /// - 裁剪: clipOutPath(path0) ∩ path1 —— 仅在「未卷起区 + 阴影三角形」交集内画
-  /// - 25px 宽竖直渐变, 绕 control1 旋转到折痕法线方向
+  /// - shadowWidth dp 宽竖直渐变, 绕 control1 旋转到折痕法线方向
   ///
   /// **第二段**(原生 392-434): 沿 control2 边的水平渐变(HTB/HBT)。
   /// - path1 = (tip) → touch → control2 → start2 → close
   /// - 裁剪同第一段: clipOutPath(path0) ∩ path1
-  /// - 25px 高水平渐变, 绕 control2 旋转; 含 control2.y<0 时的边界 hmg 修正
+  /// - shadowWidth dp 高水平渐变, 绕 control2 旋转; 含 control2.y<0 时的边界 hmg 修正
+  ///
+  /// ⚠️ tip 用 [SimPoints.touch](边界钳制后的 touch), 与原生用 `mTouchX/mTouchY`
+  /// 一致(原生 `calcPoints` 钳制分支会改写 `mTouchX/Y`, 阴影顶点用钳制后的值)。
+  /// 若用原始 touch 会在拖到屏幕边缘(即"翻页角"附近)时阴影顶点偏移, 阴影方向错乱。
+  ///
+  /// ⚠️ 阴影宽度 shadowWidth = `25 / devicePixelRatio`(见 [_shadowWidth]),
+  /// 不是直接用原生的 25 —— 原生在 px 域, Flutter 在 dp 域。
   ///
   /// ⚠️ Flutter `Canvas.clipPath` 无 `ClipOp.difference`, clipOutPath 用
   /// `Path.combine(PathOperation.difference, 全屏, path0)` 预算后 intersect-clip。
-  void _drawCurrentPageShadow(ui.Canvas canvas, SimPoints pts, SimPoint touch) {
-    final tip = SimGeometry.calcFrontShadowTip(touch, pts, corner);
+  void _drawCurrentPageShadow(ui.Canvas canvas, SimPoints pts) {
+    final touch = pts.touch;
+    final sw = _shadowWidth;
+    final tip = SimGeometry.calcFrontShadowTip(touch, pts, corner, shadowWidth: sw);
     final path0 = _buildPath0(pts);
     // clipOutPath(path0) 的 Flutter 等价: 全屏 - path0(差集)。
     final fullRect = ui.Path()..addRect(Offset.zero & viewSize);
@@ -232,20 +252,20 @@ class SimulationPainter extends CustomPainter {
     final c1y = pts.control1.y;
     final gradA = corner.isRtOrLb
         ? ui.Gradient.linear(
-            // LR: 深在左(control), 透明在右(c1x+25)。
+            // LR: 深在左(control), 透明在右(c1x+sw)。
             Offset(c1x, c1y),
-            Offset(c1x + 25, c1y),
+            Offset(c1x + sw, c1y),
             [_frontShadowStart, _frontShadowEnd],
           )
         : ui.Gradient.linear(
-            // RL: 深在右(control), 透明在左(c1x-25)。对齐原生 VRL 语义
-            // (colors[0]=深在 right=c1x+1, colors[1]=透明在 left=c1x-25)。
+            // RL: 深在右(control), 透明在左(c1x-sw)。对齐原生 VRL 语义
+            // (colors[0]=深在 right=c1x+1, colors[1]=透明在 left=c1x-sw)。
             Offset(c1x + 1, c1y),
-            Offset(c1x - 25, c1y),
+            Offset(c1x - sw, c1y),
             [_frontShadowStart, _frontShadowEnd],
           );
-    final leftA = corner.isRtOrLb ? c1x : c1x - 25;
-    final rightA = corner.isRtOrLb ? c1x + 25 : c1x + 1;
+    final leftA = corner.isRtOrLb ? c1x : c1x - sw;
+    final rightA = corner.isRtOrLb ? c1x + sw : c1x + 1;
     // 旋转到折痕法线方向: rotateDegrees = atan2(touchX-control1.x, control1.y-touchY)。
     final rotA = math.atan2(
             pts.touch.x - c1x, c1y - pts.touch.y) *
@@ -274,20 +294,20 @@ class SimulationPainter extends CustomPainter {
     final c2y = pts.control2.y;
     final gradB = corner.isRtOrLb
         ? ui.Gradient.linear(
-            // HTB: 深在上(control2.y), 透明在下(c2y+25)。
+            // HTB: 深在上(control2.y), 透明在下(c2y+sw)。
             Offset(c2x, c2y),
-            Offset(c2x, c2y + 25),
+            Offset(c2x, c2y + sw),
             [_frontShadowStart, _frontShadowEnd],
           )
         : ui.Gradient.linear(
-            // HBT: 深在下(control2.y), 透明在上(c2y-25)。对齐原生 HBT 语义
-            // (colors[0]=深在 bottom=c2y+1, colors[1]=透明在 top=c2y-25)。
+            // HBT: 深在下(control2.y), 透明在上(c2y-sw)。对齐原生 HBT 语义
+            // (colors[0]=深在 bottom=c2y+1, colors[1]=透明在 top=c2y-sw)。
             Offset(c2x, c2y + 1),
-            Offset(c2x, c2y - 25),
+            Offset(c2x, c2y - sw),
             [_frontShadowStart, _frontShadowEnd],
           );
-    final leftB = corner.isRtOrLb ? c2y : c2y - 25;
-    final rightB = corner.isRtOrLb ? c2y + 25 : c2y + 1;
+    final leftB = corner.isRtOrLb ? c2y : c2y - sw;
+    final rightB = corner.isRtOrLb ? c2y + sw : c2y + 1;
     final rotB = math.atan2(
             c2y - pts.touch.y, c2x - pts.touch.x) *
         180 /
@@ -301,7 +321,7 @@ class SimulationPainter extends CustomPainter {
     double rectLeft;
     double rectRight;
     if (hmg > maxLen) {
-      rectLeft = c2x - 25 - hmg;
+      rectLeft = c2x - sw - hmg;
       rectRight = c2x + maxLen - hmg;
     } else {
       rectLeft = c2x - maxLen;
