@@ -380,9 +380,6 @@ class _ReaderViewState extends State<ReaderView>
               .clamp(0.0, constraints.maxHeight),
         );
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          debugPrint(
-            '[PERF] updatePageSize called: ${size.width.toStringAsFixed(0)}x${size.height.toStringAsFixed(0)} routeReady=$_routeReady',
-          );
           // 转场动画期间不排版(~170ms 同步排版会砸掉转场动画的帧)。
           // _routeReady 由 didChangeDependencies 的 route.animation completed 回调置 true,
           // 届时 setState 触发重建, 这里才真正 updatePageSize → 排版。

@@ -856,9 +856,11 @@ class ReadingController extends ChangeNotifier {
     // 1. 取正文: 按章加载模式从数据源懒加载。
     final tLoad = Stopwatch()..start();
     final content = await source.loadContent(chapterIndex) ?? '';
-    debugPrint(
-      '[PERF] loadContent(章 $chapterIndex, ${content.length}字符): ${tLoad.elapsedMilliseconds}ms',
-    );
+    if (kLogPerf) {
+      debugPrint(
+        '[PERF] loadContent(章 $chapterIndex, ${content.length}字符): ${tLoad.elapsedMilliseconds}ms',
+      );
+    }
     if (_disposed) return [];
     final title = source.chapterTitle(chapterIndex);
     // 2. 预处理(对齐 legado ContentProcessor)。
@@ -870,7 +872,9 @@ class ReadingController extends ChangeNotifier {
       textIndent: _settings.textIndent,
     );
     final processedContent = bookContent.textList.join('\n');
-    debugPrint('[PERF] ContentProcessor(章 $chapterIndex): ${tProc.elapsedMilliseconds}ms');
+    if (kLogPerf) {
+      debugPrint('[PERF] ContentProcessor(章 $chapterIndex): ${tProc.elapsedMilliseconds}ms');
+    }
     // 3. 后台排版(isolate, 不阻塞 UI)。对齐 legado Coroutine.async(IO)。
     final tPaginate = Stopwatch()..start();
     final pages = await paginateInBackground(
@@ -880,9 +884,11 @@ class ReadingController extends ChangeNotifier {
       // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定。
       firstParagraphIsTitle: title.isNotEmpty,
     );
-    debugPrint(
-      '[PERF] paginate(章 $chapterIndex, ${pages.length}页): ${tPaginate.elapsedMilliseconds}ms',
-    );
+    if (kLogPerf) {
+      debugPrint(
+        '[PERF] paginate(章 $chapterIndex, ${pages.length}页): ${tPaginate.elapsedMilliseconds}ms',
+      );
+    }
     _adjacentChapterCache[chapterIndex] = pages;
     return pages;
   }

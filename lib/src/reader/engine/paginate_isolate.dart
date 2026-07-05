@@ -35,6 +35,17 @@ import 'page_engine.dart';
 /// 巨大(每次 ~1s 浪费在注定失败的 isolate spawn 上)。故用 [_isolateDisabled]
 /// 熔断: 首次失败后永久走主线程, 避免反复 spawn。release/profile 模式下
 /// isolate 通常可用, 熔断标志只在当前进程生效。
+/// 排版性能日志总开关。默认 `false`(release 静默); 排查卡顿/排版耗时问题时改成
+/// `true` 即可恢复全部 [debugPrint]('[PERF]...') 打点。
+///
+/// 已知打点位置:
+/// - `paginate_isolate.dart`: 4 处(短内容/主线程/isolate/熔断 各 1)
+/// - `reading_controller.dart` _loadAdjacentChapter: loadContent / ContentProcessor / paginate 三件套
+///
+/// `reader_view.dart` 的 `updatePageSize` 打点已删除(每次重建都打, 无耗时只有尺寸,
+/// 纯噪音; 尺寸传导链路的根因已固化在 controller.updatePageSize 的防抖里)。
+const bool kLogPerf = false;
+
 bool _isolateDisabled = false;
 
 Future<List<TextPage>> paginateInBackground({
@@ -53,9 +64,11 @@ Future<List<TextPage>> paginateInBackground({
       settings: settings,
       firstParagraphIsTitle: firstParagraphIsTitle,
     );
-    debugPrint(
-      '[PERF] paginateInBackground(短内容主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
-    );
+    if (kLogPerf) {
+      debugPrint(
+        '[PERF] paginateInBackground(短内容主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
+      );
+    }
     return r;
   }
 
@@ -74,9 +87,11 @@ Future<List<TextPage>> paginateInBackground({
     final reason = _isolateDisabled
         ? '熔断'
         : (token == null ? '无token' : 'debug模式');
-    debugPrint(
-      '[PERF] paginateInBackground(主线程[$reason], ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
-    );
+    if (kLogPerf) {
+      debugPrint(
+        '[PERF] paginateInBackground(主线程[$reason], ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
+      );
+    }
     return r;
   }
 
@@ -92,9 +107,11 @@ Future<List<TextPage>> paginateInBackground({
         firstParagraphIsTitle: firstParagraphIsTitle,
       );
     });
-    debugPrint(
-      '[PERF] paginateInBackground(isolate, ${content.length}字符→${r.length}页): ${tIso.elapsedMilliseconds}ms',
-    );
+    if (kLogPerf) {
+      debugPrint(
+        '[PERF] paginateInBackground(isolate, ${content.length}字符→${r.length}页): ${tIso.elapsedMilliseconds}ms',
+      );
+    }
     return r;
   } catch (e) {
     // 熔断: isolate 排版失败(平台限制/UI actions 不可用)后, 标记永久走主线程,
@@ -108,9 +125,11 @@ Future<List<TextPage>> paginateInBackground({
       settings: settings,
       firstParagraphIsTitle: firstParagraphIsTitle,
     );
-    debugPrint(
-      '[PERF] paginateInBackground(熔断后主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
-    );
+    if (kLogPerf) {
+      debugPrint(
+        '[PERF] paginateInBackground(熔断后主线程, ${content.length}字符→${r.length}页): ${t.elapsedMilliseconds}ms',
+      );
+    }
     return r;
   }
 }
