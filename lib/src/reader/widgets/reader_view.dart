@@ -721,6 +721,34 @@ class _ReaderViewState extends State<ReaderView>
     }
   }
 
+  /// 替换 `_pageAnimCurved` 的统一入口, slide/sim 两种动画启动共用。
+  ///
+  /// **防 listener 泄漏**(竞态修复): 替换前先 removeListener 旧的 `_pageAnimCurved`。
+  /// `_startPageAnim`/`_startSimAnim` 都直接赋值 `_pageAnimCurved`, 若上一轮还挂着
+  /// 监听(未经 _resetAnimState 清理)就直接覆盖, 旧引用丢失 → 它的
+  /// `_onAnimTick`/`_onSimAnimTick` 监听永远不再被 remove(绑在同一个 `_pageAnim`
+  /// 上, 会继续被触发重复 setState)。removeListener 即阻断此反向触发, 解决 C2。
+  ///
+  /// ⚠️ 不调 `old.dispose()`: `_pageAnimCurved` 字段类型是 `Animation<double>`,
+  /// 实际是 `Tween.animate(CurvedAnimation(...))` 的产物 `_AnimatedEvaluation`(无
+  /// dispose 方法); 内层的 `CurvedAnimation` 引用未单独持有, 无法 dispose。残留的
+  /// CurvedAnimation 内部 listener 会随 _pageAnim 空转, 开销极小, 不引发 bug; 留待
+  /// 未来用单层 listener 架构(直接监听 _pageAnim + listener 内手算 from/to 映射)
+  /// 彻底清理。
+  void _attachAnimListener(
+      double from, double to, void Function() listener) {
+    final old = _pageAnimCurved;
+    if (old != null) {
+      // 两种监听都防御性移除(slide/sim 都可能挂过)。
+      old.removeListener(_onAnimTick);
+      old.removeListener(_onSimAnimTick);
+    }
+    _pageAnimCurved = Tween<double>(begin: from, end: to).animate(
+      CurvedAnimation(parent: _pageAnim, curve: Curves.linear),
+    );
+    _pageAnimCurved!.addListener(listener);
+  }
+
   /// 重置动画状态到静止(none)。
   ///
   /// ⚠️ 不清空 _nextCache/_prevCache: 新架构下它们是常驻预热缓存,
@@ -731,16 +759,19 @@ class _ReaderViewState extends State<ReaderView>
     _isDragging = false;
     _isCancel = false;
     _dragOffset = 0;
-    if (_pageAnimCurved != null) {
+    final old = _pageAnimCurved;
+    if (old != null) {
       // 两种动画监听都先移除(slide 用 _onAnimTick, sim 用 _onSimAnimTick), 防御性双移除。
-      _pageAnimCurved!.removeListener(_onAnimTick);
-      _pageAnimCurved!.removeListener(_onSimAnimTick);
+      // (不调 old.dispose(): _pageAnimCurved 类型是 Animation<double>, 实际是
+      // _AnimatedEvaluation 无 dispose 方法; 见 _attachAnimListener 注释。)
+      old.removeListener(_onAnimTick);
+      old.removeListener(_onSimAnimTick);
       _pageAnimCurved = null;
     }
     if (_pageAnim.isAnimating) _pageAnim.stop();
     _pageAnim.value = 0;
-    // 自增代际号: 使任何挂起的 _deferredCommit 失效, 避免旧动画的延迟提交
-    // 误覆盖刚启动的新翻页/拖拽状态。
+    // 自增代际号: 使任何挂起的 _deferredCommit / _captureSimBitmaps future 失效,
+    // 避免旧动画的延迟提交 / 旧截图回填误覆盖刚启动的新翻页/拖拽状态。
     _animGen++;
   }
 
@@ -752,15 +783,8 @@ class _ReaderViewState extends State<ReaderView>
   void _startPageAnim({required double from, required double to}) {
     final dxRatio = (to - from).abs();
     final durationMs = (_pageAnimSpeedMs * dxRatio).round();
-    _pageAnimCurved = Tween<double>(begin: from, end: to).animate(
-      CurvedAnimation(
-        parent: _pageAnim,
-        // 匀速对齐原生 LinearInterpolator。
-        curve: Curves.linear,
-      ),
-    );
     _pageAnim.duration = Duration(milliseconds: durationMs < 1 ? 1 : durationMs);
-    _pageAnimCurved!.addListener(_onAnimTick);
+    _attachAnimListener(from, to, _onAnimTick);
     _pageAnim.forward(from: 0);
   }
 
@@ -779,7 +803,9 @@ class _ReaderViewState extends State<ReaderView>
   void _turnByAnim(_PageDirection dir) {
     final c = controller;
     // 动画进行中再次点击: 中断 + 提交当前翻页, 然后从新当前页继续(对齐 abortAnim)。
-    if (_animDir != _PageDirection.none) {
+    // wasAborting 标记供仿真分支决定截图时机(连点需 PostFrame 延迟, 见下)。
+    final wasAborting = _animDir != _PageDirection.none;
+    if (wasAborting) {
       _abortAndCommit();
     }
     if (dir == _PageDirection.next && !c.canGoNext) return;
@@ -834,11 +860,35 @@ class _ReaderViewState extends State<ReaderView>
       // 等截图完成后再启动动画。setState 进入叠加态(覆盖层挂载), 但 painter 在
       // curImage==null 时透明不画 → 底层静止 pageStack 显示当前页, 无闪烁; 截图完成
       // 内部 setState → painter 拿到位图开始画卷曲 → then 启动动画, 零跳跃。
+      //
+      // 代际守护: 捕获本次手势的 _animGen, 截图 future 完成时若 gen 已变(连点/abort/
+      // 起新手势都会 _animGen++), 不启动动画。统一用 _animGen 替代旧 _animDir != dir
+      // 判定 —— 跨方向连点(next→prev)和同方向连点(next→next)守护语义一致(对齐
+      // _deferredCommit 的 gen 守护)。
+      //
+      // ⚠️ 连点时序(wasAborting=true): abort 提交一页后 controller notifyListeners →
+      // setState 已调度, 但 widget 树 rebuild + RepaintBoundary 重绘要等下一帧 paint。
+      // 若立即 toImage, 截到的是**旧 cur/next**(上一帧 layer 缓存) → painter 在旧图上
+      // 做动画, 用户看到第二次点击毫无作用(从 P1 又翻到 P2, 而非从 P2 翻到 P3)。
+      // 必须延迟到 PostFrame, 让 commit 触发的 rebuild + paint 完成, 此时
+      // RepaintBoundary 已是新 cur(第2页)/新 next(第3页), 截图才正确。
+      // 对比原生 legado: View.draw(Canvas) 是命令式绘制, 直接强制走完整 onDraw 拿到
+      // 最新 View 状态; Flutter RepaintBoundary.toImage 截的是上一帧 paint 产生的
+      // layer 缓存 —— 架构差异决定 Flutter 在 setState 后必须等下一帧。
+      // 第一次点击(wasAborting=false)不延迟: 邻接页 initState 已预热绘制好, 立即可截。
+      final gen = _animGen;
       setState(() {});
-      _captureSimBitmaps().then((ok) {
-        if (!mounted || _animDir != dir || !ok) return;
-        _startSimAnim(shouldCommit: true);
-      });
+      void capture() {
+        _captureSimBitmaps(gen: gen).then((ok) {
+          if (!mounted || gen != _animGen || !ok) return;
+          _startSimAnim(shouldCommit: true);
+        });
+      }
+      if (wasAborting) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => capture());
+      } else {
+        capture();
+      }
       return;
     }
     _animDir = dir;
@@ -1009,7 +1059,9 @@ class _ReaderViewState extends State<ReaderView>
             size.width - startX, size.height, size.width, size.height);
       }
     }
-    _captureSimBitmaps();
+    // fire-and-forget: _captureSimBitmaps 内部逐帧做 gen 检查 + 自动 dispose 失效
+    // image, 故外部无需 then; 截图期间用户若松手 → _onDragEnd 走 painter 透明降级。
+    _captureSimBitmaps(gen: _animGen);
   }
 
   /// 更新仿真触摸点, 应用 touchY 锁边(对齐原生 onTouch MOVE 173-183):
@@ -1033,13 +1085,20 @@ class _ReaderViewState extends State<ReaderView>
 
   /// 异步截图三页 RepaintBoundary → ui.Image(对齐原生 setBitmap)。
   ///
-  /// 返回 `Future<bool>`: true=截图成功, false=失败(boundary 为空/异常)。
+  /// 返回 `Future<bool>`: true=截图成功, false=失败(boundary 为空/异常)或已失效。
   /// **点击翻页**需 await 它完成后再启动落地动画, 否则截图未就绪的前几帧 painter
   /// 在 curImage==null 时整体不画(透明), 覆盖层透明期间底层静止 pageStack 显示当前页
   /// (不闪), 但动画已走了一段, 截图回来后卷曲"突然出现"会有跳跃感。
   /// **拖拽翻页**可 fire-and-forget: 用户手指按下到方向确定(~8dp 滑动)有几帧时间,
   /// 截图通常已就绪; 且 painter 透明降级底层显示当前页, 无闪烁。
-  Future<bool> _captureSimBitmaps() async {
+  ///
+  /// [gen] 调用方在调用前捕获的 `_animGen`(本次手势的代际号)。**连点/连拖竞态修复**:
+  /// 每个 `await toImage` 后检查 `gen != _animGen` —— 若期间 abort/起新手势已让
+  /// `_animGen++`, 立即 dispose 本批刚截的 image、返回 false、**不写回字段**。这样:
+  /// (1) abort 后 pending 的截图不会把 image 回填进字段(C3); (2) 并发触发的多次截图
+  /// 各自带自己的 gen, 早一代的 future 完成时 gen 已失效, 自动放弃, 不交错覆盖(C1)。
+  /// 赋值前还 dispose 旧 image, 防止覆盖丢失造成泄漏(C1 的资源累积)。
+  Future<bool> _captureSimBitmaps({required int gen}) async {
     _simBitmapsReady = false;
     final ratio = MediaQuery.devicePixelRatioOf(context);
     final boundary1 = _curBoundaryKey.currentContext?.findRenderObject()
@@ -1050,12 +1109,43 @@ class _ReaderViewState extends State<ReaderView>
         as RenderRepaintBoundary?;
     if (boundary1 == null) return false;
     try {
-      _simCur = await boundary1.toImage(pixelRatio: ratio);
-      if (boundary2 != null) {
-        _simNext = await boundary2.toImage(pixelRatio: ratio);
+      // 逐张截图, 每张 await 后做代际检查: 若期间 abort/起手新手势(_animGen 已变),
+      // 立即 dispose 本批刚截的 image 并返回 false, 不写回字段(对齐原生同步语义:
+      // 截图进行中被打断, 这批图作废, 由新一次手势重新截)。
+      final cur = await boundary1.toImage(pixelRatio: ratio);
+      if (gen != _animGen) {
+        cur.dispose();
+        return false;
       }
+      ui.Image? next;
+      if (boundary2 != null) {
+        next = await boundary2.toImage(pixelRatio: ratio);
+        if (gen != _animGen) {
+          cur.dispose();
+          next.dispose();
+          return false;
+        }
+      }
+      ui.Image? prev;
       if (boundary3 != null) {
-        _simPrev = await boundary3.toImage(pixelRatio: ratio);
+        prev = await boundary3.toImage(pixelRatio: ratio);
+        if (gen != _animGen) {
+          cur.dispose();
+          next?.dispose();
+          prev.dispose();
+          return false;
+        }
+      }
+      // 全部成功且代际未变 → 赋值前 dispose 旧 image(防泄漏)。
+      _simCur?.dispose();
+      _simCur = cur;
+      if (next != null) {
+        _simNext?.dispose();
+        _simNext = next;
+      }
+      if (prev != null) {
+        _simPrev?.dispose();
+        _simPrev = prev;
       }
       _simBitmapsReady = true;
       if (mounted) setState(() {});
@@ -1113,10 +1203,7 @@ class _ReaderViewState extends State<ReaderView>
         .round()
         .clamp(1, _pageAnimSpeedMs * 2);
     _pageAnim.duration = Duration(milliseconds: durationMs);
-    _pageAnimCurved = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _pageAnim, curve: Curves.linear),
-    );
-    _pageAnimCurved!.addListener(_onSimAnimTick);
+    _attachAnimListener(0, 1, _onSimAnimTick);
     _pageAnim.forward(from: 0);
   }
 
@@ -1154,13 +1241,19 @@ class _ReaderViewState extends State<ReaderView>
   /// 原生: scroller 运行中且 !isCancel → fillPage 提交。
   void _abortAndCommit() {
     if (_pageAnim.isAnimating) _pageAnim.stop();
-    if (_pageAnimCurved != null) {
-      _pageAnimCurved!.removeListener(_onAnimTick);
-      _pageAnimCurved!.removeListener(_onSimAnimTick);
+    final old = _pageAnimCurved;
+    if (old != null) {
+      old.removeListener(_onAnimTick);
+      old.removeListener(_onSimAnimTick);
+      _pageAnimCurved = null;
     }
     final dir = _animDir;
     final target = dir == _PageDirection.next ? _nextCache : _prevCache;
     final wasCancel = _isCancel;
+    // ⚠️ 时序契约: _resetAnimState 会 _animGen++, 这正是让任何 pending 的
+    // _captureSimBitmaps future 失效的关键(改动 1 的代际检查)。
+    // 顺序必须是先 _resetAnimState(动画+代际) 再 _resetSimState(dispose 位图),
+    // 反了会 dispose painter 正在用的 image。
     _resetAnimState();
     _resetSimState();
     if (!wasCancel && target != null) {
