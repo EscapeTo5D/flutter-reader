@@ -586,12 +586,33 @@ class _ReaderViewState extends State<ReaderView>
     );
   }
 
+  /// 拖拽阶段的翻页完成度 progress ∈ [0,1]。
+  ///
+  /// 对齐原生 legado `SlidePageDelegate.onDraw:36-39` 的防越界:
+  /// 方向一旦锁定, 手指越过起点滑到相反侧(NEXT 时 `_dragOffset>0` / PREV 时
+  /// `<0`) → 视为 0(页面停留原位, 不反向滑动)。原生在该情况下 `return` 不绘制;
+  /// Flutter 用 progress=0 达到相同视觉效果(cur/next/prev 三页都在静止偏移)。
+  ///
+  /// 否则按 `|_dragOffset| / width` 计算。clamp 防 _dragOffset 超屏宽(超出右边缘)。
+  ///
+  /// **为什么不让 _animDir 跟着翻转**: legado 的设计是「方向锁定后, 想反向必须松手
+  /// 重来」; 若中途翻转方向, 已预热的 peek 页(next/prev)与当前手势会错配, 且动画
+  /// 起止/commit 目标都要重算, 复杂且与原生手感不符。防越界 → progress=0 是最小
+  /// 改动且语义自洽的修复。
+  double _dragProgress(double width) {
+    if (width <= 0) return 0;
+    final signed = _dragOffset;
+    if (_animDir == _PageDirection.next && signed > 0) return 0;
+    if (_animDir == _PageDirection.prev && signed < 0) return 0;
+    return (signed.abs() / width).clamp(0.0, 1.0);
+  }
+
   /// 当前翻页完成度 progress ∈ [0,1]。
-  /// 拖拽阶段 = |offset| / width; 动画阶段 = _pageAnimCurved.value。
+  /// 拖拽阶段 = [_dragProgress](带符号防越界); 动画阶段 = _pageAnimCurved.value。
   double _currentProgress(double width) {
     if (width <= 0) return 0;
     if (_isDragging) {
-      return (_dragOffset.abs() / width).clamp(0.0, 1.0);
+      return _dragProgress(width);
     }
     // ⚠️ 必须读 _pageAnimCurved(由 Tween(from,to) 映射的真实进度),
     // 而非 _pageAnim.value(永远是 0→1 的原始时钟)。
@@ -986,7 +1007,10 @@ class _ReaderViewState extends State<ReaderView>
       return;
     }
 
-    final fromProgress = _dragOffset.abs() / width;
+    // 与拖拽渲染同源(用 _dragProgress): 手指越过起点到反向侧时 from=0,
+    // 松手即走"回弹 0→0"短路(下方 < 0.001 分支), 不启动多余动画。视觉上页面
+    // 本就停在原位(越界期间 progress=0), 松手无事发生, 与原生 return 不绘制一致。
+    final fromProgress = _dragProgress(width);
     // 翻页条件: 方向已确定 且 非取消。**无位移阈值** ——
     // 对齐原生 HorizontalPageDelegate: ACTION_UP → onAnimStart 直接读 isCancel,
     // 不判断移动距离; onAnimStop: if (!isCancel) fillPage()。

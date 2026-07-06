@@ -427,6 +427,26 @@ controller 仍读 `book.chapters[i].content`。「本地优先」逻辑放 examp
 ### 测试覆盖（23 用例全过，全套 108 测试通过）
 `simulation_geometry_test.dart`：calcCornerXY 四角 + getCross（含竖直线鲁棒/平行退化）+ calcPoints 结构不变量（控制点落 corner 邻边、vertex 公式、touchToCornerDis、degrees）+ 除零保护 + 边界钳制 + 四角覆盖。几何核心不依赖渲染即可验证"形状对不对"。
 
+## 滑动翻页（slide）防越界修复（2026-07-06）
+
+**问题**：slide 模式下手指先左滑（锁定 NEXT）不松手、再回拉越过起点滑到右边缘时，动画方向变反——页面继续按 NEXT 公式（往左移）画一个 `|_dragOffset|/width` 的大进度，视觉上反方向滑动。
+
+**根因**：`_animDir` 在 8dp touch slop 时锁定一次，整个手势期间永不翻转（对齐原生）；而 `_currentProgress` / `_onDragEnd.fromProgress` 用 `_dragOffset.abs()` 算进度，**丢符号**。当用户回拉让 `_dragOffset` 变号（NEXT 时变正 / PREV 时变负），锁定的方向与位移符号矛盾 → 渲染用锁定方向画反向进度。
+
+**对齐原生**：legado `SlidePageDelegate.onDraw:36-39` 有显式防越界——
+```kotlin
+val offsetX = touchX - startX
+if ((mDirection == NEXT && offsetX > 0) || (mDirection == PREV && offsetX < 0)) return
+```
+方向锁定后手指越过起点到相反侧，**直接 return 不绘制**，视觉停留原位；松手 `onAnimStart` 走 `isCancel` 分支回弹。legado 的设计是"方向一旦锁定，想反向必须松手重来"。
+
+**修复**（`reader_view.dart`，新增 `_dragProgress(double width)` helper）：
+- 拖拽阶段位移符号与 `_animDir` 相反时（NEXT 且 `_dragOffset>0` / PREV 且 `<0`）返回 **0**（对齐原生 return 不绘制 → Flutter 用 progress=0 让三页都停在静止偏移）。
+- `_currentProgress` 拖拽分支 + `_onDragEnd.fromProgress` 都改用 `_dragProgress`（两处同源）。
+- 越界状态松手时：`fromProgress=0`、`_isCancel=true`、`shouldCommit=false`、`toProgress=0`，`(0-0).abs()<0.001` 短路直接 `_resetAnimState`，无多余动画。视觉上"页面本就停在原位，松手无事发生"，与原生一致。
+
+**为什么不让 `_animDir` 跟着翻转**：legado 设计如此（锁定后不翻转）；且中途翻转会让已预热的 peek 页（next/prev）与当前手势错配，动画起止/commit 目标都要重算。防越界 → progress=0 是最小改动且语义自洽。
+
 ## 待办（先不做动画）
 
 - ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。
