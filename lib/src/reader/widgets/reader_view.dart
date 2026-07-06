@@ -1104,9 +1104,25 @@ class _ReaderViewState extends State<ReaderView>
             size.width - startX, size.height, size.width, size.height);
       }
     }
-    // fire-and-forget: _captureSimBitmaps 内部逐帧做 gen 检查 + 自动 dispose 失效
-    // image, 故外部无需 then; 截图期间用户若松手 → _onDragEnd 走 painter 透明降级。
-    _captureSimBitmaps(gen: _animGen);
+    // 截图必须延迟到 PostFrame: 方向锁定时 _onDragUpdate 调了 _resolveTarget 兜底,
+    // 可能刚把 _nextCache/_prevCache 从 null 回填 → nextWidget 从 SizedBox.shrink 换成
+    // 带 RepaintBoundary 的真实页。但 widget 树 rebuild 要等下一帧, 若立即 toImage,
+    // _nextBoundaryKey.currentContext 仍是 null → boundary2=null → 跳过 _simNext 截图
+    // → NEXT 翻页底层露出的目标页 painter 降级成纯背景色(空白页 bug)。
+    //
+    // 与 _turnByAnim 的 wasAborting 分支同源(见其 906-915 注释): Flutter
+    // RepaintBoundary.toImage 截的是上一帧 paint 的 layer 缓存, setState 后必须等
+    // 下一帧才截到新树。拖拽方向锁定首帧卷曲极小(~8dp touch slop), painter 在
+    // curImage==null 时透明降级、底层 pageStack 透出当前页, 1 帧延迟肉眼无感。
+    //
+    // 代际守护: 捕获本次手势的 _animGen, PostFrame 回调时若 gen 已变(松手/起新手势/
+    // abort 都会 _animGen++), _captureSimBitmaps 内部 gen 检查自动放弃, 不交错覆盖。
+    final gen = _animGen;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && gen == _animGen) {
+        _captureSimBitmaps(gen: gen);
+      }
+    });
   }
 
   /// 更新仿真触摸点, 应用 touchY 锁边(对齐原生 onTouch MOVE 173-183):
