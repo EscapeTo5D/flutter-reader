@@ -588,7 +588,12 @@ class _ReaderViewState extends State<ReaderView>
 
   /// 拖拽阶段的翻页完成度 progress ∈ [0,1]。
   ///
-  /// 对齐原生 legado `SlidePageDelegate.onDraw:36-39` 的防越界:
+  /// **无动画模式恒为 0**(对齐原生 `NoAnimPageDelegate.onDraw` 空实现): 该 delegate
+  /// 继承 `HorizontalPageDelegate` 故手势判定(方向锁定/cancel/提交)照常生效, 但
+  /// `onDraw`/`setBitmap` 全空 → 拖拽过程中画面纹丝不动, 松手才 `onAnimStart` 直接
+  /// `fillPage` 跳转。这里 progress=0 让三页都停在静止偏移, 视觉与原生一致。
+  ///
+  /// **slide 模式防越界**(对齐原生 `SlidePageDelegate.onDraw:36-39`):
   /// 方向一旦锁定, 手指越过起点滑到相反侧(NEXT 时 `_dragOffset>0` / PREV 时
   /// `<0`) → 视为 0(页面停留原位, 不反向滑动)。原生在该情况下 `return` 不绘制;
   /// Flutter 用 progress=0 达到相同视觉效果(cur/next/prev 三页都在静止偏移)。
@@ -601,6 +606,8 @@ class _ReaderViewState extends State<ReaderView>
   /// 改动且语义自洽的修复。
   double _dragProgress(double width) {
     if (width <= 0) return 0;
+    // 无动画模式: 对齐原生 NoAnimPageDelegate.onDraw 空实现, 拖拽时画面静止。
+    if (controller.settings.pageAnimMode == PageAnimMode.none) return 0;
     final signed = _dragOffset;
     if (_animDir == _PageDirection.next && signed > 0) return 0;
     if (_animDir == _PageDirection.prev && signed < 0) return 0;
@@ -695,10 +702,11 @@ class _ReaderViewState extends State<ReaderView>
   void _onPageAnimStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed) return;
     if (_animDir == _PageDirection.none) return;
-    // 记下本次提交参数。
+    // 记下本次提交参数。动画启动前已确定方向并预热 peek; 此处兜底以防预热失效
+    // (跨章相邻缓存未就绪), 避免动画播完 target 仍为 null 导致白翻。
     final shouldCommit = !_isCancel;
     final dir = _animDir;
-    final target = dir == _PageDirection.next ? _nextCache : _prevCache;
+    final target = _resolveTarget(dir);
     final gen = _animGen;
     // 仿真模式: 立即提交, 不让末态扭曲几何渲染。
     if (controller.settings.pageAnimMode == PageAnimMode.simulation) {
@@ -820,6 +828,23 @@ class _ReaderViewState extends State<ReaderView>
   /// 关键(原生丝滑连点的来源): 若动画进行中再次点击, 不是忽略, 而是
   /// abortAnim —— 中断当前动画 + 若非取消则 fillPage 提交这次翻页(跳过动画
   /// 尾巴直接到位), 然后从新的当前页启动下一次动画。这样连点每一次都立即响应,
+  /// 取翻页目标页: 优先用 [_nextCache]/[_prevCache] 预热缓存, 为空则即时 peek 兜底
+  /// 并回填缓存。点击与拖拽/动画提交共用此入口, 避免「拖拽路径漏兜底 → 缓存为空时
+  /// 滑出纯白页 + 松手回弹、而点击能翻过去」的不一致(bug 修复)。
+  PeekInfo? _resolveTarget(_PageDirection dir) {
+    final cached = dir == _PageDirection.next ? _nextCache : _prevCache;
+    if (cached != null) return cached;
+    final fresh = dir == _PageDirection.next
+        ? controller.peekNext()
+        : controller.peekPrev();
+    if (dir == _PageDirection.next) {
+      _nextCache = fresh;
+    } else {
+      _prevCache = fresh;
+    }
+    return fresh;
+  }
+
   /// 不被 300ms 动画尾巴阻塞。
   void _turnByAnim(_PageDirection dir) {
     final c = controller;
@@ -832,18 +857,9 @@ class _ReaderViewState extends State<ReaderView>
     if (dir == _PageDirection.next && !c.canGoNext) return;
     if (dir == _PageDirection.prev && !c.canGoPrevious) return;
     // 邻接页已由 _refreshPeekCaches 预热常驻, 直接取用; 若预热失效(如数据异步
-    // 就绪晚于 initState)则即时 peek 兜底, 保证翻页不会因预热 bug 彻底失败。
-    var target = dir == _PageDirection.next ? _nextCache : _prevCache;
-    if (target == null) {
-      target = dir == _PageDirection.next
-          ? controller.peekNext()
-          : controller.peekPrev();
-      if (dir == _PageDirection.next) {
-        _nextCache = target;
-      } else {
-        _prevCache = target;
-      }
-    }
+    // 就绪晚于 initState、跨章相邻缓存未填好)则即时 peek 兜底, 保证翻页不会因
+    // 预热 bug 彻底失败。点击与拖拽共用同一兜底(见 _resolveTarget)。
+    final target = _resolveTarget(dir);
     if (target == null) return;
     // 无动画模式: 直接提交, 不进入叠加态也不启动动画。
     if (controller.settings.pageAnimMode == PageAnimMode.none) {
@@ -967,10 +983,15 @@ class _ReaderViewState extends State<ReaderView>
       } else if (_dragOffset > 0 && controller.canGoPrevious) {
         _animDir = _PageDirection.prev;
       }
-      // 仿真翻页: 方向确定时算出拖拽角并异步截图三页(对齐原生 setBitmap)。
-      if (_animDir != _PageDirection.none &&
-          controller.settings.pageAnimMode == PageAnimMode.simulation) {
-        _initSimForDrag(details.localPosition);
+      if (_animDir != _PageDirection.none) {
+        // 方向锁定即兜底填 peek 缓存: 预热失效时(跨章相邻缓存未就绪等)立即 peek,
+        // 让 slide 模式拖拽过程中目标页能渲染真实内容(否则 nextWidget 退化为
+        // SizedBox.shrink → 纯白页), 松手也能翻过去(见 _resolveTarget)。
+        _resolveTarget(_animDir);
+        // 仿真翻页: 方向确定时算出拖拽角并异步截图三页(对齐原生 setBitmap)。
+        if (controller.settings.pageAnimMode == PageAnimMode.simulation) {
+          _initSimForDrag(details.localPosition);
+        }
       }
     }
 
@@ -1020,7 +1041,7 @@ class _ReaderViewState extends State<ReaderView>
     // 无动画模式: 直接提交, 不播滑入/回弹动画
     // (对齐原生 NoAnimPageDelegate, 拖拽与点击共用同一 delegate)。
     if (controller.settings.pageAnimMode == PageAnimMode.none) {
-      final target = _animDir == _PageDirection.next ? _nextCache : _prevCache;
+      final target = _resolveTarget(_animDir);
       _resetAnimState();
       if (shouldCommit && target != null) {
         controller.commitTurn(target);
@@ -1035,7 +1056,7 @@ class _ReaderViewState extends State<ReaderView>
     // 否则 _startPageAnim 会从 from=1→to=1(forward from: 0 让 value 跳 0→1),
     // 松手时多出一个多余的动画/抖动一帧(对齐原生 Scroller 距离为 0 时立即 finish 的行为)。
     if ((fromProgress - toProgress).abs() < 0.001) {
-      final target = _animDir == _PageDirection.next ? _nextCache : _prevCache;
+      final target = _resolveTarget(_animDir);
       _resetSimState();
       _resetAnimState();
       if (shouldCommit && target != null) {
@@ -1272,7 +1293,7 @@ class _ReaderViewState extends State<ReaderView>
       _pageAnimCurved = null;
     }
     final dir = _animDir;
-    final target = dir == _PageDirection.next ? _nextCache : _prevCache;
+    final target = _resolveTarget(dir);
     final wasCancel = _isCancel;
     // ⚠️ 时序契约: _resetAnimState 会 _animGen++, 这正是让任何 pending 的
     // _captureSimBitmaps future 失效的关键(改动 1 的代际检查)。
