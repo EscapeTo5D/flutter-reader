@@ -358,12 +358,54 @@ class ReadingController extends ChangeNotifier {
   }
 
   void updateSettings(ReadingSettings settings) {
+    // 排版指纹: 只有影响 page_engine.paginate 结果的字段变化才需重排。
+    // pageAnimMode / 颜色 / headerConfig / footerConfig / tipColor / 屏幕开关 /
+    // selectable / shareLayout 等 UI 字段不进 paginate, 改它们触发重排是纯浪费
+    // (单章排版 ~100-260ms, 还会清空相邻章缓存 + 显示 loading), 是切换翻页动画
+    // 等操作的明显卡顿源。
+    final oldSig = _layoutSignature(_settings);
     _settings = settings;
-    _rePaginate();
+    final layoutChanged = _layoutSignature(_settings) != oldSig;
+    if (layoutChanged) {
+      _rePaginate();
+      // 设置变了会重排, 重新按当前 charOffset 定位回对应页(避免因排版变而停在错误的页)
+      _scheduleProgressSave();
+    }
     notifyListeners();
     _scheduleSettingsSave();
-    // 设置变了会重排, 重新按当前 charOffset 定位回对应页(避免因排版变而停在错误的页)
-    _scheduleProgressSave();
+  }
+
+  /// 聚合所有「影响 page_engine.paginate 分页结果」的设置字段, 用于判断改设置后
+  /// 是否需要重排。返回 record, 字段顺序与 [ReadingSettings] 声明顺序一致, 便于
+  /// 对照增删。
+  ///
+  /// ⚠️ 不进指纹的字段(改它们不该触发重排):
+  /// pageAnimMode / backgroundColor / textColor / tipColor / tipDividerColor /
+  /// backgroundImage / headerConfig / footerConfig / clickConfig /
+  /// showHeaderDivider / showFooterDivider / keepScreenOn / hideStatusBar /
+  /// hideNavigationBar / selectable / showBrightnessView / shareLayout。
+  ///
+  /// header/footer 的显隐(hidden)虽会改变喂给排版的可用高度, 但那是通过
+  /// reader_view 的 nonContentHeight → [updatePageSize] 独立路径触发重排的,
+  /// 不依赖 updateSettings, 故不进指纹(否则会与 pageSize 路径重复重排)。
+  (double, int, double, double, double, String?, int, bool, bool,
+      int, bool, double, double, double,
+      double, double, double, double,
+      double, double, double, double, double, double, double, double, double,
+      double)
+  _layoutSignature(ReadingSettings s) {
+    final p = s.padding;
+    return (
+      s.fontSize, s.fontWeight.value, s.lineHeight, s.paragraphSpacing,
+      s.letterSpacing, s.fontFamily, s.textIndent, s.textFullJustify,
+      s.textBottomJustify,
+      s.titleMode, s.isMiddleTitle, s.titleSize, s.titleTopSpacing,
+      s.titleBottomSpacing,
+      p.top, p.bottom, p.left, p.right,
+      p.headerHeight, p.footerHeight,
+      p.headerTop, p.headerBottom, p.headerLeft, p.headerRight,
+      p.footerTop, p.footerBottom, p.footerLeft, p.footerRight,
+    );
   }
 
   /// 页尺寸更新入口(reader_view 的 LayoutBuilder PostFrame 调用)。
