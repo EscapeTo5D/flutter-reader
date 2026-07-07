@@ -801,6 +801,67 @@ class ReadingController extends ChangeNotifier {
     );
   }
 
+  /// 异步加载并分页指定章, 返回分页结果(对齐原生 `nextChapter` 预加载链)。
+  ///
+  /// **用途**: scroll 模式 handler 预取相邻章 / 跨章翻页时调用。
+  /// 全量内存模式走 `_paginateChapterWithPipeline`(同步); 按章加载模式走
+  /// [_loadAndPaginateChapter](异步, 命中缓存 O(1), 未命中后台加载+排版,
+  /// in-flight 去重)。结果同时写入 [_adjacentChapterCache] 供后续命中。
+  ///
+  /// 对比旧的同步 [paginateChapter]:后者直接读 `_book.chapters[index].content`,
+  /// 按章加载模式下 chapters 仅存标题、正文懒加载 → 返回空内容分页。本方法走
+  /// 数据源 `loadContent`, 是 scroll 模式能跨章的正确入口。
+  ///
+  /// 返回非空 List 表示就绪; 空表示章越界或加载失败(调用方据此决定是否钳制滚动)。
+  Future<List<TextPage>> paginateChapterAsync(int chapterIndex) async {
+    if (_book == null || _pageSize == Size.zero) return [];
+    if (chapterIndex < 0 || chapterIndex >= totalChapters) return [];
+    if (_chapterSource == null) {
+      // 全量内存模式: 同步管线(章节已在 chapters[].content 里), 直接返回。
+      return _paginateChapterWithPipeline(chapterIndex);
+    }
+    // 按章加载模式: 走异步加载+排版(缓存命中 / in-flight 去重 / 后台 isolate)。
+    try {
+      return await _loadAndPaginateChapter(chapterIndex);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// 同步取章分页, **仅命中缓存, 不触发加载**(对齐原生 `curTextChapter.getPage`)。
+  ///
+  /// 用途: scroll 模式跨章翻页后, 原"当前章"刚被读过、分页必在缓存里, 用本方法
+  /// 同步取回作为新 prev(避免异步等待)。未命中缓存返回空 List(调用方按需异步补)。
+  List<TextPage> paginateChapterSyncOrCache(int chapterIndex) {
+    if (_book == null || _pageSize == Size.zero) return [];
+    if (chapterIndex < 0 || chapterIndex >= totalChapters) return [];
+    _invalidateAdjacentCacheIfNeeded();
+    final cached = _adjacentChapterCache[chapterIndex];
+    return cached ?? <TextPage>[];
+  }
+
+  /// 同步分页指定章, **优先命中缓存, 未命中则全量内存模式下同步重排**。
+  ///
+  /// 用途: scroll 模式预取相邻章时, 先尝试同步(全量内存模式 chapters[].content
+  /// 在内存, 同步排版即时就绪, 保证连续跨章翻页/fling 不被异步打断); 按章加载模式
+  /// 正文懒加载, 同步取不到 → 返回空, 调用方 fallback 到异步 [paginateChapterAsync]。
+  ///
+  /// 与 [paginateChapter] 区别: 本方法走 ContentProcessor 管线(与 _rePaginate 一致),
+  /// 保证 peek 页与提交后排版结果完全相同; 且只对全量内存模式同步排, 不对按章加载
+  /// 模式做空内容同步排(避免 bug3 空内容页)。
+  List<TextPage> paginateChapterPreferSync(int chapterIndex) {
+    if (_book == null || _pageSize == Size.zero) return [];
+    if (chapterIndex < 0 || chapterIndex >= totalChapters) return [];
+    // 按章加载模式: 正文懒加载, 不能同步排(否则空内容页)。
+    if (_chapterSource != null) {
+      // 但缓存命中的话可以直接返回(已异步排过的)。
+      _invalidateAdjacentCacheIfNeeded();
+      return _adjacentChapterCache[chapterIndex] ?? <TextPage>[];
+    }
+    // 全量内存模式: 同步管线(章节已在 chapters[].content 里), 命中缓存 O(1)。
+    return _paginateChapterWithPipeline(chapterIndex);
+  }
+
   Chapter? getChapter(int index) {
     if (_book == null || index < 0 || index >= _book!.chapters.length) {
       return null;

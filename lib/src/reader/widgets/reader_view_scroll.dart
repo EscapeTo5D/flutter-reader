@@ -13,33 +13,50 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
 
   /// scroll 模式专用: 按 pageAnimMode 创建/销毁 [_scrollHandler]。
   /// 切换翻页模式(设置弹窗)时, 从其他模式 ↔ scroll 重建 handler。
-  /// handler 自带 ChangeNotifier, 内部 setState 局部驱动偏移重绘, 不经过
-  /// controller.notify(避免整树 rebuild)。
+  ///
+  /// handler 自带 ChangeNotifier, rebuild 由 [_buildScrollContent] /
+  /// [_buildScrollChrome] 内的 `ListenableBuilder` 自动驱动(仅重绘依赖
+  /// pageOffset/章页码的子树), 不经过 `_ReaderViewState.setState`
+  /// (避免每帧整树 rebuild + relayout 的滚动卡顿), 也不经 controller.notify。
   void _ensureScrollHandler() {
     final wantScroll =
         widget.controller.settings.pageAnimMode == PageAnimMode.scroll;
     if (wantScroll && _scrollHandler == null) {
-      _scrollHandler = ScrollModeHandler(widget.controller, this)
-        ..addListener(_onScrollUpdate);
+      _scrollHandler = ScrollModeHandler(widget.controller, this);
+      // ⚠️ 切到 scroll 模式的首帧防闪: handler 的 _contentHeight 初始为 0,
+      // 若不立即初始化, 同帧 build 里 ListenableBuilder 会命中 `ch <= 0` 兜底
+      // 渲染一帧纯背景色(原页面内容被空白替换一帧)→ 用户看到闪烁。
+      // slide/none/sim 模式不闪是因为它们直接消费 controller.pages(切模式前已有),
+      // 无「切模式才创建、要等 LayoutBuilder 回调才有值」的延迟初始化空窗。
+      // 切模式时 controller.pageSize 一定已就绪(切前页面就在显示), 这里同步喂一次,
+      // 让 _contentHeight 在 build 前就有值, 消除首帧空窗。
+      final ps = widget.controller.pageSize;
+      if (ps.height > 0) {
+        _scrollHandler!.updatePageHeight(ps.height);
+      }
     } else if (!wantScroll && _scrollHandler != null) {
-      _scrollHandler!.removeListener(_onScrollUpdate);
       _scrollHandler!.dispose();
       _scrollHandler = null;
     }
   }
 
-  /// handler 的 pageOffset/章页码变化时局部 setState 重绘(仅正文偏移 + chrome 文本)。
-  void _onScrollUpdate() {
-    if (mounted) setState(() {});
-  }
+  /// handler 的 pageOffset/章页码变化时由 `ListenableBuilder` 自动局部重绘
+  /// (仅正文 Stack + chrome 文本), 不再走 `_ReaderViewState.setState`
+  /// —— 避免滚动每帧触发整棵 ReaderView rebuild + relayout 的卡顿。
+  ///
+  /// 对齐原生 `ContentTextView.scroll`: 原生改 `pageOffset` 后只 `postInvalidate()`
+  /// (纯 paint, 不 relayout)。Flutter 端用 ListenableBuilder 把 rebuild 范围收敛到
+  /// 仅「依赖 pageOffset/章页码」的子树, GestureDetector/LayoutBuilder/菜单层不参与。
 
   Widget _buildScrollContent() {
     final h = _scrollHandler!;
     final c = widget.controller;
     final settings = c.settings;
-    final ph = h.pageHeight;
-    final cur = h.curPage;
-    if (cur == null || ph <= 0) {
+
+    // ⚠️ loading 收敛(修复"切模式闪 loading"): 仅当 curPages 真为空(章节首次加载)
+    // 才显示转圈; pageHeight==0(切模式瞬间 LayoutBuilder 尚未回调)显示纯背景色占位,
+    // 不闪转圈。对齐原生切模式「直接切、无 loading」。
+    if (h.curPages.isEmpty) {
       return ColoredBox(
         color: settings.backgroundColor,
         child: Center(
@@ -57,88 +74,175 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
       );
     }
 
-    // 章内"下一页": 当前章下一页; 当前页已是末页则用下一章首页。
-    TextPage? nextPage;
-    if (h.pageInChapter < h.curPages.length - 1) {
-      nextPage = h.curPages[h.pageInChapter + 1];
-    } else if (h.chapterIndex < c.totalChapters - 1) {
-      nextPage = (h.nextPages != null && h.nextPages!.isNotEmpty)
-          ? h.nextPages!.first
-          : null;
-    }
-    // 章内"上一页": 当前章上一页; 当前页是首页则用上一章末页。
-    TextPage? prevPage;
-    if (h.pageInChapter > 0) {
-      prevPage = h.curPages[h.pageInChapter - 1];
-    } else if (h.chapterIndex > 0) {
-      prevPage = (h.prevPages != null && h.prevPages!.isNotEmpty)
-          ? h.prevPages!.last
-          : null;
-    }
+    // ⚠️ 关键性能优化: 用 ListenableBuilder 把 rebuild 范围收敛到本子树。
+    // pageOffset/章页码 每帧变化时只重建这里的正文 Stack, 不触发外层
+    // _ReaderViewState.build(避免 GestureDetector/LayoutBuilder/菜单层等整树
+    // rebuild)。对齐原生 ContentTextView.scroll 改 pageOffset 后只 postInvalidate
+    // (仅重画本 View)。
+    return ListenableBuilder(
+      listenable: h,
+      builder: (context, _) {
+        final hh = _scrollHandler!;
+        final cc = widget.controller;
+        final curPage = hh.curPage;
+        final ch = hh.contentHeight;
+        // contentHeight==0(切模式瞬间) → 纯背景色, 同帧 PostFrame updatePageHeight 后立即正常。
+        if (curPage == null || ch <= 0) {
+          return ColoredBox(color: settings.backgroundColor, child: SizedBox());
+        }
 
-    // 纯正文页 widget(showChrome:false 只画正文行)。每页高度 = pageHeight。
-    // pageIndex: 根据实际页码传入(前一页/当前页/后一页), 保证页脚页码正确。
-    Widget textPage(TextPage p, int index) => SizedBox(
-          height: ph,
-          child: pv.PageView(
-            page: p,
-            settings: settings,
-            pageIndex: index,
-            totalPages: h.curChapterPageCount,
-            chapterIndex: h.chapterIndex,
-            chapterSize: c.totalChapters,
-            chapterTitle: h.curChapterTitle,
-            bookName: c.book?.title,
-            searchQuery: c.searchQuery.isNotEmpty ? c.searchQuery : null,
-            useSafeArea: false,
-            showChrome: false,
+        // 渲染模型 cur / next / nextPlus(对齐原生 ContentTextView.drawPage,
+        // ⚠️ 不画 prev 页)。原生平移用 relativeOffset, 只在 paint 算坐标; Flutter
+        // 用 Transform.translate(paint 阶段平移, 不 relayout)等价。
+        final nextPage = hh.nextPage;
+        final nextPlusPage = hh.nextPlusPage;
+        final offset = hh.pageOffset;
+
+        // 纯正文页 widget(scrollContentMode 跳过 top/bottom padding, 保留左右)。
+        // 每页高度 = contentHeight(纯内容高, 对齐原生 visibleHeight)。
+        Widget textPage(TextPage p, int pageIndex, int chapterIndex,
+            int totalPages, String? chapterTitle) => SizedBox(
+              height: ch,
+              child: pv.PageView(
+                page: p,
+                settings: settings,
+                pageIndex: pageIndex,
+                totalPages: totalPages,
+                chapterIndex: chapterIndex,
+                chapterSize: cc.totalChapters,
+                chapterTitle: chapterTitle,
+                bookName: cc.book?.title,
+                searchQuery:
+                    cc.searchQuery.isNotEmpty ? cc.searchQuery : null,
+                useSafeArea: false,
+                showChrome: false,
+                scrollContentMode: true,
+              ),
+            );
+
+        // cur 页: offset = pageOffset(对齐原生 relativeOffset(0))。
+        // 跨章后 cur 页属于新章, chapterIndex/pageIndex/totalPages 取新章。
+        final curWidget = textPage(
+          curPage,
+          hh.pageInChapter,
+          hh.chapterIndex,
+          hh.curChapterPageCount,
+          hh.curChapterTitle,
+        );
+
+        // next 页: offset = pageOffset + contentHeight(对齐原生 relativeOffset(1))。
+        // 跨章时 next 属于下一章, chapterIndex = 当前章+1, pageIndex 从 0 起。
+        Widget? nextWidget;
+        int nextChapterIndex = hh.chapterIndex;
+        int nextPageIndex = hh.pageInChapter + 1;
+        int nextTotalPages = hh.curChapterPageCount;
+        String? nextChapterTitle = hh.curChapterTitle;
+        if (nextPage != null) {
+          if (hh.pageInChapter >= hh.curPages.length - 1) {
+            // 章末: next 在下一章首页。
+            nextChapterIndex = hh.chapterIndex + 1;
+            nextPageIndex = 0;
+            nextTotalPages = hh.nextPages?.length ?? 1;
+            nextChapterTitle =
+                cc.getChapter(nextChapterIndex)?.title;
+          }
+          nextWidget = textPage(nextPage, nextPageIndex, nextChapterIndex,
+              nextTotalPages, nextChapterTitle);
+        }
+
+        // nextPlus 页: offset = pageOffset + 2*contentHeight(对齐原生 relativeOffset(2))。
+        // 原生守卫: relativeOffset < visibleHeight 才画(下下页顶部进入可视区)。
+        Widget? nextPlusWidget;
+        if (nextPlusPage != null && offset + 2 * ch < ch) {
+          // 推算 nextPlus 所属章/页(章内/跨章)。
+          int npChapterIndex = hh.chapterIndex;
+          int npPageIndex = hh.pageInChapter + 2;
+          int npTotalPages = hh.curChapterPageCount;
+          String? npChapterTitle = hh.curChapterTitle;
+          final remaining = hh.curPages.length - 1 - hh.pageInChapter;
+          if (remaining <= 1 && hh.nextPages != null) {
+            // 涉及下一章。
+            npChapterIndex = hh.chapterIndex + 1;
+            npPageIndex = nextPageIndex == 0 ? 1 : 0;
+            npTotalPages = hh.nextPages!.length;
+            npChapterTitle = cc.getChapter(npChapterIndex)?.title;
+          }
+          nextPlusWidget = textPage(nextPlusPage, npPageIndex, npChapterIndex,
+              npTotalPages, npChapterTitle);
+        }
+
+        // ⚠️ 固定 padding 条 + 纯内容连续画布(对齐原生 visibleRect 裁剪 +
+        // 固定 paddingTop/Bottom 条):
+        // - Column: [顶部 padding 条(背景色, 高=paddingTop)] +
+        //   [内容区 Expanded: ClipRect + Stack 三页平移, 页步长=contentHeight] +
+        //   [底部 padding 条(背景色, 高=paddingBottom)]。
+        // - 内容区高度 = contentHeight, 页与页内容紧邻无 padding 空白带。
+        // - padding 条不随滚动(固定), 内容在其间流动。
+        final padTop = settings.padding.top;
+        final padBottom = settings.padding.bottom;
+
+        // Positioned(top:0) 固定定位(不改 top, 不触发 relayout)+ 内层
+        // Transform.translate 在 paint 阶段平移, 等价于原生 canvas.translate。
+        final contentStack = ClipRect(
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Transform.translate(
+                  offset: Offset(0, offset),
+                  child: curWidget,
+                ),
+              ),
+              if (nextWidget != null)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Transform.translate(
+                    offset: Offset(0, offset + ch),
+                    child: nextWidget,
+                  ),
+                ),
+              if (nextPlusWidget != null)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Transform.translate(
+                    offset: Offset(0, offset + 2 * ch),
+                    child: nextPlusWidget,
+                  ),
+                ),
+            ],
           ),
         );
 
-    // 计算各页的实际 pageIndex:
-    // - prevPage: 同章 = h.pageInChapter - 1; 跨章 = 上一章末页索引
-    // - curPage: h.pageInChapter
-    // - nextPage: 同章 = h.pageInChapter + 1; 跨章 = 0(下一章首页)
-    final prevIndex = h.pageInChapter > 0
-        ? h.pageInChapter - 1
-        : (h.prevPages?.isNotEmpty == true ? h.prevPages!.length - 1 : 0);
-    final curIndex = h.pageInChapter;
-    final nextIndex = h.pageInChapter < h.curPages.length - 1
-        ? h.pageInChapter + 1
-        : 0; // 跨章首页
-
-    final offset = h.pageOffset;
-    return ColoredBox(
-      color: settings.backgroundColor,
-      child: ClipRect(
-        child: Stack(
-          clipBehavior: Clip.hardEdge,
-          children: [
-            if (prevPage != null)
-              Positioned(
-                top: offset - ph,
-                left: 0,
-                right: 0,
-                child: textPage(prevPage, prevIndex),
-              ),
-            Positioned(
-                top: offset, left: 0, right: 0, child: textPage(cur, curIndex)),
-            if (nextPage != null)
-              Positioned(
-                top: offset + ph,
-                left: 0,
-                right: 0,
-                child: textPage(nextPage, nextIndex),
-              ),
-          ],
-        ),
-      ),
+        return ColoredBox(
+          color: settings.backgroundColor,
+          child: Column(
+            children: [
+              // 顶部 padding 条(固定, 不随滚动)。
+              Container(height: padTop, color: settings.backgroundColor),
+              // 内容区(连续画布, 页在此平移)。
+              Expanded(child: contentStack),
+              // 底部 padding 条(固定, 不随滚动)。
+              Container(height: padBottom, color: settings.backgroundColor),
+            ],
+          ),
+        );
+      },
     );
   }
 
   /// scroll 模式 chrome 浮层(固定在视口, 不随滚动)。由 reader_view.build
   /// 在 _buildPageContent 之外的同级 Stack 挂载, 覆盖在正文之上。页码/进度
   /// 取 handler 当前可见页(滚动中实时变), 对齐原生 `setProgress` 每帧更新。
+  ///
+  /// 用 ListenableBuilder 收敛 rebuild: 滚动中 pageInChapter 变化时只重建
+  /// chrome 的 PageView, 不触发外层 _ReaderViewState.build。
   Widget? _buildScrollChrome() {
     final h = _scrollHandler;
     if (h == null) return null;
@@ -148,59 +252,67 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
     final showFooter = !settings.footerConfig.hidden;
     if (!showHeader && !showFooter) return null;
     return IgnorePointer(
-      child: Stack(
-        children: [
-          if (showHeader)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: SafeArea(
-                bottom: false,
-                child: ColoredBox(
-                  color: settings.backgroundColor,
-                  child: pv.PageView(
-                    settings: settings,
-                    pageIndex: h.pageInChapter,
-                    totalPages: h.curChapterPageCount,
-                    chapterIndex: h.chapterIndex,
-                    chapterSize: c.totalChapters,
-                    chapterTitle: h.curChapterTitle,
-                    bookName: c.book?.title,
-                    useSafeArea: false,
-                    showChrome: false,
-                    showHeaderOnly: true,
-                    batteryLevel: BatteryProvider.instance.value,
+      child: ListenableBuilder(
+        listenable: h,
+        builder: (context, _) {
+          final hh = _scrollHandler;
+          if (hh == null) return const SizedBox();
+          final cc = widget.controller;
+          return Stack(
+            children: [
+              if (showHeader)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    bottom: false,
+                    child: ColoredBox(
+                      color: settings.backgroundColor,
+                      child: pv.PageView(
+                        settings: settings,
+                        pageIndex: hh.pageInChapter,
+                        totalPages: hh.curChapterPageCount,
+                        chapterIndex: hh.chapterIndex,
+                        chapterSize: cc.totalChapters,
+                        chapterTitle: hh.curChapterTitle,
+                        bookName: cc.book?.title,
+                        useSafeArea: false,
+                        showChrome: false,
+                        showHeaderOnly: true,
+                        batteryLevel: BatteryProvider.instance.value,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          if (showFooter)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: SafeArea(
-                top: false,
-                child: ColoredBox(
-                  color: settings.backgroundColor,
-                  child: pv.PageView(
-                    settings: settings,
-                    pageIndex: h.pageInChapter,
-                    totalPages: h.curChapterPageCount,
-                    chapterIndex: h.chapterIndex,
-                    chapterSize: c.totalChapters,
-                    chapterTitle: h.curChapterTitle,
-                    bookName: c.book?.title,
-                    useSafeArea: false,
-                    showChrome: false,
-                    showFooterOnly: true,
-                    batteryLevel: BatteryProvider.instance.value,
+              if (showFooter)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    top: false,
+                    child: ColoredBox(
+                      color: settings.backgroundColor,
+                      child: pv.PageView(
+                        settings: settings,
+                        pageIndex: hh.pageInChapter,
+                        totalPages: hh.curChapterPageCount,
+                        chapterIndex: hh.chapterIndex,
+                        chapterSize: cc.totalChapters,
+                        chapterTitle: hh.curChapterTitle,
+                        bookName: cc.book?.title,
+                        useSafeArea: false,
+                        showChrome: false,
+                        showFooterOnly: true,
+                        batteryLevel: BatteryProvider.instance.value,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }

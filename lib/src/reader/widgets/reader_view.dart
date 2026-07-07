@@ -235,7 +235,7 @@ class _ReaderViewState extends State<ReaderView>
     _selectionOverlay?.remove();
     _pageAnim.removeStatusListener(_onPageAnimStatus);
     _pageAnim.dispose();
-    _scrollHandler?.removeListener(_onScrollUpdate);
+    // _scrollHandler 的 rebuild 监听由 ListenableBuilder 自管, dispose 在 _ScrollMixin。
     _scrollHandler?.dispose();
     _routeAnimation?.removeStatusListener(_onRouteAnimation);
     _secondaryAnimation?.removeStatusListener(_onSecondaryAnimation);

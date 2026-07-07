@@ -18,6 +18,10 @@ class PageView extends StatelessWidget {
   final bool showChrome;
   final bool showFooterOnly;
   final bool showHeaderOnly;
+  /// scroll 滚动模式纯内容页: 跳过 top/bottom padding(由 reader_view 的固定
+  /// padding 条统一处理, 对齐原生 visibleRect 裁剪 + 固定 paddingTop/Bottom 条),
+  /// 保留 left/right 水平页边距。让页与页内容连续无 padding 空白带。
+  final bool scrollContentMode;
 
   const PageView({
     super.key,
@@ -35,6 +39,7 @@ class PageView extends StatelessWidget {
     this.showChrome = true,
     this.showFooterOnly = false,
     this.showHeaderOnly = false,
+    this.scrollContentMode = false,
   });
 
   @override
@@ -63,12 +68,9 @@ class PageView extends StatelessWidget {
     final body = Column(
       children: [
         if (showHeader) _buildHeader(context),
-        if (showHeader && settings.showHeaderDivider)
-          // 对齐原生 @color/divider = #66666666 (alpha 0x66≈40% 半透明灰)。
-          Container(height: 0.5, color: const Color(0x66666666)),
+        if (showHeader && settings.showHeaderDivider) _buildDivider(),
         Expanded(child: ClipRect(child: _buildContent())),
-        if (showFooter && settings.showFooterDivider)
-          Container(height: 0.5, color: const Color(0x66666666)),
+        if (showFooter && settings.showFooterDivider) _buildDivider(),
         if (showFooter) _buildFooter(context),
       ],
     );
@@ -104,7 +106,7 @@ class PageView extends StatelessWidget {
             top: p.footerTop,
             bottom: p.footerBottom,
           );
-    return Padding(
+    final chrome = Padding(
       padding: vertPadding,
       child: Row(
         children: [
@@ -114,7 +116,29 @@ class PageView extends StatelessWidget {
         ],
       ),
     );
+    // 分隔线对齐原生 view_book_page.xml: header 分隔线 vw_top_divider 在页眉
+    // 【下方】, footer 分隔线 vw_bottom_divider 在页脚【上方】。chrome-only 路径
+    // (scroll 模式浮层)此前漏画分隔线, 这里补齐, 让 scroll 模式与普通翻页一致。
+    // 颜色与 build() 里一致(对齐原生 @color/divider = #66666666), 渲染消费
+    // tipDividerColor 留待后续统一接通。
+    if (showHeaderOnly && settings.showHeaderDivider) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [chrome, _buildDivider()],
+      );
+    }
+    if (showFooterOnly && settings.showFooterDivider) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [_buildDivider(), chrome],
+      );
+    }
+    return chrome;
   }
+
+  /// 分隔线: 0.5px 高, 对齐原生 @color/divider = #66666666(alpha 0x66≈40% 半透明灰)。
+  /// 被 build()(普通翻页)和 _buildChromeOnly()(scroll 模式浮层)复用。
+  Widget _buildDivider() => Container(height: 0.5, color: const Color(0x66666666));
 
   Widget _buildHeader(BuildContext context) {
     return Padding(
@@ -263,12 +287,20 @@ class PageView extends StatelessWidget {
       return const Center(child: Text(''));
     }
 
+    // scroll 滚动模式纯内容页: 跳过 top/bottom padding(由 reader_view 固定
+    // padding 条统一处理, 对齐原生 visibleRect), 保留 left/right 水平页边距。
+    final vertPadding = scrollContentMode
+        ? 0.0
+        : settings.padding.top;
+    final vertPaddingBottom = scrollContentMode
+        ? 0.0
+        : settings.padding.bottom;
     return Padding(
       padding: EdgeInsets.only(
         left: settings.padding.left,
         right: settings.padding.right,
-        top: settings.padding.top,
-        bottom: settings.padding.bottom,
+        top: vertPadding,
+        bottom: vertPaddingBottom,
       ),
       child: SingleChildScrollView(
         physics: const NeverScrollableScrollPhysics(),

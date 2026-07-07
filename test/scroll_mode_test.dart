@@ -13,6 +13,12 @@ import 'package:flutter_reader/src/reader/page_animations/scroll_mode_handler.da
 void main() {
   const pageWidth = 360.0;
   const pageHeight = 120.0;
+  // contentHeight = 正文区总高 - body padding(默认 top=5/bottom=4) = 纯内容高,
+  // 对齐原生 visibleHeight。offset 步长和范围都用它。
+  // ReadingSettings 默认 padding.top=5, padding.bottom=4。
+  const padTop = 5.0;
+  const padBottom = 4.0;
+  const contentHeight = pageHeight - padTop - padBottom; // 111
 
   /// 构造一本 3 章、每章足够多段(强制多页)的假书。返回 (controller, handler)。
   /// handler 的 _curPages 从 controller.pages 同步(走真实排版管线)。
@@ -37,6 +43,10 @@ void main() {
     await Future.microtask(() {});
     final handler = ScrollModeHandler(controller, _TestVsync());
     handler.updatePageHeight(pageHeight);
+    // 等相邻章异步预取完成(全量内存模式走同步管线, 但仍是 Future, 需 pump 让回调跑完)。
+    // 跨章翻页测试依赖 _nextPages 就绪。
+    await Future.microtask(() {});
+    await Future.microtask(() {});
     return (controller, handler);
   }
 
@@ -57,31 +67,31 @@ void main() {
     expect(handler.pageInChapter, 0);
   });
 
-  testWidgets('越过底部(offset < -pageHeight)翻到下一页, offset 修正保持连续', (tester) async {
+  testWidgets('越过底部(offset < -contentHeight)翻到下一页, offset 修正保持连续', (tester) async {
     final (_, handler) = await makeBook();
     addTearDown(handler.dispose);
     final oldPage = handler.pageInChapter;
     handler.applyDragDelta(-60.0);
-    handler.applyDragDelta(-70.0); // 累计 -130 < -120 → 翻下一页
+    handler.applyDragDelta(-60.0); // 累计 -120 < -111 → 翻下一页
     expect(handler.pageInChapter, oldPage + 1, reason: '越过底部应翻到下一页');
     expect(
       handler.pageOffset,
-      closeTo(-10.0, 0.5),
-      reason: '翻页后 offset += pageHeight(-130+120=-10), 保持连续',
+      closeTo(-9.0, 0.5),
+      reason: '翻页后 offset += contentHeight(-120+111=-9), 保持连续',
     );
   });
 
   testWidgets('越过顶部(offset > 0)翻到上一页, offset 修正保持连续', (tester) async {
     final (_, handler) = await makeBook();
     addTearDown(handler.dispose);
-    handler.applyDragDelta(-130.0); // 翻到第2页, offset=-10
+    handler.applyDragDelta(-120.0); // 翻到第2页, offset=-9
     expect(handler.pageInChapter, 1);
-    handler.applyDragDelta(30.0); // offset: -10+30=20 > 0 → 翻上一页
+    handler.applyDragDelta(30.0); // offset: -9+30=21 > 0 → 翻上一页
     expect(handler.pageInChapter, 0, reason: '越过顶部应翻回上一页');
     expect(
       handler.pageOffset,
-      closeTo(-100.0, 0.5),
-      reason: '翻上一页后 offset -= pageHeight(20-120=-100)',
+      closeTo(-90.0, 0.5),
+      reason: '翻上一页后 offset -= contentHeight(21-111=-90)',
     );
   });
 
@@ -100,12 +110,12 @@ void main() {
     final chapterPages = handler.curPages.length;
     // 翻到第0章末页: 每次翻一页并校准 offset 到 0(分离翻页与偏移)。
     for (var i = 0; i < chapterPages - 1; i++) {
-      handler.applyDragDelta(-(pageHeight + 0.5));
+      handler.applyDragDelta(-(contentHeight + 0.5));
     }
     expect(handler.chapterIndex, 0);
     expect(handler.pageInChapter, chapterPages - 1);
     // 末页再向下越过底部 → 翻下一章首页。
-    handler.applyDragDelta(-(pageHeight + 0.5));
+    handler.applyDragDelta(-(contentHeight + 0.5));
     expect(handler.chapterIndex, 1, reason: '末页越过底部应翻到下一章');
     expect(handler.pageInChapter, 0);
   });
@@ -116,12 +126,12 @@ void main() {
     final chapterPages = handler.curPages.length;
     // 翻到下一章首页(整章 + 跨章1次)。
     for (var i = 0; i < chapterPages; i++) {
-      handler.applyDragDelta(-(pageHeight + 0.5));
+      handler.applyDragDelta(-(contentHeight + 0.5));
     }
     expect(handler.chapterIndex, 1, reason: '应到下一章');
     expect(handler.pageInChapter, 0);
     // 向上越过顶部(offset > 0) → 翻回上一章末页。
-    handler.applyDragDelta(pageHeight + 0.5);
+    handler.applyDragDelta(contentHeight + 0.5);
     expect(handler.chapterIndex, 0, reason: '首页向上越过顶部应翻回上一章');
     expect(
       handler.pageInChapter,
@@ -137,18 +147,18 @@ void main() {
     // 翻到末章末页: 第0章整章 + 跨章到第1章 + 整章 + 跨章到第2章 + 整章。
     final totalSteps = c0Pages * 3 + 2; // 跨3章(含两次跨章翻页)
     for (var i = 0; i < totalSteps; i++) {
-      handler.applyDragDelta(-(pageHeight + 0.5));
+      handler.applyDragDelta(-(contentHeight + 0.5));
     }
     expect(handler.chapterIndex, 2, reason: '应到末章');
     final lastPage = handler.pageInChapter;
     // 再向下滚 → 钳制, 不再翻。
-    handler.applyDragDelta(-(pageHeight + 0.5));
+    handler.applyDragDelta(-(contentHeight + 0.5));
     expect(handler.chapterIndex, 2);
     expect(handler.pageInChapter, lastPage, reason: '末章末页不再翻页');
     expect(
       handler.pageOffset,
-      closeTo(-pageHeight, 0.5),
-      reason: '末页钳到 -pageHeight',
+      closeTo(-contentHeight, 0.5),
+      reason: '末页钳到 -contentHeight',
     );
     // 避免未使用警告。
     c0Pages;
