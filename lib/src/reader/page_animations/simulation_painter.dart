@@ -155,8 +155,8 @@ class SimulationPainter extends CustomPainter {
       ..close();
 
     canvas.save();
-    canvas.clipPath(path0); // intersect
-    canvas.clipPath(path1); // intersect
+    canvas.clipPath(path0);
+    canvas.clipPath(path1);
     _drawPageImage(canvas, image);
 
     // 投影位置: 起点 start1, 宽度 = touchToCornerDis / 4(对齐原生)。

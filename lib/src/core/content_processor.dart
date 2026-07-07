@@ -29,7 +29,6 @@ class ContentProcessor {
 
     if (mContent == 'null') mContent = '';
 
-    // 1. 去除重复标题
     if (mContent.isNotEmpty) {
       final removed = _removeDuplicateTitle(
         content: mContent,
@@ -40,12 +39,10 @@ class ContentProcessor {
       sameTitleRemoved = removed.removed;
     }
 
-    // 2. 重新添加标题
     if (includeTitle && title.isNotEmpty) {
       mContent = '$title\n$mContent';
     }
 
-    // 3. 按段落分割，添加缩进
     final indentStr = textIndent > 0 ? '\u3000' * textIndent : '';
     final paragraphs = <String>[];
     final isFirstTitle = includeTitle && title.isNotEmpty;

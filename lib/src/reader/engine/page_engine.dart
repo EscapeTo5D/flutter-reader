@@ -197,7 +197,6 @@ class PageEngine {
     final indentStr = indent > 0 ? '\u3000' * indent : '';
     final displayText = '$indentStr$body';
 
-    // 用 TextPainter 排版整段
     final painter = TextPainter(
       text: TextSpan(text: displayText, style: style),
       textDirection: TextDirection.ltr,
@@ -215,7 +214,6 @@ class PageEngine {
       return result;
     }
 
-    // 逐行切分
     int offset = 0;
     for (var i = 0; i < lineMetrics.length; i++) {
       final metric = lineMetrics[i];
@@ -237,7 +235,6 @@ class PageEngine {
       final isMultiLine = lineMetrics.length > 1;
       final isFirstLine = i == 0;
 
-      // 判断行类型
       final bool shouldJustify;
       if (isTitle) {
         shouldJustify = false; // 标题不两端对齐
@@ -249,14 +246,11 @@ class PageEngine {
         shouldJustify = textFullJustify; // 中间行: 按配置决定
       }
 
-      // 测量每个字符的宽度
-      //
       // 每行用独立 painter 测量(不能用整段 painter: 跨行换行处 caret x 会跳回
       // 行首, 单行内 x 单调假设失效, 导致两端对齐拉伸量算错)。性能瓶颈主要在此,
       // 后续可考虑按 fontSize+letterSpacing 缓存字符宽度。
       final charWidths = _measureCharWidths(lineText, style);
 
-      // 计算缩进宽度
       final double indentWidth;
       final int indentSize;
       if (isFirstLine && indent > 0) {
@@ -279,7 +273,6 @@ class PageEngine {
         centerOffset = 0.0;
       }
 
-      // 生成 Column 列表(含两端对齐的坐标计算)
       final columns = _buildColumns(
         lineText: lineText,
         charWidths: charWidths,
@@ -396,7 +389,6 @@ class PageEngine {
         // maxWidth, 缩进行的末字被裁。
         if (i >= indentSize) {
           x += perCharExtra;
-          // 如果当前字符是空格，添加词间距
           if (lineText[i] == ' ') {
             x += perWordExtra;
           }
