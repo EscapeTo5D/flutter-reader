@@ -447,9 +447,56 @@ if ((mDirection == NEXT && offsetX > 0) || (mDirection == PREV && offsetX < 0)) 
 
 **为什么不让 `_animDir` 跟着翻转**：legado 设计如此（锁定后不翻转）；且中途翻转会让已预热的 peek 页（next/prev）与当前手势错配，动画起止/commit 目标都要重算。防越界 → progress=0 是最小改动且语义自洽。
 
+## 滚动翻页（scroll，2026-07-07 实现）
+
+对齐原生 legado `ScrollPageDelegate` + `ContentTextView.scroll`。**严格采用原生 pageOffset 模型**（单一 offset + 边界翻章修正），非旧 `912604b` 的 SingleChildScrollView 三章拼接长列方案。
+
+### ⚠️ 历史脉络（推翻旧记录）
+- 旧分支曾有 `912604b`(实现) / `618c873`(自动翻章) / `af73c17`(无缝切章) 三个 scroll commit，用的是 SingleChildScrollView + 三章全页拼超长列 + jumpTo 修正 offset 的方案。**该实现在 `905931d`（2026-06-26 目录迁移 `lib/src/widgets/` → `lib/src/reader/widgets/`）被整体删除**（连同 cover/slide/simulation_animation 等共 7 文件 1051 行）。此后 master 一直未重建 scroll，选中后 fallback 到 slide 水平滑动。
+- 本次（2026-07-07）从零重写，改用原生 pageOffset 模型，避免旧方案 offset↔page 换算脆弱、跨章抖动的问题。
+
+### 核心模型（务必记住）
+**单一状态变量 `pageOffset ∈ [-pageHeight, 0]`**：
+- `0` = 当前页顶部对齐视口顶（显示页首）
+- `-pageHeight` = 当前页底部对齐视口底（显示页尾）
+- `> 0` = 内容下方露出（需要上一页）
+- `< -pageHeight` = 上方露出（需要下一页）
+
+手指拖拽 / fling 惯性 / 点击翻页 都换算成 dy 喂给 `applyDragDelta(dy)`，它累加 `pageOffset`，越过 `[-pageHeight, 0]` 边界即翻页/翻章并修正偏移（保持视觉连续），到首/末页钳制 + 中止 fling（回弹）。对齐原生 `ContentTextView.scroll(mOffset)`（ContentTextView.kt:145-177）。
+
+### 文件结构
+- `lib/src/reader/page_animations/scroll_mode_handler.dart` — **核心 `ScrollModeHandler extends ChangeNotifier`**，持有 pageOffset + 当前章页 + 相邻章预取 + fling/pageTurn 两个 AnimationController。
+- `lib/src/reader/widgets/reader_view.dart` — scroll 手势分支（`_onDragUpdate` 读 `delta.dy` / `_onDragEnd` 启 fling）+ `_buildScrollContent`（chrome 浮层 + 正文偏移拼接）+ `_turnByAnim` scroll 分支 + 生命周期。
+
+### 关键算法
+1. **`applyDragDelta(dy)`**（循环消化越界）：`pageOffset += dy`；首章首页 `>0` 钳 0 + abort；`>0`（有上一页）翻上一页/章，`offset -= pageHeight`；`< -pageHeight`（有下一页）翻下一页/章，`offset += pageHeight`；末页无下一页钳 `-pageHeight`。**循环**（非 early-return）：单次大 dy（fling 大步长）可能越过整页，循环翻到 offset 落回 `[-pageHeight, 0]`；guard 限 `(总章×每章页数)+4` 次防死循环。
+2. **fling 惯性**（`onFlingStart(velocityY)`）：`ClampingScrollSimulation(position:0, velocity:velocityY)`，用**真实流逝时间**（`_fling.lastElapsedDuration`）驱动，每帧取 `sim.x(tSec)` 喂 `applyDragDelta`。⚠️ 不能用 AnimationController 归一化 value 当 simulation 自变量（摩擦衰减曲线会失真）。碰边界 `applyDragDelta` 内 `_abortAnim` 停 fling。
+3. **点击翻页**（`turnByClick(next)`）：滚动 ±(pageHeight+0.5)，easeOutCubic 平滑（duration = 300ms × 距离/页高，clamp 120~300）。**多滚 0.5px** 确保 offset 严格越过 `-pageHeight` 边界（`applyDragDelta` 用严格 `<` 判定，恰好 `== -pageHeight` 不翻页 = 显示页尾）。无动画模式直接跳。⚠️ 未沿用原生「保留最后一行」(calcNextPageOffset)——那是连续画布下的优化，Flutter 离散分页模型下整页翻语义更清晰、与 slide/sim 一致。
+4. **进度同步静默化**（核心性能）：滚动中 handler 局部 `setState`（仅重绘正文偏移 + chrome 文本），**不 notify controller**（避免整树 rebuild 卡顿）。章页码变化走 `controller.setCurrentPageSilent`（不 notify 不落盘），仅 ScrollEnd 时 `scheduleProgressSave` 防抖落盘。对齐原生 `ContentTextView.scroll` 只改 `pageOffset` + 局部 `postInvalidate`，不触发 `ReadBook.callback` 全量刷新。
+
+### 渲染（对齐原生 `ContentTextView.drawPage` + `relativeOffset`）
+- **正文层 `_buildScrollContent`**：`ClipRect(Stack)` 用 `Positioned(top: ...)` 拼接三页：prev(上一章末页) top = `offset - pageHeight`、cur top = `offset`、next(下一章首页) top = `offset + pageHeight`。每页用 `pv.PageView(showChrome:false)` 纯正文（`showChrome:false` 是本次新增的真正生效路径——只画正文行，无页眉页脚/分隔线/SafeArea）。
+- **chrome 浮层 `_buildScrollChrome`**（固定不随滚动）：⚠️ **不在 `_buildScrollContent` 内部**，而在 `reader_view.build()` 的外层 GestureDetector Stack 里作为 `_buildPageContent()` 的**同级** `Positioned.fill` 挂载。因 `_buildPageContent` 拿到的 LayoutBuilder 约束已扣除 `nonContentHeight`(chrome 高)，若 chrome 浮层画在内容区内部会与正文重叠。外层挂载让 chrome 覆盖在完整视口(含状态栏区)，对齐原生 chrome 在 PageView 父布局。`IgnorePointer` 包裹不挡手势。复用 `pv.PageView(showHeaderOnly/showFooterOnly)`，页码/进度取 handler 当前可见页(滚动中实时变)，对齐原生 `setProgress` 每帧更新。
+
+### ⚠️ 与原生/旧实现的关键差异
+1. **chrome 浮层 vs 连续画布**：原生把 cur/next/nextPlus 三个逻辑页画在**同一个 ContentTextView**（drawPage 用 relativeOffset 拼接），chrome 在父 PageView 固定。Flutter 端正文用 `Positioned` 拼接三页（非同一画布），chrome 用 Positioned 浮层。视觉等价。
+2. **点击翻页**：原生「保留最后一行」(calcNextPageOffset) 在连续画布下让「本页底 + 下页首同框」；Flutter 离散分页改为整页翻（±pageHeight），与 slide/sim 行为一致。
+3. **`pv.PageView.showChrome`**：此前是死字段（声明未消费），本次让它生效——`showChrome:false` 跳过 header/footer/分隔线/SafeArea，纯正文（scroll 模式正文页复用）。其他模式仍 `showChrome:true`。
+4. **静默进度同步**：原生无此问题（ContentTextView 不触发全量刷新）；Flutter 因 controller notify 会 rebuild 整树，故加 `setCurrentPageSilent` + ScrollEnd 才落盘。
+
+### 测试（`test/scroll_mode_test.dart`，11 用例）
+pageOffset 初始 0 / 章内滚不翻 / 越底翻下页 / 越顶翻上页 / 首章首页钳 0 / 章末翻下一章 / 下一章首页翻回上一章末页 / 末章末页钳制不翻 / 点击翻页推进 / setCurrentPageSilent 不 notify / scheduleProgressSave 不抛。全套 135 测试通过。
+
+### 不做（本轮排除）
+- ❌ cover 翻页（仍待实现）。
+- ❌ 水平手势翻页（scroll 模式纯垂直；点击区域翻页保留）。
+- ❌ 长截图模式（原生 `longScreenshot` 分支，无宿主场景）。
+- ❌ autoPager 自动翻页联动（本包无此功能）。
+
 ## 待办（先不做动画）
 
 - ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。
+- ~~cover/scroll 待实现~~。**2026-07-07 更新**：scroll 已实现（见上「滚动翻页」节）。cover 仍待实现。
 
 ## 键盘 viewInsets 引发的 rebuild 卡顿（2026-07-03 修复，commit 78d289a）
 

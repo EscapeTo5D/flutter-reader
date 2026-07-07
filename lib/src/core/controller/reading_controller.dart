@@ -176,6 +176,10 @@ class ReadingController extends ChangeNotifier {
   int get searchResultIndex => _searchResultIndex;
   int get totalPages => _pages.length;
 
+  /// 当前排版可用尺寸(正文区, 已扣除页眉页脚)。供 scroll 模式等需要知道
+  /// 单页像素高度的场景使用。所有页等高 = pageSize.height。
+  Size get pageSize => _pageSize;
+
   /// 章节总数。按章加载模式下取自 [_chapterSource], 否则取自 [_book.chapters]。
   int get totalChapters {
     final source = _chapterSource;
@@ -327,6 +331,10 @@ class ReadingController extends ChangeNotifier {
       }
     });
   }
+
+  /// 公开入口: 供 scroll 模式等在静默更新章页码([setCurrentPageSilent])后
+  /// 触发防抖落盘。滚动结束(ScrollEnd)时调用。
+  void scheduleProgressSave() => _scheduleProgressSave();
 
   /// 立即落盘进度(取消防抖定时器, 同步写)。dispose 时调用确保不丢。
   Future<void> flushProgress() async {
@@ -492,6 +500,22 @@ class ReadingController extends ChangeNotifier {
   void setCurrentChapterIndex(int index) {
     if (index >= 0 && index < totalChapters) {
       _currentChapterIndex = index;
+    }
+  }
+
+  /// 静默更新当前章/页(不 notifyListeners, 不立即落盘), 供 scroll 模式滚动过程
+  /// 高频同步进度用。滚动结束时应调 [scheduleProgressSave] 触发防抖落盘。
+  ///
+  /// 之所以需要静默 setter: scroll 模式逐像素滚动时若每帧 notify, 整个 reader
+  /// 子树(手势/Stack/CustomPainter/chrome)每帧 rebuild, 持续卡顿。改为 handler
+  /// 内部局部 setState 驱动偏移重绘, 章页码变化只走静默 setter 更新字段,
+  /// 待 ScrollEnd 再 notify + 落盘。对齐原生 legado: `ContentTextView.scroll` 里
+  /// 只改 `pageOffset` + 局部 `postInvalidate`, 不触发 `ReadBook.callback` 的
+  /// 全量刷新(翻页/翻章才回调)。
+  void setCurrentPageSilent(int chapterIndex, int pageInChapter) {
+    if (chapterIndex >= 0 && chapterIndex < totalChapters && pageInChapter >= 0) {
+      _currentChapterIndex = chapterIndex;
+      _currentPageIndex = pageInChapter.clamp(0, _pages.length - 1);
     }
   }
 
@@ -1116,7 +1140,6 @@ class ReadingController extends ChangeNotifier {
   /// 对齐原生 legado `fillPage` → `moveToNext/moveToPrev`。
   void commitTurn(PeekInfo target) {
     if (target.chapterIndex == _currentChapterIndex) {
-      // 章内翻页
       if (target.pageIndex != _currentPageIndex) {
         _currentPageIndex = target.pageIndex;
         notifyListeners();
@@ -1143,7 +1166,6 @@ class ReadingController extends ChangeNotifier {
   Future<void> loadSettings() async {
     final repo = _repository;
     if (repo == null) return;
-    // 优先取用户设置, 没有再取全局
     final s =
         (await repo.getSettings(userId: _userId)) ?? await repo.getSettings();
     if (s != null && !_disposed) {

@@ -37,7 +37,6 @@ class _ReadMenuState extends State<ReadMenu> {
     return Column(
       mainAxisSize: MainAxisSize.max,
       children: [
-        // 顶栏: 从顶部滑入/向上滑出。
         AnimatedSlide(
           offset: visible ? Offset.zero : const Offset(0, -1),
           duration: _animDuration,
@@ -49,13 +48,11 @@ class _ReadMenuState extends State<ReadMenu> {
           ),
         ),
         const Spacer(),
-        // 浮动按钮: 仅淡入淡出。
         AnimatedOpacity(
           opacity: visible ? 1.0 : 0.0,
           duration: _animDuration,
           child: _buildFloatingButtons(context),
         ),
-        // 底栏: 从底部滑入/向下滑出。
         AnimatedSlide(
           offset: visible ? Offset.zero : const Offset(0, 1),
           duration: _animDuration,
@@ -625,7 +622,9 @@ class _StyleDialogState extends State<_StyleDialog> {
   ///
   /// 位于段距滑块之后、底色预设之前, 顶部带 0.8dp 分割线(对齐原生 vw_bg_fg)。
   /// 5 个带边框圆角按钮水平等宽排列, 选中态填充主题强调色(对齐原生 accentColor)。
-  /// 运行时 slide/none 生效; cover/simulation/scroll 动画尚未实现, 配置照存。
+  /// 运行时 slide/none/simulation/scroll 生效; cover 动画尚未实现, 配置照存。
+  /// scroll 为单一 pageOffset + 边界翻章修正(对齐原生 ScrollPageDelegate),
+  /// 见 lib/src/reader/page_animations/scroll_mode_handler.dart。
   Widget _buildPageAnimSelector() {
     const labels = ['覆盖', '滑动', '仿真', '滚动', '无动画'];
     const modes = [

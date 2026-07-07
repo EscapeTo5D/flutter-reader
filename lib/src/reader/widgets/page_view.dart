@@ -43,6 +43,16 @@ class PageView extends StatelessWidget {
       return _buildChromeOnly(context);
     }
 
+    // 纯正文模式(scroll 滚动模式专用): 不画页眉/页脚/分隔线/SafeArea, 仅渲染
+    // 正文行。chrome 由 reader_view 的外层浮层固定在视口, 不随滚动
+    // (对齐原生: chrome 在 PageView 父布局, 正文在 ContentTextView 偏移)。
+    if (!showChrome) {
+      return DecoratedBox(
+        decoration: _buildBackground(),
+        child: ClipRect(child: _buildContent()),
+      );
+    }
+
     // 页眉/页脚的显隐只由各自配置的 hidden 决定, 与翻页模式(scroll 或其它)无关,
     // 对齐原生 legado: 翻页模式只改变翻页方式, 不影响 chrome 是否显示。
     final showHeader = settings.hideStatusBar && !settings.headerConfig.hidden;

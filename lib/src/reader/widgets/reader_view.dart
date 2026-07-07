@@ -10,9 +10,13 @@ import '../../core/system_ui_controller.dart';
 import '../entities/text_page.dart';
 import '../page_animations/simulation_geometry.dart';
 import '../page_animations/simulation_painter.dart';
+import '../page_animations/scroll_mode_handler.dart';
 import 'page_view.dart' as pv;
 import 'read_menu.dart';
 import 'search_menu.dart';
+
+part 'reader_view_scroll.dart';
+part 'reader_view_simulation.dart';
 
 /// 菜单显隐动画时长。
 ///
@@ -35,9 +39,11 @@ const int _pageAnimSpeedMs = 300;
 /// - 拖拽: 跟手(实时偏移), 松手后按阈值补完或回弹(匀速 300ms)。
 /// - 动画中触摸: 中断并提交当前方向(对齐原生 HorizontalPageDelegate.abortAnim)。
 /// 动画类型由 `ReadingSettings.pageAnimMode` 决定:
-/// - slide/none/simulation 已实现(simulation 为贝塞尔仿真翻页, MVP 阶段见
+/// - slide/none/simulation 已实现(simulation 为贝塞尔仿真翻页, 见
 ///   `page_animations/simulation_painter.dart`)。
-/// - cover/scroll 后续。
+/// - scroll 已实现(单一 pageOffset + 边界翻章修正, 见
+///   `page_animations/scroll_mode_handler.dart`)。
+/// - cover 后续。
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
 
@@ -48,7 +54,7 @@ class ReaderView extends StatefulWidget {
 }
 
 class _ReaderViewState extends State<ReaderView>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin, _ScrollMixin, _SimulationMixin {
   Offset? _tapDownPosition;
   OverlayEntry? _selectionOverlay;
 
@@ -64,10 +70,13 @@ class _ReaderViewState extends State<ReaderView>
   /// 翻页动画控制器。匀速(Curves.linear)对齐原生 LinearInterpolator。
   /// value 含义: 0=未翻(当前页在位), 1=翻完(目标页完全到位)。
   /// NEXT 方向 value 从 0→1; PREV 方向同样 0→1(偏移方向由 _animDir 决定)。
+  @override
   late final AnimationController _pageAnim;
+  @override
   Animation<double>? _pageAnimCurved;
 
   /// 当前翻页方向(none=静止)。拖拽和动画期间持有。
+  @override
   _PageDirection _animDir = _PageDirection.none;
 
   /// 是否正在拖拽(跟手阶段)。true 时 _dragOffset 直接驱动页面偏移。
@@ -81,38 +90,14 @@ class _ReaderViewState extends State<ReaderView>
   /// 时 sumX > lastX) 或 (PREV 时 sumX < lastX)`): 用本帧 delta.dx 符号, 而非累积
   /// 位移符号。这样「拖到一半反悔、回缩松开」会回弹(尊重最后意图)。
   /// NEXT 时本帧右移(delta>0)即 cancel; PREV 时本帧左移(delta<0)即 cancel。
+  @override
   bool _isCancel = false;
 
   // --- 仿真翻页状态(simulation 模式专用) ---
-  /// 仿真翻页的二维触摸点(对齐原生 mTouchX/mTouchY)。slide 模式仍用 _dragOffset。
-  /// Y 由 _onDragUpdate 的锁边逻辑约束(对齐原生 onTouch MOVE 173-183)。
-  Offset _simTouch = Offset.zero;
-
-  /// 仿真翻页的拖拽角(由 down 时的触摸点经 calcCornerXY 算出)。
-  SimCorner? _simCorner;
-
-  /// 仿真翻页三页位图缓存(对齐原生 SimulationPageDelegate.setBitmap 截三页)。
-  /// 由 RepaintBoundary.toImage 异步截图填充, _simBitmapsReady 标记就绪。
-  ui.Image? _simCur;
-  ui.Image? _simNext;
-  ui.Image? _simPrev;
-
-  /// 截图就绪标志。未就绪时 SimulationPainter 走纯色降级(卷曲形状仍可见)。
-  /// 通过 painter 的 image null 判断即可驱动降级, 此字段用于调试/防御性判断。
-  // ignore: unused_field
-  bool _simBitmapsReady = false;
-
-  /// 三个 RepaintBoundary 的 key, 用于截图(toImage)。
-  final GlobalKey _curBoundaryKey = GlobalKey();
-  final GlobalKey _nextBoundaryKey = GlobalKey();
-  final GlobalKey _prevBoundaryKey = GlobalKey();
-
-  /// 手势按下点(逻辑像素), 用于仿真翻页的 touchY 锁边判定(对齐原生 startY)。
-  Offset _simStartLocal = Offset.zero;
-
-  /// 仿真动画的起止触摸点(由 _onDragEnd/_turnByAnim 设置, _onSimAnimTick 插值)。
-  Offset? _simAnimFrom;
-  Offset? _simAnimTo;
+  // 仿真字段(_simTouch/_simCorner/_simCur 等 12 个)与方法(_initSimForDrag/
+  // _captureSimBitmaps/_startSimAnim/_abortAndCommit 等 7 个)已抽到
+  // _SimulationMixin (reader_view_simulation.dart)。build 里的 RepaintBoundary
+  // 截图层与 SimulationPainter 覆盖层仍留本类(pageStack 核心)。
 
   /// 邻接页缓存(常驻预热)。渲染层用统一 Stack[cur,prev,next] 让 peek 页
   /// 在静止态就常驻屏外完成首次排版+绘制, 拖拽/动画时 element 复用 → 零首帧 hitch。
@@ -126,11 +111,15 @@ class _ReaderViewState extends State<ReaderView>
   /// (目标页完全到位)那一帧先渲染一次, 下一帧再 commit。期间若用户又触发了新的翻页/
   /// 拖拽(从而调 _resetAnimState), 代际号变化会让挂起的 _deferredCommit 自动失效,
   /// 不会用旧状态误覆盖新动画。对齐原生 abortAnim「打断即接管」语义。
+  @override
   int _animGen = 0;
 
   /// 预热去重标记: 仅当章/页变化才刷新 peek, 避免无谓 setState 抖动。
   int? _peekedChapter;
   int? _peekedPage;
+
+  // --- 滚动翻页状态(scroll 模式专用) ---
+  // _scrollHandler 字段与方法已抽到 _ScrollMixin (reader_view_scroll.dart)。
 
   /// 转场动画是否已结束(Navigator push 进入阅读页的滑入动画)。
   ///
@@ -170,6 +159,7 @@ class _ReaderViewState extends State<ReaderView>
     // 初始预热邻接页。这里可能章节数据还没异步加载完(pages 为空)→ peek 返回 null,
     // 后续 _onControllerUpdate(章/页变化)会重新调 _refreshPeekCaches 补上。
     _refreshPeekCaches();
+    _ensureScrollHandler();
   }
 
   @override
@@ -245,6 +235,8 @@ class _ReaderViewState extends State<ReaderView>
     _selectionOverlay?.remove();
     _pageAnim.removeStatusListener(_onPageAnimStatus);
     _pageAnim.dispose();
+    _scrollHandler?.removeListener(_onScrollUpdate);
+    _scrollHandler?.dispose();
     _routeAnimation?.removeStatusListener(_onRouteAnimation);
     _secondaryAnimation?.removeStatusListener(_onSecondaryAnimation);
     _secondaryAnimation?.removeListener(_onSecondaryFrame);
@@ -279,6 +271,10 @@ class _ReaderViewState extends State<ReaderView>
         if (mounted) setState(() => _menuMounted = false);
       });
     }
+    // 翻页模式可能切换(设置弹窗) → 重建/销毁 scroll handler。
+    _ensureScrollHandler();
+    // scroll 模式: controller 的章/页变化(loadBook/restoreProgress/翻页提交)同步给 handler。
+    _scrollHandler?.syncFromController();
     setState(() {});
     // 章/页可能因翻页提交而变化 → 刷新预热缓存。
     _refreshPeekCaches();
@@ -393,6 +389,10 @@ class _ReaderViewState extends State<ReaderView>
           // 期间尺寸反弹回原值则取消重排)。此处不重复判断。
           if (_routeReady && _isCurrentRoute) {
             widget.controller.updatePageSize(size);
+            // scroll 模式: 把正文区高度同步给 handler(决定 pageOffset 边界)。
+            if (size.height > 0) {
+              _scrollHandler?.updatePageHeight(size.height);
+            }
           }
         });
 
@@ -405,6 +405,12 @@ class _ReaderViewState extends State<ReaderView>
           child: Stack(
             children: [
               _buildPageContent(),
+              // scroll 模式 chrome 浮层(固定在视口, 不随滚动)。仅在 scroll 模式
+              // + handler 就绪时挂载, 覆盖在正文之上, IgnorePointer 不挡手势。
+              if (widget.controller.settings.pageAnimMode ==
+                      PageAnimMode.scroll &&
+                  _scrollHandler != null)
+                Positioned.fill(child: _buildScrollChrome()!),
               // 菜单层挂载由本地 _menuMounted 控制(晚于 menuVisible 卸载),
               // 显隐由 menuVisible 驱动 AnimatedOpacity / ReadMenu 内部滑入滑出,
               // 让退出动画覆盖状态栏隐藏延迟, 视觉同步。
@@ -444,6 +450,14 @@ class _ReaderViewState extends State<ReaderView>
 
   Widget _buildPageContent() {
     final controller = widget.controller;
+
+    // scroll 模式走独立的滚动视图(pageOffset 偏移拼接三页), 与 slide/sim/none
+    // 的三页 Stack 完全不同。chrome 由外层 _buildScrollChrome 浮层固定。
+    if (controller.settings.pageAnimMode == PageAnimMode.scroll &&
+        _scrollHandler != null) {
+      return _buildScrollContent();
+    }
+
     final pages = controller.pages;
     final currentIndex = controller.currentPageIndex;
 
@@ -651,6 +665,16 @@ class _ReaderViewState extends State<ReaderView>
     );
   }
 
+  /// scroll 模式正文层: ClipRect(Stack) 用 pageOffset 偏移拼接 cur/prev/next 三页。
+  ///
+  /// 对齐原生 `ContentTextView.drawPage` + `relativeOffset`: 把三个逻辑页
+  /// 拼接在同一视口, `pageOffset` 变化时整体平移。chrome 不在这里画 —— 由
+  /// [_buildScrollChrome] 在外层 Stack 固定(对齐原生 chrome 在 PageView 父布局)。
+  ///
+  /// 页定位(对齐原生 relativeOffset):
+  /// - prev(上一章末页) top = pageOffset - pageHeight  (向上滚时从顶部露出)
+  /// - cur top = pageOffset                            (范围 [-pageHeight, 0])
+  /// - next(下一章首页) top = pageOffset + pageHeight  (向下滚时从底部露出)
   /// 用预取信息构建缓存页(跨章时 totalPages/chapterIndex 取自 PeekInfo)。
   Widget _buildPeekPage(PeekInfo info) {
     final c = widget.controller;
@@ -680,6 +704,7 @@ class _ReaderViewState extends State<ReaderView>
     );
   }
 
+  @override
   ReadingController get controller => widget.controller;
 
   // ===================== 翻页动画核心 =====================
@@ -764,6 +789,7 @@ class _ReaderViewState extends State<ReaderView>
   /// CurvedAnimation 内部 listener 会随 _pageAnim 空转, 开销极小, 不引发 bug; 留待
   /// 未来用单层 listener 架构(直接监听 _pageAnim + listener 内手算 from/to 映射)
   /// 彻底清理。
+  @override
   void _attachAnimListener(
       double from, double to, void Function() listener) {
     final old = _pageAnimCurved;
@@ -783,6 +809,7 @@ class _ReaderViewState extends State<ReaderView>
   /// ⚠️ 不清空 _nextCache/_prevCache: 新架构下它们是常驻预热缓存,
   /// 由 _refreshPeekCaches 统一管理(章/页变化时刷新)。
   /// 清空会导致预热失效 → 拖拽首帧 hitch 回归 / 翻页失败。
+  @override
   void _resetAnimState() {
     _animDir = _PageDirection.none;
     _isDragging = false;
@@ -818,6 +845,7 @@ class _ReaderViewState extends State<ReaderView>
   }
 
   /// 动画逐帧驱动重绘。
+  @override
   void _onAnimTick() {
     if (mounted) setState(() {});
   }
@@ -831,6 +859,7 @@ class _ReaderViewState extends State<ReaderView>
   /// 取翻页目标页: 优先用 [_nextCache]/[_prevCache] 预热缓存, 为空则即时 peek 兜底
   /// 并回填缓存。点击与拖拽/动画提交共用此入口, 避免「拖拽路径漏兜底 → 缓存为空时
   /// 滑出纯白页 + 松手回弹、而点击能翻过去」的不一致(bug 修复)。
+  @override
   PeekInfo? _resolveTarget(_PageDirection dir) {
     final cached = dir == _PageDirection.next ? _nextCache : _prevCache;
     if (cached != null) return cached;
@@ -856,6 +885,13 @@ class _ReaderViewState extends State<ReaderView>
     }
     if (dir == _PageDirection.next && !c.canGoNext) return;
     if (dir == _PageDirection.prev && !c.canGoPrevious) return;
+    // scroll 模式: 点击翻页 = 平滑滚动一整页(对齐原生 nextPageByAnim →
+    // startScroll)。离散分页模型下整页翻(±pageHeight), 与 slide/sim 一致。
+    if (controller.settings.pageAnimMode == PageAnimMode.scroll &&
+        _scrollHandler != null) {
+      _scrollHandler!.turnByClick(dir == _PageDirection.next);
+      return;
+    }
     // 邻接页已由 _refreshPeekCaches 预热常驻, 直接取用; 若预热失效(如数据异步
     // 就绪晚于 initState、跨章相邻缓存未填好)则即时 peek 兜底, 保证翻页不会因
     // 预热 bug 彻底失败。点击与拖拽共用同一兜底(见 _resolveTarget)。
@@ -959,6 +995,12 @@ class _ReaderViewState extends State<ReaderView>
   }
 
   void _onDragStart(DragStartDetails details) {
+    // scroll 模式: fling 进行中触摸 → 停止 fling 从当前位置接续拖拽
+    // (对齐原生 ACTION_DOWN → abortAnim; 不提交, 让用户继续操控)。
+    if (widget.controller.settings.pageAnimMode == PageAnimMode.scroll &&
+        _scrollHandler != null) {
+      _scrollHandler!.stopFling();
+    }
     // 动画中触摸 → 中断并提交当前方向(对齐原生 abortAnim)。
     if (_animDir != _PageDirection.none && !_isDragging) {
       _abortAndCommit();
@@ -973,6 +1015,14 @@ class _ReaderViewState extends State<ReaderView>
 
   void _onDragUpdate(DragUpdateDetails details) {
     if (!_isDragging) return;
+    // scroll 模式: 纯垂直滚动。dy 正值=手指下滑(往上一页), 负值=上滑(往下一页)。
+    // 直接喂给 handler.applyDragDelta, 它累加 pageOffset + 边界翻章修正。
+    // 对齐原生 ScrollPageDelegate.onScroll → curPage.scroll(touchY - lastY)。
+    if (widget.controller.settings.pageAnimMode == PageAnimMode.scroll &&
+        _scrollHandler != null) {
+      _scrollHandler!.applyDragDelta(details.delta.dy);
+      return;
+    }
     _dragOffset += details.delta.dx;
 
     // 首次确定方向(对齐原生 onScroll: 右滑>0=PREV, 左滑<0=NEXT)。
@@ -1018,8 +1068,17 @@ class _ReaderViewState extends State<ReaderView>
 
   void _onDragEnd(DragEndDetails details) {
     if (!_isDragging) return;
-    final width = MediaQuery.of(context).size.width;
     _isDragging = false;
+
+    // scroll 模式: 松手启动 fling 惯性(对齐原生 onAnimStart → fling(yVelocity))。
+    // 速度过小则直接同步进度(不启动空 fling)。
+    if (widget.controller.settings.pageAnimMode == PageAnimMode.scroll &&
+        _scrollHandler != null) {
+      _scrollHandler!.onFlingStart(details.velocity.pixelsPerSecond.dy);
+      return;
+    }
+
+    final width = MediaQuery.of(context).size.width;
 
     if (_animDir == _PageDirection.none) {
       // 未确定方向(位移 < 8dp), 直接回静止(对齐原生 isMoved=false 时 UP 不进翻页)。
@@ -1076,253 +1135,6 @@ class _ReaderViewState extends State<ReaderView>
     _startPageAnim(from: fromProgress, to: toProgress);
   }
 
-  // ===================== 仿真翻页 =====================
-
-  /// 拖拽方向首次确定时: 计算拖拽角 + 异步截图三页(对齐原生 setBitmap)。
-  void _initSimForDrag(Offset localPosition) {
-    final size = MediaQuery.of(context).size;
-    final isNext = _animDir == _PageDirection.next;
-    final startX = _simStartLocal.dx;
-    final startY = _simStartLocal.dy;
-    // 对齐原生 setDirection: PREV 不出现对角(强制底角); NEXT 仅左半屏拖拽才设对角。
-    if (isNext) {
-      if (size.width / 2 > startX) {
-        _simCorner = SimGeometry.calcCornerXY(
-            size.width - startX, startY, size.width, size.height);
-      } else {
-        // 右半屏 NEXT: 用 down 点本身算角(默认走右下角)。
-        _simCorner = SimGeometry.calcCornerXY(
-            startX, startY, size.width, size.height);
-      }
-    } else {
-      // PREV: 强制 touchY = viewHeight(底角, 不对角), 对齐原生 setDirection。
-      if (startX > size.width / 2) {
-        _simCorner = SimGeometry.calcCornerXY(
-            startX, size.height, size.width, size.height);
-      } else {
-        _simCorner = SimGeometry.calcCornerXY(
-            size.width - startX, size.height, size.width, size.height);
-      }
-    }
-    // 截图必须延迟到 PostFrame: 方向锁定时 _onDragUpdate 调了 _resolveTarget 兜底,
-    // 可能刚把 _nextCache/_prevCache 从 null 回填 → nextWidget 从 SizedBox.shrink 换成
-    // 带 RepaintBoundary 的真实页。但 widget 树 rebuild 要等下一帧, 若立即 toImage,
-    // _nextBoundaryKey.currentContext 仍是 null → boundary2=null → 跳过 _simNext 截图
-    // → NEXT 翻页底层露出的目标页 painter 降级成纯背景色(空白页 bug)。
-    //
-    // 与 _turnByAnim 的 wasAborting 分支同源(见其 906-915 注释): Flutter
-    // RepaintBoundary.toImage 截的是上一帧 paint 的 layer 缓存, setState 后必须等
-    // 下一帧才截到新树。拖拽方向锁定首帧卷曲极小(~8dp touch slop), painter 在
-    // curImage==null 时透明降级、底层 pageStack 透出当前页, 1 帧延迟肉眼无感。
-    //
-    // 代际守护: 捕获本次手势的 _animGen, PostFrame 回调时若 gen 已变(松手/起新手势/
-    // abort 都会 _animGen++), _captureSimBitmaps 内部 gen 检查自动放弃, 不交错覆盖。
-    final gen = _animGen;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && gen == _animGen) {
-        _captureSimBitmaps(gen: gen);
-      }
-    });
-  }
-
-  /// 更新仿真触摸点, 应用 touchY 锁边(对齐原生 onTouch MOVE 173-183):
-  /// - startY 在中部(viewH/3 ~ 2·viewH/3) 或方向=PREV → touchY 锁到底边 viewH
-  /// - startY 在上 1/3~1/2 且 NEXT → touchY 锁到顶 1
-  void _updateSimTouch(Offset localPosition) {
-    final size = MediaQuery.of(context).size;
-    final startY = _simStartLocal.dy;
-    var ty = localPosition.dy;
-    final isNext = _animDir == _PageDirection.next;
-    if ((startY > size.height / 3 && startY < size.height * 2 / 3) || !isNext) {
-      ty = size.height;
-    }
-    if (startY > size.height / 3 &&
-        startY < size.height / 2 &&
-        isNext) {
-      ty = 1.0;
-    }
-    _simTouch = Offset(localPosition.dx, ty);
-  }
-
-  /// 异步截图三页 RepaintBoundary → ui.Image(对齐原生 setBitmap)。
-  ///
-  /// 返回 `Future<bool>`: true=截图成功, false=失败(boundary 为空/异常)或已失效。
-  /// **点击翻页**需 await 它完成后再启动落地动画, 否则截图未就绪的前几帧 painter
-  /// 在 curImage==null 时整体不画(透明), 覆盖层透明期间底层静止 pageStack 显示当前页
-  /// (不闪), 但动画已走了一段, 截图回来后卷曲"突然出现"会有跳跃感。
-  /// **拖拽翻页**可 fire-and-forget: 用户手指按下到方向确定(~8dp 滑动)有几帧时间,
-  /// 截图通常已就绪; 且 painter 透明降级底层显示当前页, 无闪烁。
-  ///
-  /// [gen] 调用方在调用前捕获的 `_animGen`(本次手势的代际号)。**连点/连拖竞态修复**:
-  /// 每个 `await toImage` 后检查 `gen != _animGen` —— 若期间 abort/起新手势已让
-  /// `_animGen++`, 立即 dispose 本批刚截的 image、返回 false、**不写回字段**。这样:
-  /// (1) abort 后 pending 的截图不会把 image 回填进字段(C3); (2) 并发触发的多次截图
-  /// 各自带自己的 gen, 早一代的 future 完成时 gen 已失效, 自动放弃, 不交错覆盖(C1)。
-  /// 赋值前还 dispose 旧 image, 防止覆盖丢失造成泄漏(C1 的资源累积)。
-  Future<bool> _captureSimBitmaps({required int gen}) async {
-    _simBitmapsReady = false;
-    final ratio = MediaQuery.devicePixelRatioOf(context);
-    final boundary1 = _curBoundaryKey.currentContext?.findRenderObject()
-        as RenderRepaintBoundary?;
-    final boundary2 = _nextBoundaryKey.currentContext?.findRenderObject()
-        as RenderRepaintBoundary?;
-    final boundary3 = _prevBoundaryKey.currentContext?.findRenderObject()
-        as RenderRepaintBoundary?;
-    if (boundary1 == null) return false;
-    try {
-      // 逐张截图, 每张 await 后做代际检查: 若期间 abort/起手新手势(_animGen 已变),
-      // 立即 dispose 本批刚截的 image 并返回 false, 不写回字段(对齐原生同步语义:
-      // 截图进行中被打断, 这批图作废, 由新一次手势重新截)。
-      final cur = await boundary1.toImage(pixelRatio: ratio);
-      if (gen != _animGen) {
-        cur.dispose();
-        return false;
-      }
-      ui.Image? next;
-      if (boundary2 != null) {
-        next = await boundary2.toImage(pixelRatio: ratio);
-        if (gen != _animGen) {
-          cur.dispose();
-          next.dispose();
-          return false;
-        }
-      }
-      ui.Image? prev;
-      if (boundary3 != null) {
-        prev = await boundary3.toImage(pixelRatio: ratio);
-        if (gen != _animGen) {
-          cur.dispose();
-          next?.dispose();
-          prev.dispose();
-          return false;
-        }
-      }
-      // 全部成功且代际未变 → 赋值前 dispose 旧 image(防泄漏)。
-      _simCur?.dispose();
-      _simCur = cur;
-      if (next != null) {
-        _simNext?.dispose();
-        _simNext = next;
-      }
-      if (prev != null) {
-        _simPrev?.dispose();
-        _simPrev = prev;
-      }
-      _simBitmapsReady = true;
-      if (mounted) setState(() {});
-      return true;
-    } catch (e) {
-      // 截图失败不阻塞, painter 在 curImage==null 时透明降级继续。
-      debugPrint('sim toImage failed: $e');
-      return false;
-    }
-  }
-
-  /// 启动仿真翻页动画: 从松手时的 touch 点滑动到目标点(翻页落地或回弹)。
-  ///
-  /// 对齐原生 `onAnimStart`(`SimulationPageDelegate.kt:208-238`) 的 dx/dy 计算:
-  /// - shouldCommit=true(翻页落地): touch 推到对边
-  /// - shouldCommit=false(回弹): touch 拉回 corner 同侧原位
-  /// 用 AnimationController + Tween 插值 _simTouch, 每帧 _onSimAnimTick 重绘。
-  void _startSimAnim({required bool shouldCommit}) {
-    final size = MediaQuery.of(context).size;
-    final cornerX = _simCorner?.cornerX ?? size.width;
-    final cornerY = _simCorner?.cornerY ?? size.height;
-    final isNext = _animDir == _PageDirection.next;
-    var fromX = _simTouch.dx;
-    var fromY = _simTouch.dy;
-    if (fromX == 0) fromX = 0.1;
-    if (fromY == 0) fromY = 0.1;
-
-    double dx;
-    double dy;
-    if (!shouldCommit) {
-      // 回弹: 拉回原位(corner 同侧)。
-      if (cornerX > 0 && isNext) {
-        dx = size.width - fromX;
-      } else {
-        dx = -fromX;
-      }
-      if (!isNext) {
-        dx = -(size.width + fromX);
-      }
-      dy = cornerY > 0 ? size.height - fromY : -fromY;
-    } else {
-      // 翻页: 推到对边。
-      if (cornerX > 0 && isNext) {
-        dx = -(size.width + fromX);
-      } else {
-        dx = size.width - fromX;
-      }
-      dy = cornerY > 0 ? size.height - fromY : (1 - fromY);
-    }
-    _simAnimFrom = Offset(fromX, fromY);
-    _simAnimTo = Offset(fromX + dx, fromY + dy);
-
-    // 时长按原生公式 speed * |dx| / viewWidth, 满页约 300ms。
-    final durationMs = (_pageAnimSpeedMs * dx.abs() / size.width)
-        .round()
-        .clamp(1, _pageAnimSpeedMs * 2);
-    _pageAnim.duration = Duration(milliseconds: durationMs);
-    _attachAnimListener(0, 1, _onSimAnimTick);
-    _pageAnim.forward(from: 0);
-  }
-
-  /// 仿真动画逐帧: 用 controller value 在 _simAnimFrom → _simAnimTo 间线性插值 touch。
-  void _onSimAnimTick() {
-    final v = _pageAnimCurved?.value ?? 0;
-    final from = _simAnimFrom;
-    final to = _simAnimTo;
-    if (from != null && to != null) {
-      _simTouch = Offset(
-        from.dx + (to.dx - from.dx) * v,
-        from.dy + (to.dy - from.dy) * v,
-      );
-    }
-    if (mounted) setState(() {});
-  }
-
-  /// 清空仿真翻页临时状态(位图缓存保留供下次复用, 仅重置 touch/corner/动画插值)。
-  void _resetSimState() {
-    _simCorner = null;
-    _simTouch = Offset.zero;
-    _simAnimFrom = null;
-    _simAnimTo = null;
-    _simBitmapsReady = false;
-    // 释放位图避免内存累积(下次拖拽会重截)。
-    _simCur?.dispose();
-    _simNext?.dispose();
-    _simPrev?.dispose();
-    _simCur = null;
-    _simNext = null;
-    _simPrev = null;
-  }
-
-  /// 中断动画并按当前方向提交(对齐原生 HorizontalPageDelegate.abortAnim)。
-  /// 原生: scroller 运行中且 !isCancel → fillPage 提交。
-  void _abortAndCommit() {
-    if (_pageAnim.isAnimating) _pageAnim.stop();
-    final old = _pageAnimCurved;
-    if (old != null) {
-      old.removeListener(_onAnimTick);
-      old.removeListener(_onSimAnimTick);
-      _pageAnimCurved = null;
-    }
-    final dir = _animDir;
-    final target = _resolveTarget(dir);
-    final wasCancel = _isCancel;
-    // ⚠️ 时序契约: _resetAnimState 会 _animGen++, 这正是让任何 pending 的
-    // _captureSimBitmaps future 失效的关键(改动 1 的代际检查)。
-    // 顺序必须是先 _resetAnimState(动画+代际) 再 _resetSimState(dispose 位图),
-    // 反了会 dispose painter 正在用的 image。
-    _resetAnimState();
-    _resetSimState();
-    if (!wasCancel && target != null) {
-      controller.commitTurn(target);
-    } else if (mounted) {
-      setState(() {});
-    }
-  }
 }
 
 /// 拖拽方向(内部使用)。
