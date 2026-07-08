@@ -171,13 +171,6 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
               npTotalPages, npChapterTitle);
         }
 
-        // ⚠️ 固定 padding 条 + 纯内容连续画布(对齐原生 visibleRect 裁剪 +
-        // 固定 paddingTop/Bottom 条):
-        // - Column: [顶部 padding 条(背景色, 高=paddingTop)] +
-        //   [内容区 Expanded: ClipRect + Stack 三页平移, 页步长=contentHeight] +
-        //   [底部 padding 条(背景色, 高=paddingBottom)]。
-        // - 内容区高度 = contentHeight, 页与页内容紧邻无 padding 空白带。
-        // - padding 条不随滚动(固定), 内容在其间流动。
         final padTop = settings.padding.top;
         final padBottom = settings.padding.bottom;
 
@@ -220,100 +213,93 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
           ),
         );
 
-        return ColoredBox(
-          color: settings.backgroundColor,
-          child: Column(
-            children: [
-              // 顶部 padding 条(固定, 不随滚动)。
-              Container(height: padTop, color: settings.backgroundColor),
-              // 内容区(连续画布, 页在此平移)。
-              Expanded(child: contentStack),
-              // 底部 padding 条(固定, 不随滚动)。
-              Container(height: padBottom, color: settings.backgroundColor),
-            ],
+        // ⚠️ chrome 与正文对齐(修复「每页顶部文字被页眉盖住」):
+        // 旧实现把 chrome 放外层 Positioned 浮层覆盖正文, 而正文 Column 只留了
+        // 5px body padding、没给 header 留位置 → 正文从视口顶 0 起画, header
+        // 背景直接盖住每页顶部第一/二行。
+        //
+        // 对齐普通翻页模式 PageView.build 的结构: SafeArea + Column[header, divider,
+        // Expanded(正文), divider, footer]。chrome 与正文在同一 Column, 正文
+        // Expanded 天然落在 header 下方, 像素级对齐, 不再用浮层覆盖。
+        // chrome 内容(页码/进度)取 handler 当前可见页, 滚动中随 ListenableBuilder
+        // 实时更新——与原浮层方案同样每帧刷新, 无额外开销。
+        final showHeader = settings.hideStatusBar && !settings.headerConfig.hidden;
+        final showFooter = !settings.footerConfig.hidden;
+        // 分隔线/背景直接内联(对齐 page_view.dart 的 _buildDivider/_buildBackground,
+        // 这两个是私有方法无法跨文件复用, 这里照搬实现保证视觉一致)。
+        final divider = const ColoredBox(color: Color(0x66666666), child: SizedBox(height: 0.5, width: double.infinity));
+        final bgDecoration = (settings.backgroundImage != null &&
+                settings.backgroundImage!.isNotEmpty)
+            ? BoxDecoration(
+                image: DecorationImage(
+                  image: AssetImage(settings.backgroundImage!,
+                      package: 'flutter_reader'),
+                  fit: BoxFit.cover,
+                ),
+              )
+            : BoxDecoration(color: settings.backgroundColor);
+        return DecoratedBox(
+          decoration: bgDecoration,
+          child: SafeArea(
+            top: !settings.hideStatusBar,
+            bottom: !settings.hideNavigationBar,
+            child: Column(
+              children: [
+                if (showHeader)
+                  pv.PageView(
+                    settings: settings,
+                    pageIndex: hh.pageInChapter,
+                    totalPages: hh.curChapterPageCount,
+                    chapterIndex: hh.chapterIndex,
+                    chapterSize: cc.totalChapters,
+                    chapterTitle: hh.curChapterTitle,
+                    bookName: cc.book?.title,
+                    useSafeArea: false,
+                    showChrome: false,
+                    showHeaderOnly: true,
+                    batteryLevel: BatteryProvider.instance.value,
+                  ),
+                if (showHeader && settings.showHeaderDivider) divider,
+                Expanded(
+                  // 内容区 = 固定 padding 条 + 连续画布(对齐原生 visibleRect 裁剪)。
+                  // - Column[padTop 条, Expanded(滚动 Stack), padBottom 条]
+                  // - 页步长 = contentHeight, 页与页内容紧邻无 padding 空白带。
+                  // - padding 条不随滚动(固定), 内容在其间流动。
+                  child: Column(
+                    children: [
+                      Container(
+                          height: padTop, color: settings.backgroundColor),
+                      Expanded(child: contentStack),
+                      Container(
+                          height: padBottom, color: settings.backgroundColor),
+                    ],
+                  ),
+                ),
+                if (showFooter && settings.showFooterDivider) divider,
+                if (showFooter)
+                  pv.PageView(
+                    settings: settings,
+                    pageIndex: hh.pageInChapter,
+                    totalPages: hh.curChapterPageCount,
+                    chapterIndex: hh.chapterIndex,
+                    chapterSize: cc.totalChapters,
+                    chapterTitle: hh.curChapterTitle,
+                    bookName: cc.book?.title,
+                    useSafeArea: false,
+                    showChrome: false,
+                    showFooterOnly: true,
+                    batteryLevel: BatteryProvider.instance.value,
+                  ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  /// scroll 模式 chrome 浮层(固定在视口, 不随滚动)。由 reader_view.build
-  /// 在 _buildPageContent 之外的同级 Stack 挂载, 覆盖在正文之上。页码/进度
-  /// 取 handler 当前可见页(滚动中实时变), 对齐原生 `setProgress` 每帧更新。
-  ///
-  /// 用 ListenableBuilder 收敛 rebuild: 滚动中 pageInChapter 变化时只重建
-  /// chrome 的 PageView, 不触发外层 _ReaderViewState.build。
-  Widget? _buildScrollChrome() {
-    final h = _scrollHandler;
-    if (h == null) return null;
-    final c = widget.controller;
-    final settings = c.settings;
-    final showHeader = settings.hideStatusBar && !settings.headerConfig.hidden;
-    final showFooter = !settings.footerConfig.hidden;
-    if (!showHeader && !showFooter) return null;
-    return IgnorePointer(
-      child: ListenableBuilder(
-        listenable: h,
-        builder: (context, _) {
-          final hh = _scrollHandler;
-          if (hh == null) return const SizedBox();
-          final cc = widget.controller;
-          return Stack(
-            children: [
-              if (showHeader)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(
-                    bottom: false,
-                    child: ColoredBox(
-                      color: settings.backgroundColor,
-                      child: pv.PageView(
-                        settings: settings,
-                        pageIndex: hh.pageInChapter,
-                        totalPages: hh.curChapterPageCount,
-                        chapterIndex: hh.chapterIndex,
-                        chapterSize: cc.totalChapters,
-                        chapterTitle: hh.curChapterTitle,
-                        bookName: cc.book?.title,
-                        useSafeArea: false,
-                        showChrome: false,
-                        showHeaderOnly: true,
-                        batteryLevel: BatteryProvider.instance.value,
-                      ),
-                    ),
-                  ),
-                ),
-              if (showFooter)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(
-                    top: false,
-                    child: ColoredBox(
-                      color: settings.backgroundColor,
-                      child: pv.PageView(
-                        settings: settings,
-                        pageIndex: hh.pageInChapter,
-                        totalPages: hh.curChapterPageCount,
-                        chapterIndex: hh.chapterIndex,
-                        chapterSize: cc.totalChapters,
-                        chapterTitle: hh.curChapterTitle,
-                        bookName: cc.book?.title,
-                        useSafeArea: false,
-                        showChrome: false,
-                        showFooterOnly: true,
-                        batteryLevel: BatteryProvider.instance.value,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-  }
+  /// chrome(页眉/页脚)已在 [_buildScrollContent] 的正文 Column 内绘制
+  /// (对齐普通翻页模式 PageView 的结构), 不再用外层浮层覆盖。
+  /// 旧实现用 Positioned 浮层覆盖正文, 但正文 Column 只留 5px body padding、
+  /// 没给 header 留位置 → 每页顶部文字被页眉背景盖住。已废弃。
 }

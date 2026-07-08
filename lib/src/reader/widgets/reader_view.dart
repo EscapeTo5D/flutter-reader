@@ -405,12 +405,9 @@ class _ReaderViewState extends State<ReaderView>
           child: Stack(
             children: [
               _buildPageContent(),
-              // scroll 模式 chrome 浮层(固定在视口, 不随滚动)。仅在 scroll 模式
-              // + handler 就绪时挂载, 覆盖在正文之上, IgnorePointer 不挡手势。
-              if (widget.controller.settings.pageAnimMode ==
-                      PageAnimMode.scroll &&
-                  _scrollHandler != null)
-                Positioned.fill(child: _buildScrollChrome()!),
+              // chrome(页眉/页脚): scroll 模式已并入 _buildScrollContent 的正文
+              // Column(对齐普通 PageView 结构); 其他模式 chrome 由各页 PageView
+              // 自带。此处不再单独挂 scroll chrome 浮层。
               // 菜单层挂载由本地 _menuMounted 控制(晚于 menuVisible 卸载),
               // 显隐由 menuVisible 驱动 AnimatedOpacity / ReadMenu 内部滑入滑出,
               // 让退出动画覆盖状态栏隐藏延迟, 视觉同步。
