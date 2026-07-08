@@ -52,6 +52,27 @@ void main() {
       c.dispose();
     });
 
+    test('切到/切出 scroll 模式触发重排(scroll 排版不减 padding)', () {
+      // scroll 模式排版不减 padding(正文铺满 pageSize.height), 其他模式减 padding。
+      // 跨 scroll 边界切换时 availableHeight 不同 → pages 不通用 → 必须重排。
+      final c = makeController();
+      final pagesBefore = c.pages;
+
+      // slide(默认) → scroll: 跨 scroll 边界, 应重排。
+      c.updateSettings(c.settings.copyWith(pageAnimMode: PageAnimMode.scroll));
+      expect(identical(c.pages, pagesBefore), isFalse,
+          reason: '切到 scroll 模式排版参数变了(不减padding), 应重排');
+
+      // scroll → scroll 内切(slide→none 不适用, 这里测 scroll→simulation 回切):
+      final pagesScroll = c.pages;
+      c.updateSettings(c.settings.copyWith(pageAnimMode: PageAnimMode.simulation));
+      expect(identical(c.pages, pagesScroll), isFalse,
+          reason: '切出 scroll 模式排版参数变回(减padding), 应重排');
+
+      // slide ↔ simulation(都不跨 scroll 边界)不重排(上面那条测试已覆盖)。
+      c.dispose();
+    });
+
     test('改 UI 字段 (颜色/keepScreenOn/headerConfig) 都不触发重排', () {
       final c = makeController();
       final pagesBefore = c.pages;

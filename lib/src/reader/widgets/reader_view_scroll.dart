@@ -171,9 +171,6 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
               npTotalPages, npChapterTitle);
         }
 
-        final padTop = settings.padding.top;
-        final padBottom = settings.padding.bottom;
-
         // Positioned(top:0) 固定定位(不改 top, 不触发 relayout)+ 内层
         // Transform.translate 在 paint 阶段平移, 等价于原生 canvas.translate。
         final contentStack = ClipRect(
@@ -225,9 +222,14 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
         // 实时更新——与原浮层方案同样每帧刷新, 无额外开销。
         final showHeader = settings.hideStatusBar && !settings.headerConfig.hidden;
         final showFooter = !settings.footerConfig.hidden;
-        // 分隔线/背景直接内联(对齐 page_view.dart 的 _buildDivider/_buildBackground,
-        // 这两个是私有方法无法跨文件复用, 这里照搬实现保证视觉一致)。
-        final divider = const ColoredBox(color: Color(0x66666666), child: SizedBox(height: 0.5, width: double.infinity));
+        // ⚠️ 分隔线由 pv.PageView(showHeaderOnly/showFooterOnly) 自带:
+        // _buildChromeOnly(page_view.dart:124-135) 已按 showHeaderDivider/
+        // showFooterDivider 在 chrome 行下/上方画一条 0.5px 分隔线(对齐原生
+        // vw_top_divider 在页眉下方 / vw_bottom_divider 在页脚上方)。
+        // 故此处不能再额外加 divider —— 否则与 PageView 自带分隔线重复, 上下两条
+        // 0.5px 线中间夹着 headerBottom/footerTop padding, 视觉上是「比分隔线高一点
+        // 的带」, 且比 nonContentHeight 预算(每侧只算 0.5px)多占高度, 把正文挤高。
+        // 背景直接内联(对齐 page_view.dart 的 _buildBackground, 私有方法无法跨文件复用)。
         final bgDecoration = (settings.backgroundImage != null &&
                 settings.backgroundImage!.isNotEmpty)
             ? BoxDecoration(
@@ -259,23 +261,21 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
                     showHeaderOnly: true,
                     batteryLevel: BatteryProvider.instance.value,
                   ),
-                if (showHeader && settings.showHeaderDivider) divider,
                 Expanded(
-                  // 内容区 = 固定 padding 条 + 连续画布(对齐原生 visibleRect 裁剪)。
-                  // - Column[padTop 条, Expanded(滚动 Stack), padBottom 条]
-                  // - 页步长 = contentHeight, 页与页内容紧邻无 padding 空白带。
-                  // - padding 条不随滚动(固定), 内容在其间流动。
-                  child: Column(
-                    children: [
-                      Container(
-                          height: padTop, color: settings.backgroundColor),
-                      Expanded(child: contentStack),
-                      Container(
-                          height: padBottom, color: settings.backgroundColor),
-                    ],
-                  ),
+                  // 内容区 = 连续画布, 占满 Expanded(= pageSize.height)。
+                  // scroll 模式排版不减 padding(正文铺满 pageSize.height, 见
+                  // page_engine scrollContentMode), 每页 SizedBox 步长 = contentHeight
+                  // = pageSize.height, 与 contentStack 高一致 → cur+next 两页在 offset+ch
+                  // 对接, contentStack 底 = footer 分隔线, 下一页首行从分隔线处露出
+                  // (对齐原生: 滚动时字从分隔线出现)。
+                  //
+                  // ⚠️ 旧实现用 Column[padTop 条, Expanded(contentStack), padBottom 条]
+                  // 两个固定条夹 contentStack, 把它压成 pageSize-padTop-padBottom,
+                  // 下方 padBottom 条(默认4px)画在 contentStack 与 footer 分隔线之间 →
+                  // 滚动时下一页首行从分隔线上方 4px 处露出, 而非贴分隔线。原生无此固定条,
+                  // 故删之, 让 contentStack 直接占满贴 footer。
+                  child: contentStack,
                 ),
-                if (showFooter && settings.showFooterDivider) divider,
                 if (showFooter)
                   pv.PageView(
                     settings: settings,

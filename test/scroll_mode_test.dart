@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_reader/src/core/controller/reading_controller.dart';
 import 'package:flutter_reader/src/core/models/book.dart';
+import 'package:flutter_reader/src/core/models/reading_settings.dart';
 import 'package:flutter_reader/src/reader/page_animations/scroll_mode_handler.dart';
 
 /// 滚动翻页模式核心状态机测试, 对齐原生 legado `ContentTextView.scroll`。
@@ -13,17 +14,17 @@ import 'package:flutter_reader/src/reader/page_animations/scroll_mode_handler.da
 void main() {
   const pageWidth = 360.0;
   const pageHeight = 120.0;
-  // contentHeight = 正文区总高 - body padding(默认 top=5/bottom=4) = 纯内容高,
-  // 对齐原生 visibleHeight。offset 步长和范围都用它。
-  // ReadingSettings 默认 padding.top=5, padding.bottom=4。
-  const padTop = 5.0;
-  const padBottom = 4.0;
-  const contentHeight = pageHeight - padTop - padBottom; // 111
+  // scroll 模式排版不减 padding(正文铺满 pageSize.height), 故 contentHeight = pageHeight。
+  // handler 的 contentHeight 和 controller 排版的 availableHeight 都用它做步长/边界。
+  const contentHeight = pageHeight; // 120
 
   /// 构造一本 3 章、每章足够多段(强制多页)的假书。返回 (controller, handler)。
   /// handler 的 _curPages 从 controller.pages 同步(走真实排版管线)。
   Future<(ReadingController, ScrollModeHandler)> makeBook() async {
     final controller = ReadingController();
+    // scroll 模式: 排版不减 padding(scrollContentMode), 与 handler contentHeight 一致。
+    controller.updateSettings(
+        controller.settings.copyWith(pageAnimMode: PageAnimMode.scroll));
     final chapters = <Chapter>[
       for (var i = 0; i < 3; i++)
         Chapter(
@@ -71,27 +72,27 @@ void main() {
     final (_, handler) = await makeBook();
     addTearDown(handler.dispose);
     final oldPage = handler.pageInChapter;
-    handler.applyDragDelta(-60.0);
-    handler.applyDragDelta(-60.0); // 累计 -120 < -111 → 翻下一页
+    // 翻过一整页(多 0.5 确保严格越过 -contentHeight 边界), 翻页后 offset 归 0。
+    handler.applyDragDelta(-(contentHeight + 0.5));
     expect(handler.pageInChapter, oldPage + 1, reason: '越过底部应翻到下一页');
     expect(
       handler.pageOffset,
-      closeTo(-9.0, 0.5),
-      reason: '翻页后 offset += contentHeight(-120+111=-9), 保持连续',
+      closeTo(-0.5, 0.5),
+      reason: '翻页后 offset += contentHeight(-(ch+0.5)+ch=-0.5), 保持连续',
     );
   });
 
   testWidgets('越过顶部(offset > 0)翻到上一页, offset 修正保持连续', (tester) async {
     final (_, handler) = await makeBook();
     addTearDown(handler.dispose);
-    handler.applyDragDelta(-120.0); // 翻到第2页, offset=-9
+    handler.applyDragDelta(-(contentHeight + 0.5)); // 翻到第2页, offset=-0.5
     expect(handler.pageInChapter, 1);
-    handler.applyDragDelta(30.0); // offset: -9+30=21 > 0 → 翻上一页
+    handler.applyDragDelta(contentHeight); // offset: -0.5+120=119.5 > 0 → 翻上一页
     expect(handler.pageInChapter, 0, reason: '越过顶部应翻回上一页');
     expect(
       handler.pageOffset,
-      closeTo(-90.0, 0.5),
-      reason: '翻上一页后 offset -= contentHeight(21-111=-90)',
+      closeTo(-0.5, 0.5),
+      reason: '翻上一页后 offset -= contentHeight(119.5-120=-0.5)',
     );
   });
 

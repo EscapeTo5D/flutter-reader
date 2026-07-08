@@ -133,13 +133,13 @@ class ScrollModeHandler extends ChangeNotifier {
   /// reader_view 在 LayoutBuilder 拿到正文区尺寸时调用。尺寸变化(旋转/分屏)
   /// 时重新校准 contentHeight, 并重排相邻章。
   ///
-  /// [height] = 正文区总高(已扣 chrome, 含 body padding) = controller.pageSize.height。
-  /// 内部算 `_contentHeight = height - padding.top - padding.bottom`(对齐原生
-  /// `visibleHeight = viewHeight - paddingTop - paddingBottom`), offset 步长用它。
+  /// [height] = 正文区总高(已扣 chrome) = controller.pageSize.height。
+  /// scroll 模式正文铺满整个 pageSize.height(不减 padding), 故 contentHeight = height。
+  /// 对齐原生 ContentTextView: 约束在两 divider 间, 视口 = viewHeight(无额外 padding 条),
+  /// padding 体现在 TextLine.lineTop 里, pageOffset 在内容坐标空间运行。
   void updatePageHeight(double height) {
     if (height <= 0) return;
-    final p = _controller.settings.padding;
-    final newContent = (height - p.top - p.bottom).clamp(0.0, height);
+    final newContent = height;
     final changed = (newContent - _contentHeight).abs() > 0.5;
     final wasZero = _contentHeight <= 0;
     _contentHeight = newContent;

@@ -367,14 +367,22 @@ class ReadingController extends ChangeNotifier {
 
   void updateSettings(ReadingSettings settings) {
     // 排版指纹: 只有影响 page_engine.paginate 结果的字段变化才需重排。
-    // pageAnimMode / 颜色 / headerConfig / footerConfig / tipColor / 屏幕开关 /
+    // 颜色 / headerConfig / footerConfig / tipColor / 屏幕开关 /
     // selectable / shareLayout 等 UI 字段不进 paginate, 改它们触发重排是纯浪费
     // (单章排版 ~100-260ms, 还会清空相邻章缓存 + 显示 loading), 是切换翻页动画
     // 等操作的明显卡顿源。
     final oldSig = _layoutSignature(_settings);
+    final oldPageAnimMode = _settings.pageAnimMode;
     _settings = settings;
     final layoutChanged = _layoutSignature(_settings) != oldSig;
-    if (layoutChanged) {
+    // ⚠️ scroll 模式排版不减 padding(正文铺满 pageSize.height), 其他模式减 padding
+    // (撑满 availableHeight)。pageAnimMode 跨 scroll 边界切换时 availableHeight 不同,
+    // pages 不通用, 必须重排。仅 scroll↔非scroll 切换才触发, slide↔none↔sim 不触发
+    // (它们都用 padding=不减的同一套 pages)。
+    final scrollBoundaryChanged =
+        (oldPageAnimMode == PageAnimMode.scroll) !=
+            (settings.pageAnimMode == PageAnimMode.scroll);
+    if (layoutChanged || scrollBoundaryChanged) {
       _rePaginate();
       // 设置变了会重排, 重新按当前 charOffset 定位回对应页(避免因排版变而停在错误的页)
       _scheduleProgressSave();
@@ -798,6 +806,7 @@ class ReadingController extends ChangeNotifier {
       content: _book!.chapters[chapterIndex].content,
       pageSize: _pageSize,
       settings: _settings,
+      scrollContentMode: _settings.pageAnimMode == PageAnimMode.scroll,
     );
   }
 
@@ -1017,6 +1026,7 @@ class ReadingController extends ChangeNotifier {
       settings: _settings,
       // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定。
       firstParagraphIsTitle: title.isNotEmpty,
+      scrollContentMode: _settings.pageAnimMode == PageAnimMode.scroll,
     );
     if (kLogPerf) {
       debugPrint(
@@ -1087,6 +1097,7 @@ class ReadingController extends ChangeNotifier {
       // ContentProcessor 把 title 非空时的第 0 段设为标题; 告知 paginate 以位置判定,
       // 不依赖正则(覆盖"楔子"/"序章"/宿主自定义标题等非"第N章"格式)。
       firstParagraphIsTitle: chapter.title.isNotEmpty,
+      scrollContentMode: _settings.pageAnimMode == PageAnimMode.scroll,
     );
     _adjacentChapterCache[chapterIndex] = pages;
     return pages;
