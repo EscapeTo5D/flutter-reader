@@ -2,24 +2,70 @@
 
 本文件存放 ZCode 跨会话需要记住的项目级信息。新会话自动读取。
 
+## 快速参考 (Quick Reference)
+
+> 本节是面向任何新会话的速查表。下方「项目概况」起是历次会话沉淀的深度项目记忆，**勿删**。
+
+### 常用命令（仓库用 FVM，`flutter` 不在 PATH 时一律加 `fvm` 前缀）
+
+| 任务 | 命令 |
+|------|------|
+| 静态分析（包+example） | `fvm flutter analyze`（仓库根） |
+| 全量测试 | `fvm flutter test`（仓库根，135 用例） |
+| 单文件测试 | `fvm flutter test test/scroll_mode_test.dart` |
+| 跑 example app | `cd example && fvm flutter run`（桌面端需先 `databaseFactory=databaseFactoryFfi`，见 `example/lib/db.dart`） |
+| Flutter SDK | `.fvmrc` 锁 `stable`，`sdk: ^3.11.0`（见 `pubspec.yaml`） |
+
+lint 用 `flutter_lints`（`analysis_options.yaml` 仅 `include: package:flutter_lints/flutter.yaml`，无自定义规则）。目标：根包 `flutter analyze` **0 error / 0 warning**（容忍少量 info）。
+
+### 目录结构
+
+```
+lib/                          # 包代码（对外发布）
+  flutter_reader.dart         # 唯一公共出口（barrel export）——新增公共 API 必须在此 export
+  src/
+    core/                     # 与渲染无关的核心：controller / models / storage / content_processor
+      controller/             # ReadingController（外部主入口）
+      models/                 # Book / Chapter / ReadingSettings + codec
+      storage/                # ReaderRepository 抽象 + SqfliteReaderRepository + 数据模型
+    reader/                   # 排版与渲染
+      engine/                 # page_engine（排版核心）/ paginate_isolate（isolate 排版）
+      entities/               # TextPage / Column
+      page_animations/        # simulation_geometry/painter, scroll_mode_handler
+      widgets/                # reader_view（容器）, page_view（单页+chrome）, read_menu, ...
+example/                      # 演示 app（path 依赖 ../）
+docs/legado_reader/           # legado 中文技术文档 00~10（与源码冲突时以源码为准）
+test/                         # 单测（几何/排版/持久化/滚动/仿真 …）
+```
+
+### 架构边界（改代码前必读）
+
+- **公共出口只有 `lib/flutter_reader.dart`**。内部实现都在 `src/`，不对外 export 的不进 barrel。
+- **三层分层**：`core`（纯逻辑/数据，不依赖渲染）→ `reader/engine`（排版引擎，纯 Dart 可 isolate）→ `reader/widgets`（Flutter 渲染）。别让 widgets 的逻辑倒灌进 engine，别让 engine import `flutter/widgets` 之外的 UI。
+- **`ReadingController` 是宿主唯一主入口**：`loadBook` / `loadSettings` / `updateSettings` / `flushPersistence`。持久化通过注入的 `ReaderRepository`（默认 `SqfliteReaderRepository`，null 时纯内存降级）。
+- **排版引擎在 isolate**：`paginate_isolate.dart`。跨字号/屏幕改动后用 `chapterCharOffset`（非 pageIndex）恢复进度，pageIndex 会漂移（详见下方「持久化架构」）。
+- **页眉/页脚不参与排版高度计算**：`nonContentHeight`（`reader_view`）与 chrome 渲染（`page_view`）的「是否计入/渲染」条件必须逐项一致，否则正文与页脚错位（详见下方「页脚尺寸计算」）。
+
+### 关键约定
+
+- **对齐原生 legado** 是本项目核心准则：原生 Kotlin 源码是权威参考（设备 A `D:/GitHub/legado` / 设备 B `D:/hong_projects/legado`），`docs/legado_reader/` 文档常量值有误时**以源码为准**。
+- **颜色断言用 `.toARGB32()` int 比较**，不要直接 `==` 比 `Color`（不同 colorSpace 会判不等）。
+- **`flutter_smart_dialog`** 是全局弹窗依赖，宿主需在 `MaterialApp.builder` 包 `FlutterSmartDialog.init()`（见 `example/lib/main.dart`）。
+- **桌面 sqflite** 需宿主初始化 `sqflite_common_ffi`（`databaseFactory = databaseFactoryFfi` 或显式传 `dbPath`）。
+
 ## 项目概况
 
 - **flutter_reader**: 基于 legado（开源阅读 App）做的 Flutter 重构，是一个文本阅读器 widget 包。
 - 包代码在 `lib/`，运行示例 app 在 `example/`。
 - 阅读排版配置模型: `lib/src/core/models/reading_settings.dart`（对应原生 `Config` / `ReadTipConfig`）。注意：2026-06-26 远程重构后文件已移到 `core/` 和 `reader/` 下。
 
-## ⚠️ 关于"翻页架构重构"那条线（已删除）
-
-历史曾存在分支 `backup/pre-refactor-2026-06-26`（PageDelegate 基类 + NoAnimPageDelegate + 把 `scroll_mode_handler.dart` 迁出 `page_animations/` + 整套 legado 技术文档 docs/legado_reader/ 00~11 章）。该分支含 10 个未合并到 master 的提交（`7a89790`~`8967075`，含 page_delegates 架构、padding/高度修复、delegate 文档），master 走的是 isolate 排版优化路线，未接续这条线。
-- **该分支已于 2026-07-02 用 `git branch -D` 强制删除（本地，含 10 个未合并提交，不可恢复）。** 删除前从未 push 到远程，故远程无需清理。
-- ⚠️ 上一版 AGENTS.md 曾写"该分支已于 2026-06-29 前被删除，本地/远程/reflog 均无残留"——**那条记录有误**，分支实际一直存活到 2026-07-02 才删。
-- master 上的 `912604b feat: implement scroll page mode aligned with legado ScrollPageDelegate` 是 master 自身提交，与该分支无关。
-- 如未来要重做"翻页架构重构"，只能从零开始，无法从那个分支接续。
-- 另：同日还删了已完全合并的 `feat/perf-chapter-loading-isolate`（`git branch -d`，零风险）。现本地仅剩 `master`。
-
 ## 原生项目 (legado) 位置 ⚠️ 重要
 
-- 路径: **`D:/GitHub/legado`**（不是 `D:/hong_projects` 下！用户曾口误为 `D:/hong_projrct`）
+- 路径（**两台设备不同位置，都是同一项目的本地 clone**）:
+  - 设备 A: **`D:/GitHub/legado`**
+  - 设备 B: **`D:/hong_projects/legado`**
+  - 两路径下源码结构一致（相对路径如 `app/src/main/...` 在两处都有效），引用源码文件时按当前设备取对应根目录。
+  - ⚠️ 上一版 AGENTS.md 曾记「`D:/hong_projects` 是用户口误、实际只有 `D:/GitHub/legado`」——**那条记录有误**，两路径都是真实有效的设备本地路径，并非口误。
 - git remote: `https://github.com/Luoyacheng/legado.git`
 - 是原生 Android (Kotlin) 项目，本 Flutter 项目的重构参考来源。
 - 本仓库 `docs/legado_reader/` 下有 legado 的中文技术文档（00~10 章），但文档与源码有出入时**以源码为准**。
