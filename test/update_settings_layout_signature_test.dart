@@ -52,24 +52,23 @@ void main() {
       c.dispose();
     });
 
-    test('切到/切出 scroll 模式触发重排(scroll 排版不减 padding)', () {
-      // scroll 模式排版不减 padding(正文铺满 pageSize.height), 其他模式减 padding。
-      // 跨 scroll 边界切换时 availableHeight 不同 → pages 不通用 → 必须重排。
+    test('切到/切出 scroll 模式不触发重排(所有模式排版行为一致)', () {
+      // 所有翻页模式正文都贴分隔线(availableHeight 恒为 pageSize.height),
+      // pageAnimMode 不进 paginate → 切换翻页模式 pages 通用, 不需重排。
       final c = makeController();
       final pagesBefore = c.pages;
 
-      // slide(默认) → scroll: 跨 scroll 边界, 应重排。
+      // slide(默认) → scroll: 排版参数不变, 不重排。
       c.updateSettings(c.settings.copyWith(pageAnimMode: PageAnimMode.scroll));
-      expect(identical(c.pages, pagesBefore), isFalse,
-          reason: '切到 scroll 模式排版参数变了(不减padding), 应重排');
+      expect(identical(c.pages, pagesBefore), isTrue,
+          reason: '所有模式排版行为一致, 切到 scroll 不应重排');
 
-      // scroll → scroll 内切(slide→none 不适用, 这里测 scroll→simulation 回切):
+      // scroll → simulation: 同样不重排。
       final pagesScroll = c.pages;
       c.updateSettings(c.settings.copyWith(pageAnimMode: PageAnimMode.simulation));
-      expect(identical(c.pages, pagesScroll), isFalse,
-          reason: '切出 scroll 模式排版参数变回(减padding), 应重排');
+      expect(identical(c.pages, pagesScroll), isTrue,
+          reason: '切出 scroll 排版参数不变, 不应重排');
 
-      // slide ↔ simulation(都不跨 scroll 边界)不重排(上面那条测试已覆盖)。
       c.dispose();
     });
 
@@ -115,17 +114,33 @@ void main() {
       c.dispose();
     });
 
-    test('改 padding (排版字段) 触发重排', () {
+    test('改 padding 左右边距(排版字段) 触发重排', () {
       final c = makeController();
       final pagesBefore = c.pages;
 
       final p = c.settings.padding;
+      // left/right 仍进签名(影响正文可用宽度); top/bottom 已不参与排版(正文贴分隔线)。
       c.updateSettings(c.settings.copyWith(
-        padding: p.copyWith(top: 50, bottom: 50, left: 50, right: 50),
+        padding: p.copyWith(left: 50, right: 50),
       ));
 
       expect(identical(c.pages, pagesBefore), isFalse,
-          reason: 'padding 变化应触发重排');
+          reason: '左右边距变化应触发重排');
+      c.dispose();
+    });
+
+    test('只改 padding 上下边距不触发重排(正文贴分隔线)', () {
+      final c = makeController();
+      final pagesBefore = c.pages;
+
+      final p = c.settings.padding;
+      // top/bottom 已移出排版签名(正文不再消费 body 上下 padding)。
+      c.updateSettings(c.settings.copyWith(
+        padding: p.copyWith(top: 50, bottom: 50),
+      ));
+
+      expect(identical(c.pages, pagesBefore), isTrue,
+          reason: '上下边距不再影响排版, 不应重排');
       c.dispose();
     });
 

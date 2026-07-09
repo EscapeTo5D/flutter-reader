@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../entities/text_page.dart';
 import '../entities/column.dart';
 import '../../core/models/reading_settings.dart';
+import 'tip_layout.dart'; // 渲染尺寸常量(与测量函数同源)
 
 class PageView extends StatelessWidget {
   final TextPage? page;
@@ -18,10 +19,6 @@ class PageView extends StatelessWidget {
   final bool showChrome;
   final bool showFooterOnly;
   final bool showHeaderOnly;
-  /// scroll 滚动模式纯内容页: 跳过 top/bottom padding(由 reader_view 的固定
-  /// padding 条统一处理, 对齐原生 visibleRect 裁剪 + 固定 paddingTop/Bottom 条),
-  /// 保留 left/right 水平页边距。让页与页内容连续无 padding 空白带。
-  final bool scrollContentMode;
 
   const PageView({
     super.key,
@@ -39,7 +36,6 @@ class PageView extends StatelessWidget {
     this.showChrome = true,
     this.showFooterOnly = false,
     this.showHeaderOnly = false,
-    this.scrollContentMode = false,
   });
 
   @override
@@ -177,21 +173,22 @@ class PageView extends StatelessWidget {
         top: settings.padding.footerTop,
         bottom: settings.padding.footerBottom,
       ),
-      child: SizedBox(
-        height: settings.padding.footerHeight,
-        child: Row(
-          children: [
-            Expanded(
-                child: _buildTip(
-                    settings.footerConfig.left, context, Alignment.centerLeft)),
-            Expanded(
-                child: _buildTip(
-                    settings.footerConfig.center, context, Alignment.center)),
-            Expanded(
-                child: _buildTip(
-                    settings.footerConfig.right, context, Alignment.centerRight)),
-          ],
-        ),
+      // 内容行高由 Row 按 tip 内容自适应(对齐原生 wrap_content); 预算侧
+      // (reader_view.nonContentHeight)用 measureChromeContentHeight 同函数
+      // 测得相同高度, 保证不错位。详见 tip_layout.dart。
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+              child: _buildTip(
+                  settings.footerConfig.left, context, Alignment.centerLeft)),
+          Expanded(
+              child: _buildTip(
+                  settings.footerConfig.center, context, Alignment.center)),
+          Expanded(
+              child: _buildTip(
+                  settings.footerConfig.right, context, Alignment.centerRight)),
+        ],
       ),
     );
   }
@@ -212,7 +209,10 @@ class PageView extends StatelessWidget {
         if (batteryLevel != null) {
           return Align(
             alignment: alignment,
-            child: _BatteryIcon(level: batteryLevel!, color: settings.tipColor),
+            child: _BatteryIcon(
+                level: batteryLevel!,
+                color: settings.tipColor,
+                size: kBatteryIconSize),
           );
         }
         text = '';
@@ -236,13 +236,16 @@ class PageView extends StatelessWidget {
                 Text(
                   time,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: kTipTimeBatteryTextSize,
                     color: settings.tipColor,
                     fontFamily: settings.fontFamily,
                   ),
                 ),
                 const SizedBox(width: 4),
-                _BatteryIcon(level: batteryLevel!, color: settings.tipColor, size: 16),
+                _BatteryIcon(
+                    level: batteryLevel!,
+                    color: settings.tipColor,
+                    size: kTimeBatteryIconSize),
               ],
             ),
           );
@@ -256,7 +259,7 @@ class PageView extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: kTipTextSize,
           color: settings.tipColor,
           fontFamily: settings.fontFamily,
         ),
@@ -287,20 +290,14 @@ class PageView extends StatelessWidget {
       return const Center(child: Text(''));
     }
 
-    // scroll 滚动模式纯内容页: 跳过 top/bottom padding(由 reader_view 固定
-    // padding 条统一处理, 对齐原生 visibleRect), 保留 left/right 水平页边距。
-    final vertPadding = scrollContentMode
-        ? 0.0
-        : settings.padding.top;
-    final vertPaddingBottom = scrollContentMode
-        ? 0.0
-        : settings.padding.bottom;
+    // 正文只保留左右页边距; 上下贴分隔线(首行贴上分隔线、末行贴下分隔线)。
+    // 引擎排版时 availableHeight 已 = pageSize.height(不减 padding.top/bottom),
+    // 故此处不再加 top/bottom padding —— 否则正文会溢出被裁。所有翻页模式
+    // 统一此行为, 切换模式无位移(详见 page_engine._splitIntoPages 注释)。
     return Padding(
       padding: EdgeInsets.only(
         left: settings.padding.left,
         right: settings.padding.right,
-        top: vertPadding,
-        bottom: vertPaddingBottom,
       ),
       child: SingleChildScrollView(
         physics: const NeverScrollableScrollPhysics(),
@@ -461,13 +458,13 @@ class _BatteryIcon extends StatelessWidget {
   const _BatteryIcon({
     required this.level,
     required this.color,
-    this.size = 18,
+    this.size = kBatteryIconSize,
   });
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      size: Size(size, size * 0.6),
+      size: Size(size, size * kBatteryIconAspect),
       painter: _BatteryPainter(level: level.clamp(0, 100), color: color),
     );
   }

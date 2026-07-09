@@ -52,9 +52,10 @@ class ReaderPadding {
   final double bottom;
   final double left;
   final double right;
-  // 页眉/页脚内容行高(原生无此字段, 由文字行高+padding 决定; 此处抽象为固定行高)。
+  // 页眉内容行高(原生无此字段, 由文字行高+padding 决定; 此处抽象为固定行高)。
+  // ⚠️ 仅 header 用固定行高; footer 已改为按 tip 内容自适应(见
+  // tip_layout.dart 的 measureChromeContentHeight), 故不再有 footerHeight 字段。
   final double headerHeight;
-  final double footerHeight;
   // 页眉外层四向内边距(对齐原生微信读书预设: headerPadding Top=10/Bottom=0/Left=19/Right=16)。
   final double headerTop;
   final double headerBottom;
@@ -72,9 +73,6 @@ class ReaderPadding {
     this.left = 22,
     this.right = 22,
     this.headerHeight = 24,
-    // footerHeight 22.5(原生无此字段, 由 wrap_content 自适应: 实测 12sp 文字高≈12 + 控件内
-    // padding 3+3 ≈ 18; 此处按视觉偏好取 22.5, 抽象为固定行高)。
-    this.footerHeight = 22.5,
     this.headerTop = 10,
     this.headerBottom = 0,
     this.headerLeft = 19,
@@ -91,7 +89,6 @@ class ReaderPadding {
     double? left,
     double? right,
     double? headerHeight,
-    double? footerHeight,
     double? headerTop,
     double? headerBottom,
     double? headerLeft,
@@ -107,7 +104,6 @@ class ReaderPadding {
       left: left ?? this.left,
       right: right ?? this.right,
       headerHeight: headerHeight ?? this.headerHeight,
-      footerHeight: footerHeight ?? this.footerHeight,
       headerTop: headerTop ?? this.headerTop,
       headerBottom: headerBottom ?? this.headerBottom,
       headerLeft: headerLeft ?? this.headerLeft,

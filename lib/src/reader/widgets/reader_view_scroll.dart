@@ -98,8 +98,8 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
         final nextPlusPage = hh.nextPlusPage;
         final offset = hh.pageOffset;
 
-        // 纯正文页 widget(scrollContentMode 跳过 top/bottom padding, 保留左右)。
-        // 每页高度 = contentHeight(纯内容高, 对齐原生 visibleHeight)。
+        // 纯正文页 widget(showChrome:false 只画正文行; 正文仅保留左右页边距,
+        // 上下贴分隔线)。每页高度 = contentHeight(= pageSize.height, 对齐原生 visibleHeight)。
         Widget textPage(TextPage p, int pageIndex, int chapterIndex,
             int totalPages, String? chapterTitle) => SizedBox(
               height: ch,
@@ -116,7 +116,6 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
                     cc.searchQuery.isNotEmpty ? cc.searchQuery : null,
                 useSafeArea: false,
                 showChrome: false,
-                scrollContentMode: true,
               ),
             );
 
@@ -263,8 +262,8 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
                   ),
                 Expanded(
                   // 内容区 = 连续画布, 占满 Expanded(= pageSize.height)。
-                  // scroll 模式排版不减 padding(正文铺满 pageSize.height, 见
-                  // page_engine scrollContentMode), 每页 SizedBox 步长 = contentHeight
+                  // 排版 availableHeight = pageSize.height(不减 padding, 见
+                  // page_engine._splitIntoPages), 每页 SizedBox 步长 = contentHeight
                   // = pageSize.height, 与 contentStack 高一致 → cur+next 两页在 offset+ch
                   // 对接, contentStack 底 = footer 分隔线, 下一页首行从分隔线处露出
                   // (对齐原生: 滚动时字从分隔线出现)。

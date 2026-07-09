@@ -69,9 +69,8 @@ class ScrollModeHandler extends ChangeNotifier {
 
   /// 单页**纯内容**像素高度(对齐原生 `ChapterProvider.visibleHeight`)。
   ///
-  /// = `正文区总高(controller.pageSize.height) - padding.top - padding.bottom`。
-  /// **不含 body padding**(对齐原生: pageOffset 在内容坐标空间运行,
-  /// 页步长 = visibleHeight, padding 是视口固定条不是每页的)。
+  /// = `controller.pageSize.height`(正文区已扣 chrome, 但不减 body padding ——
+  /// 排版 availableHeight = pageSize.height, 正文上下贴分隔线)。
   /// 渲染层 SizedBox 用本值, 保证页与页内容连续无 padding 空白带。
   double _contentHeight = 0;
   double get contentHeight => _contentHeight;

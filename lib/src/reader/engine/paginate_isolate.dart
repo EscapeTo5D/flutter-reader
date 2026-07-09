@@ -53,7 +53,6 @@ Future<List<TextPage>> paginateInBackground({
   required Size pageSize,
   required ReadingSettings settings,
   bool firstParagraphIsTitle = false,
-  bool scrollContentMode = false,
 }) async {
   // 短内容直接主线程排, 避免起 isolate 的开销(isolate spawn ~1-2ms)。
   // 阈值取经验值: 单页约几百字符, 几页内的内容主线程排也很快。
@@ -64,7 +63,6 @@ Future<List<TextPage>> paginateInBackground({
       pageSize: pageSize,
       settings: settings,
       firstParagraphIsTitle: firstParagraphIsTitle,
-      scrollContentMode: scrollContentMode,
     );
     if (kLogPerf) {
       debugPrint(
@@ -85,7 +83,6 @@ Future<List<TextPage>> paginateInBackground({
       pageSize: pageSize,
       settings: settings,
       firstParagraphIsTitle: firstParagraphIsTitle,
-      scrollContentMode: scrollContentMode,
     );
     final reason = _isolateDisabled
         ? '熔断'
@@ -108,7 +105,6 @@ Future<List<TextPage>> paginateInBackground({
         pageSize: pageSize,
         settings: settings,
         firstParagraphIsTitle: firstParagraphIsTitle,
-        scrollContentMode: scrollContentMode,
       );
     });
     if (kLogPerf) {
@@ -128,7 +124,6 @@ Future<List<TextPage>> paginateInBackground({
       pageSize: pageSize,
       settings: settings,
       firstParagraphIsTitle: firstParagraphIsTitle,
-      scrollContentMode: scrollContentMode,
     );
     if (kLogPerf) {
       debugPrint(

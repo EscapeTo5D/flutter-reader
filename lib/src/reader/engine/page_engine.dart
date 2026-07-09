@@ -35,15 +35,6 @@ class PageEngine {
     /// 不再依赖 [_isTitle] 正则(正则无法覆盖"楔子"/"序章"/宿主自定义标题等格式)。
     /// 默认 false: 测试/直接传正文场景不识别标题(向后兼容)。
     bool firstParagraphIsTitle = false,
-    /// 滚动翻页模式专用: 排版不减 top/bottom padding, 让正文铺满整个 pageSize.height。
-    ///
-    /// 普通翻页模式(slide/none/sim)正文撑满到 availableHeight(= pageSize - padTop
-    /// - padBottom), 末行底距底 padBottom —— 因不滚动, 这段 padding 留白不可见。
-    /// 但滚动模式要求「下一页首行从底部分隔线处露出」, 即 contentStack 底 = 分隔线,
-    /// 而每页 SizedBox 步长必须 = contentStack 高 = pageSize.height, 故正文须铺满
-    /// pageSize.height(不减 padding)。对齐原生 legado: ContentTextView 约束在两 divider
-    /// 间, 视口 = viewHeight(无额外 padding 条), padding 在 TextLine.lineTop 里。
-    bool scrollContentMode = false,
   }) {
     if (content.isEmpty) return [];
 
@@ -176,7 +167,6 @@ class PageEngine {
       lines: lines,
       pageSize: pageSize,
       settings: settings,
-      scrollContentMode: scrollContentMode,
     );
   }
 
@@ -443,17 +433,18 @@ class PageEngine {
   }
 
   /// 分页 + 底部对齐
+  ///
+  /// 正文可用高度恒为 [pageSize.height]（不减 body padding）。正文与页眉/页脚分隔线
+  /// 贴边（首行贴上分隔线、末行贴下分隔线），所有翻页模式一致 —— 这样切换翻页模式
+  /// 不会因 padding 差异导致内容位移。对齐原生 legado: ContentTextView 约束在两
+  /// divider 之间, 视口 = viewHeight, 无额外 padding 条。
   List<TextPage> _splitIntoPages({
     required List<TextLine> lines,
     required Size pageSize,
     required ReadingSettings settings,
-    bool scrollContentMode = false,
   }) {
     final pages = <TextPage>[];
-    // scrollContentMode: 正文铺满整个 pageSize.height(不减 padding), 见 paginate 注释。
-    final availableHeight = scrollContentMode
-        ? pageSize.height
-        : pageSize.height - settings.padding.top - settings.padding.bottom;
+    final availableHeight = pageSize.height;
 
     var currentPageLines = <TextLine>[];
     var usedHeight = 0.0;

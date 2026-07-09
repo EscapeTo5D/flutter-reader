@@ -22,7 +22,7 @@ void main() {
   /// handler 的 _curPages 从 controller.pages 同步(走真实排版管线)。
   Future<(ReadingController, ScrollModeHandler)> makeBook() async {
     final controller = ReadingController();
-    // scroll 模式: 排版不减 padding(scrollContentMode), 与 handler contentHeight 一致。
+    // 排版 availableHeight 恒为 pageSize.height(不减 padding), 与 handler contentHeight 一致。
     controller.updateSettings(
         controller.settings.copyWith(pageAnimMode: PageAnimMode.scroll));
     final chapters = <Chapter>[

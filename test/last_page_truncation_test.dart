@@ -55,8 +55,8 @@ void main() {
     final settings = entry.value;
 
     test('$label: 所有页渲染高度不溢出(末行不被裁)', () {
-      final available =
-          pageSize.height - settings.padding.top - settings.padding.bottom;
+      // 引擎 availableHeight 现恒为 pageSize.height(正文贴分隔线)。
+      final available = pageSize.height;
       final pages = engine.paginate(
         content: content,
         pageSize: pageSize,

@@ -12,6 +12,7 @@ import '../page_animations/simulation_geometry.dart';
 import '../page_animations/simulation_painter.dart';
 import '../page_animations/scroll_mode_handler.dart';
 import 'page_view.dart' as pv;
+import 'tip_layout.dart';
 import 'read_menu.dart';
 import 'search_menu.dart';
 
@@ -359,17 +360,22 @@ class _ReaderViewState extends State<ReaderView>
         final statusBarH = showHeader ? 0.0 : viewPadding.top;
         final navBarH = settings.hideNavigationBar ? 0.0 : viewPadding.bottom;
         // header/footer 总高 = 各向外边距(headerTop/Bottom + footerTop/Bottom)
-        // + 内容行高(headerHeight/footerHeight)。对齐原生 PaddingConfig 四向 padding。
+        // + 内容行高。header 行高仍用固定 headerHeight(待后续同样迁移到自适应);
+        // footer 行高用 measureChromeContentHeight 按当前 tip 配置实时测量,
+        // 与 page_view._buildFooter 的 Row 自适应高度逐项一致(详见 tip_layout.dart)。
         final headerOuter =
             settings.padding.headerTop + settings.padding.headerBottom;
         final footerOuter =
             settings.padding.footerTop + settings.padding.footerBottom;
+        final footerContentH = showFooter
+            ? measureChromeContentHeight(settings, settings.footerConfig)
+            : 0.0;
         final nonContentHeight = statusBarH +
             navBarH +
             (showHeader ? settings.padding.headerHeight + headerOuter : 0) +
             (showHeader && settings.showHeaderDivider ? 0.5 : 0) +
             (showFooter && settings.showFooterDivider ? 0.5 : 0) +
-            (showFooter ? settings.padding.footerHeight + footerOuter : 0);
+            (showFooter ? footerContentH + footerOuter : 0);
         final size = Size(
           constraints.maxWidth,
           (constraints.maxHeight - nonContentHeight)

@@ -37,7 +37,7 @@ void main() {
     expect(restored.footerConfig.left, original.footerConfig.left);
     expect(restored.footerConfig.right, original.footerConfig.right);
     expect(restored.padding.top, original.padding.top);
-    expect(restored.padding.footerHeight, original.padding.footerHeight);
+    expect(restored.padding.footerBottom, original.padding.footerBottom);
     expect(restored.clickConfig.center, original.clickConfig.center);
     expect(restored.clickConfig.bottomRight, original.clickConfig.bottomRight);
     // bool / int 字段
@@ -65,7 +65,7 @@ void main() {
         right: TipPosition.bookName,
         hidden: true,
       ),
-      padding: const ReaderPadding(top: 30, footerHeight: 40),
+      padding: const ReaderPadding(top: 30, footerBottom: 40),
       clickConfig: const ClickRegionConfig(
         center: ClickAction.nextPage,
         bottomRight: ClickAction.prevChapter,
@@ -88,7 +88,7 @@ void main() {
     expect(restored.headerConfig.right, TipPosition.bookName);
     expect(restored.headerConfig.hidden, isTrue);
     expect(restored.padding.top, 30);
-    expect(restored.padding.footerHeight, 40);
+    expect(restored.padding.footerBottom, 40);
     expect(restored.clickConfig.center, ClickAction.nextPage);
     expect(restored.clickConfig.bottomRight, ClickAction.prevChapter);
     expect(restored.titleMode, 1);

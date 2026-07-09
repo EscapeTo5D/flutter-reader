@@ -11,8 +11,8 @@ void main() {
   final engine = PageEngine();
   final settings = ReadingSettings();
   final pageSize = const Size(360.0, 600.0);
-  final available =
-      pageSize.height - settings.padding.top - settings.padding.bottom;
+  // 引擎 availableHeight 现恒为 pageSize.height(正文贴分隔线, 不减 padding)。
+  final available = pageSize.height;
 
   /// 复现 page_view._buildLines 渲染逻辑, 计算一页的实际渲染总高度。
   double renderHeightOf(List lines) {

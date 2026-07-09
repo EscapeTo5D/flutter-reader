@@ -1079,9 +1079,10 @@ class _StylePreset {
 /// (`dialog_read_padding.xml`)。居中弹窗(无 dim), 3 组×4 向 = 12 滑块
 /// + 页眉/页脚分隔线开关。值整数 dp(对齐原生 DetailSeekBar 无 valueFormat)。
 ///
-/// 默认值: 正文 6/6/16/16、页眉 0/0/16/16(对齐原生 ReadBookConfig.Config);
-/// 页脚 2/4/16/16、footerHeight 23(用户偏好, 覆盖原生 6/6, 保持记忆中的页脚比例);
-/// showHeaderLine=false, showFooterLine=true。
+/// 默认值对齐微信读书预设(assets/defaultData/readConfig.json):
+/// 正文 5/4/22/22、页眉 10/0/19/16、页脚 0/10/13/17;
+/// 页脚内容行高不再由字段决定(已改为按 tip 内容自适应, 见 tip_layout.dart);
+/// showHeaderLine=true, showFooterLine=true。
 class _PaddingConfigDialog extends StatefulWidget {
   final ReadingController controller;
   const _PaddingConfigDialog({required this.controller});
@@ -1091,7 +1092,7 @@ class _PaddingConfigDialog extends StatefulWidget {
 }
 
 class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
-  late double _bodyTop, _bodyBottom, _bodyLeft, _bodyRight;
+  late double _bodyLeft, _bodyRight;
   late double _headerTop, _headerBottom, _headerLeft, _headerRight;
   late double _footerTop, _footerBottom, _footerLeft, _footerRight;
   late bool _showHeaderLine, _showFooterLine;
@@ -1100,8 +1101,6 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
   void initState() {
     super.initState();
     final p = widget.controller.settings.padding;
-    _bodyTop = p.top;
-    _bodyBottom = p.bottom;
     _bodyLeft = p.left;
     _bodyRight = p.right;
     _headerTop = p.headerTop;
@@ -1120,8 +1119,6 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
     widget.controller.updateSettings(
       widget.controller.settings.copyWith(
         padding: widget.controller.settings.padding.copyWith(
-          top: _bodyTop,
-          bottom: _bodyBottom,
           left: _bodyLeft,
           right: _bodyRight,
           headerTop: _headerTop,
@@ -1176,11 +1173,9 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
                     setState(() => _headerRight = v.toDouble())),
                 const SizedBox(height: 8),
                 // ── 正文组 ── 无分隔线开关。
+                // 上下边距不再生效: 正文上下贴分隔线(排版 availableHeight = pageSize.height,
+                // 不减 padding.top/bottom), 故正文组只保留左右页边距。详见 page_engine。
                 _buildSectionTitle('正文', null, null),
-                _bar('上边距', _bodyTop, 200, (v) =>
-                    setState(() => _bodyTop = v.toDouble())),
-                _bar('下边距', _bodyBottom, 100, (v) =>
-                    setState(() => _bodyBottom = v.toDouble())),
                 _bar('左边距', _bodyLeft, 100, (v) =>
                     setState(() => _bodyLeft = v.toDouble())),
                 _bar('右边距', _bodyRight, 100, (v) =>

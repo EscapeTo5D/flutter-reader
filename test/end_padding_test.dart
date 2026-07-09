@@ -64,8 +64,8 @@ void main() {
     // 内容刚好接近一页, 加 endPadding 不应导致末页内容丢失或溢出
     final settings = ReadingSettings();
     const pageSize = Size(360.0, 600.0);
-    final availableHeight =
-        pageSize.height - settings.padding.top - settings.padding.bottom;
+    // 引擎 availableHeight 现恒为 pageSize.height(正文贴分隔线)。
+    final availableHeight = pageSize.height;
     final engine = PageEngine();
 
     final buf = StringBuffer();
