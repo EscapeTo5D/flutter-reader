@@ -62,10 +62,14 @@ class ReadingController extends ChangeNotifier {
   /// → 跨章卡顿)。peekNext/peekPrev/_rePaginate 都走 [_paginateChapterCached]:
   /// 首次重排后结果入缓存, 后续 O(1) 命中。
   ///
-  /// 缓存键 = 章索引; 整表失效条件见 [_invalidateAdjacentCache]:
-  /// `_settings` 引用变或 `_pageSize` 变(两者决定分页结果)。
+  /// 缓存键 = 章索引; 整表失效条件见 [_invalidateAdjacentCacheIfNeeded]:
+  /// 排版指纹([_layoutSignature])变或 `_pageSize` 变(两者决定分页结果)。
   final Map<int, List<TextPage>> _adjacentChapterCache = {};
-  ReadingSettings? _cacheSettingsRef;
+  // 缓存「入缓存时的排版指纹 + pageSize」。失效判断用指纹值比较(而非 settings
+  // 对象引用), 这样改 pageAnimMode/颜色等不进排版的字段时 copyWith 产生的新对象
+  // 不会误清缓存 —— 与 [updateSettings] 的重排短路逻辑贯穿一致。详见
+  // [_invalidateAdjacentCacheIfNeeded]。
+  Object? _cacheLayoutSig;
   Size _cachePageSize = Size.zero;
 
   // ─────────────────────────── 按章加载 / 异步排版 ───────────────────────────
@@ -889,10 +893,10 @@ class ReadingController extends ChangeNotifier {
       return;
     }
     // 按章加载模式。
-    // 先按需失效缓存: settings(字号/行距/titleMode 等)或 pageSize 变化时, 旧分页结果
+    // 先按需失效缓存: 排版指纹(字号/行距/titleMode 等)或 pageSize 变化时, 旧分页结果
     // 作废。否则快路径会复用旧 settings 排好的缓存, 导致改 titleMode 等不生效
     // (例: 隐藏→显示标题时仍用无标题的旧分页)。_invalidateAdjacentCacheIfNeeded
-    // 内部用 identical 比较 _settings 引用, 无变化时是 O(1) no-op。
+    // 内部用 _layoutSignature 值比较, 无排版变化时是 O(1) no-op。
     _invalidateAdjacentCacheIfNeeded();
     // 快路径: 当前章分页缓存命中(预排过) → 同步就绪, 翻章流畅。
     final cached = _adjacentChapterCache[_currentChapterIndex];
@@ -1097,13 +1101,18 @@ class ReadingController extends ChangeNotifier {
     return pages;
   }
 
-  /// 若影响分页结果的输入(settings / pageSize)发生变化, 清空整个相邻章缓存。
-  /// `_settings` 每次 updateSettings 传入新对象, 引用比较即可判断变化。
+  /// 若影响分页结果的输入(排版指纹 / pageSize)发生变化, 清空整个相邻章缓存。
+  ///
+  /// 用 [_layoutSignature] 值比较而非 `_settings` 对象引用 —— 因为 `updateSettings`
+  /// 每次都 `copyWith` 出新对象, 引用必变, 会让改 pageAnimMode/颜色等不进排版的
+  /// 字段也误清缓存, 导致相邻章被重新分页/重新异步加载(scroll 模式预取、
+  /// [prefetchAdjacentChapters] 都会立刻重做), 是切到/切出 scroll 模式的卡顿源。
+  /// 与 `updateSettings` 的重排短路逻辑用同一指纹, 行为一致。
   void _invalidateAdjacentCacheIfNeeded() {
-    if (!identical(_settings, _cacheSettingsRef) ||
-        _pageSize != _cachePageSize) {
+    final sig = _layoutSignature(_settings);
+    if (sig != _cacheLayoutSig || _pageSize != _cachePageSize) {
       _adjacentChapterCache.clear();
-      _cacheSettingsRef = _settings;
+      _cacheLayoutSig = sig;
       _cachePageSize = _pageSize;
     }
   }
