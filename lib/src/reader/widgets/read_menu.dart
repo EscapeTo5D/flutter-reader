@@ -621,17 +621,16 @@ class _StyleDialogState extends State<_StyleDialog> {
   /// (dialog_read_book_style.xml:165-256 + ThemeRadioNoButton)。
   ///
   /// 位于段距滑块之后、底色预设之前, 顶部带 0.8dp 分割线(对齐原生 vw_bg_fg)。
-  /// 5 个带边框圆角按钮水平等宽排列, 选中态填充主题强调色(对齐原生 accentColor)。
-  /// 运行时 slide/none/simulation/scroll 生效; cover 动画尚未实现, 配置照存。
-  /// scroll 为单一 pageOffset + 边界翻章修正(对齐原生 ScrollPageDelegate),
-  /// 见 lib/src/reader/page_animations/scroll_mode_handler.dart。
+  /// 带边框圆角按钮水平等宽排列, 选中态填充主题强调色(对齐原生 accentColor)。
+  /// 运行时 slide/none/simulation 生效; cover 动画尚未实现, 配置照存。
+  /// ⚠️ scroll(滚动)模式暂从入口下线: 章节切换处内容跳变问题待后续修复,
+  /// 代码(scroll_mode_handler.dart 等)保留, 修好后在下方 modes/labels 恢复即可。
   Widget _buildPageAnimSelector() {
-    const labels = ['覆盖', '滑动', '仿真', '滚动', '无动画'];
+    const labels = ['覆盖', '滑动', '仿真', '无动画'];
     const modes = [
       PageAnimMode.cover,
       PageAnimMode.slide,
       PageAnimMode.simulation,
-      PageAnimMode.scroll,
       PageAnimMode.none,
     ];
     return Column(
@@ -655,7 +654,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 11),
           child: Row(
-            children: List.generate(5, (i) {
+            children: List.generate(labels.length, (i) {
               final selected = pageAnimMode == modes[i];
               return Expanded(
                 child: Container(

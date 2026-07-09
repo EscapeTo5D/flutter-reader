@@ -1241,9 +1241,15 @@ class ReadingController extends ChangeNotifier {
   Future<void> loadSettings() async {
     final repo = _repository;
     if (repo == null) return;
-    final s =
+    var s =
         (await repo.getSettings(userId: _userId)) ?? await repo.getSettings();
     if (s != null && !_disposed) {
+      // scroll 翻页模式已从设置入口下线(章节切换跳变问题待修), 持久化里若存了
+      // scroll 则降级为默认 slide, 避免落到 scroll 渲染分支。代码保留, 修好后
+      // 移除此降级即可恢复。
+      if (s.pageAnimMode == PageAnimMode.scroll) {
+        s = s.copyWith(pageAnimMode: PageAnimMode.slide);
+      }
       _settings = s;
       _rePaginate();
       notifyListeners();
