@@ -236,7 +236,7 @@ class _ReaderViewState extends State<ReaderView>
     _selectionOverlay?.remove();
     _pageAnim.removeStatusListener(_onPageAnimStatus);
     _pageAnim.dispose();
-    // _scrollHandler 的 rebuild 监听由 ListenableBuilder 自管, dispose 在 _ScrollMixin。
+    // scroll handler 常驻预热(不再随模式切换 dispose), 仅在 ReaderView 整体 dispose 时销毁。
     _scrollHandler?.dispose();
     _routeAnimation?.removeStatusListener(_onRouteAnimation);
     _secondaryAnimation?.removeStatusListener(_onSecondaryAnimation);
@@ -272,9 +272,9 @@ class _ReaderViewState extends State<ReaderView>
         if (mounted) setState(() => _menuMounted = false);
       });
     }
-    // 翻页模式可能切换(设置弹窗) → 重建/销毁 scroll handler。
+    // 翻页模式可能切换(设置弹窗); handler 常驻预热(不重建/销毁), 这里仅确保存在。
     _ensureScrollHandler();
-    // scroll 模式: controller 的章/页变化(loadBook/restoreProgress/翻页提交)同步给 handler。
+    // controller 的章/页变化(loadBook/restoreProgress/翻页提交)同步给 handler。
     _scrollHandler?.syncFromController();
     setState(() {});
     // 章/页可能因翻页提交而变化 → 刷新预热缓存。
@@ -453,13 +453,59 @@ class _ReaderViewState extends State<ReaderView>
 
   Widget _buildPageContent() {
     final controller = widget.controller;
+    final wantScroll = controller.settings.pageAnimMode == PageAnimMode.scroll;
 
-    // scroll 模式走独立的滚动视图(pageOffset 偏移拼接三页), 与 slide/sim/none
-    // 的三页 Stack 完全不同。chrome 由外层 _buildScrollChrome 浮层固定。
-    if (controller.settings.pageAnimMode == PageAnimMode.scroll &&
-        _scrollHandler != null) {
-      return _buildScrollContent();
-    }
+    // ⚠️ 双子树常驻预热(消除切到/切出 scroll 的卡顿):
+    //
+    // scroll 子树与 slide/sim/none 三页 Stack 是两棵完全不同的 widget 树。旧实现
+    // 用互斥 return 切换, 切到 scroll 时整棵滚动子树首次挂载 → 首次 layout(每行
+    // CustomPaint 的 RenderObject 初始化)+ 首次 paint, 是肉眼可见的卡顿; 切回时
+    // 同理。而 slide/none/sim 互切不卡, 正因为它们共用同一套三页 Stack, element
+    // 互相复用、layer 缓存命中。
+    //
+    // 修复: 两棵子树都常驻挂载, 用 Visibility(maintainState/Size/Animation: true)
+    // 切显隐。三个 maintain 全开 = 非活跃子树仍参与完整 layout + paint(只是不可见),
+    // Element/RenderObject/已算好的 layout 全部保留 → 切换时 element 复用 → 零首帧开销。
+    //
+    // ⚠️ 用 RepaintBoundary 包裹: 非活跃子树 paint 一次后 layer 缓存, 仅在其后代
+    // 标记 dirty 时才重绘(非 scroll 模式下 handler 不 notify → 不重绘), 避免常驻
+    // paint 的每帧开销。代价是常驻一个隐藏子树的内存。
+    //
+    // ⚠️ 不能用 Offstage: 它跳过 layout + paint, layer 缓存不保留, 切回仍要首帧开销。
+    // 对齐 AGENTS.md「首次挂载卡顿」记录的 maintain 三全开模式。
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: RepaintBoundary(
+            child: Visibility(
+              visible: !wantScroll,
+              maintainState: true,
+              maintainSize: true,
+              maintainAnimation: true,
+              child: _buildPagedContent(),
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: RepaintBoundary(
+            child: Visibility(
+              visible: wantScroll,
+              maintainState: true,
+              maintainSize: true,
+              maintainAnimation: true,
+              child: _buildScrollContent(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 非 scroll 模式(slide/simulation/none)的三页 Stack 渲染。
+  ///
+  /// 从 [_buildPageContent] 拆出, 与 [_buildScrollContent] 平级常驻。
+  Widget _buildPagedContent() {
+    final controller = widget.controller;
 
     final pages = controller.pages;
     final currentIndex = controller.currentPageIndex;

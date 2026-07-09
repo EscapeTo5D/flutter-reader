@@ -11,32 +11,34 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
   /// scroll 模式的核心状态机。仅在 pageAnimMode == scroll 时创建; 其他模式为 null。
   ScrollModeHandler? _scrollHandler;
 
-  /// scroll 模式专用: 按 pageAnimMode 创建/销毁 [_scrollHandler]。
-  /// 切换翻页模式(设置弹窗)时, 从其他模式 ↔ scroll 重建 handler。
+  /// scroll 模式专用: 确保 [_scrollHandler] 存在并同步数据。
   ///
-  /// handler 自带 ChangeNotifier, rebuild 由 [_buildScrollContent] /
-  /// [_buildScrollChrome] 内的 `ListenableBuilder` 自动驱动(仅重绘依赖
-  /// pageOffset/章页码的子树), 不经过 `_ReaderViewState.setState`
-  /// (避免每帧整树 rebuild + relayout 的滚动卡顿), 也不经 controller.notify。
+  /// **常驻预热架构**(消除切到 scroll 的卡顿): handler 在首次调用时创建一次,
+  /// **之后永不 dispose/重建**。scroll 子树([_buildScrollContent])与其 ListenableBuilder
+  /// 因此始终挂载在屏外(非 scroll 模式), 切到 scroll 时 element 复用、layer 缓存命中,
+  /// 无首次 layout/paint 开销 —— 这正是 slide/none/sim 互切不卡(共用三页 Stack, element
+  /// 互相复用)、唯独切 scroll 卡(此前是互斥 return, 子树整体重建)的差异根因。
+  ///
+  /// handler 持有的 AnimationController 非动画时空转无开销; 相邻章预取在非 scroll 模式
+  /// 也保持(顺带预热, 切回时命中)。所有手势调用点都已 guard `pageAnimMode == scroll`,
+  /// 非 scroll 模式不会误调 handler。
+  ///
+  /// handler 自带 ChangeNotifier, rebuild 由 [_buildScrollContent] 内的
+  /// `ListenableBuilder` 自动驱动(仅重绘依赖 pageOffset/章页码的子树), 不经过
+  /// `_ReaderViewState.setState`(避免每帧整树 rebuild + relayout 的滚动卡顿)。
   void _ensureScrollHandler() {
-    final wantScroll =
-        widget.controller.settings.pageAnimMode == PageAnimMode.scroll;
-    if (wantScroll && _scrollHandler == null) {
-      _scrollHandler = ScrollModeHandler(widget.controller, this);
-      // ⚠️ 切到 scroll 模式的首帧防闪: handler 的 _contentHeight 初始为 0,
-      // 若不立即初始化, 同帧 build 里 ListenableBuilder 会命中 `ch <= 0` 兜底
-      // 渲染一帧纯背景色(原页面内容被空白替换一帧)→ 用户看到闪烁。
-      // slide/none/sim 模式不闪是因为它们直接消费 controller.pages(切模式前已有),
-      // 无「切模式才创建、要等 LayoutBuilder 回调才有值」的延迟初始化空窗。
-      // 切模式时 controller.pageSize 一定已就绪(切前页面就在显示), 这里同步喂一次,
-      // 让 _contentHeight 在 build 前就有值, 消除首帧空窗。
-      final ps = widget.controller.pageSize;
-      if (ps.height > 0) {
-        _scrollHandler!.updatePageHeight(ps.height);
-      }
-    } else if (!wantScroll && _scrollHandler != null) {
-      _scrollHandler!.dispose();
-      _scrollHandler = null;
+    if (_scrollHandler != null) {
+      // 已存在: 保持挂载, 不重建。切回非 scroll 模式时不 dispose, 让子树常驻预热。
+      return;
+    }
+    _scrollHandler = ScrollModeHandler(widget.controller, this);
+    // ⚠️ 首帧防闪: handler 的 _contentHeight 初始为 0, 若不立即初始化, build 里
+    // ListenableBuilder 会命中 `ch <= 0` 兜底渲染一帧纯背景色 → 闪烁。
+    // 切模式时 controller.pageSize 一定已就绪(切前页面就在显示), 这里同步喂一次,
+    // 让 _contentHeight 在 build 前就有值, 消除首帧空窗。
+    final ps = widget.controller.pageSize;
+    if (ps.height > 0) {
+      _scrollHandler!.updatePageHeight(ps.height);
     }
   }
 
@@ -49,9 +51,16 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
   /// 仅「依赖 pageOffset/章页码」的子树, GestureDetector/LayoutBuilder/菜单层不参与。
 
   Widget _buildScrollContent() {
-    final h = _scrollHandler!;
     final c = widget.controller;
     final settings = c.settings;
+
+    // scroll handler 常驻预热(永不随模式切换 dispose), 但首次进入阅读页时
+    // _ensureScrollHandler 可能尚未执行(initState 末尾才调) → handler 暂为 null。
+    // 返回纯背景占位, 不参与手势/渲染内容。
+    final h = _scrollHandler;
+    if (h == null) {
+      return ColoredBox(color: settings.backgroundColor, child: SizedBox());
+    }
 
     // ⚠️ loading 收敛(修复"切模式闪 loading"): 仅当 curPages 真为空(章节首次加载)
     // 才显示转圈; pageHeight==0(切模式瞬间 LayoutBuilder 尚未回调)显示纯背景色占位,
@@ -82,7 +91,8 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
     return ListenableBuilder(
       listenable: h,
       builder: (context, _) {
-        final hh = _scrollHandler!;
+        // handler 常驻, _scrollHandler 不会在此期间变 null; ?? h 仅防御。
+        final hh = _scrollHandler ?? h;
         final cc = widget.controller;
         final curPage = hh.curPage;
         final ch = hh.contentHeight;
