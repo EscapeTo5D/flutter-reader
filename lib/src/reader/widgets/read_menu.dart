@@ -723,14 +723,17 @@ class _StyleDialogState extends State<_StyleDialog> {
             progress: _fontSizeProgress,
             max: 45,
             display: '${_fontSizeProgress + 5}',
-            onChanged: (v) { setState(() => _fontSizeProgress = v); _apply(); },
+            // 拖动只刷数字(对齐原生 onProgressChanged→upValue), 松手才 _apply 重排。
+            onChanged: (v) => setState(() => _fontSizeProgress = v),
+            onChangeEnd: (v) { setState(() => _fontSizeProgress = v); _apply(); },
           ),
           _buildSeekBar(
             title: '字距',
             progress: _letterSpacingProgress,
             max: 100,
             display: ((_letterSpacingProgress - 50) / 100.0).toStringAsFixed(2),
-            onChanged: (v) { setState(() => _letterSpacingProgress = v); _apply(); },
+            onChanged: (v) => setState(() => _letterSpacingProgress = v),
+            onChangeEnd: (v) { setState(() => _letterSpacingProgress = v); _apply(); },
           ),
           _buildSeekBar(
             title: '行距',
@@ -739,7 +742,8 @@ class _StyleDialogState extends State<_StyleDialog> {
             // 对齐原生 dsbLineSize.valueFormat: ((it - 10) / 10f).toString()
             // 默认 progress=12 → 显示 0.2。
             display: ((_lineHeightProgress - 10) / 10.0).toStringAsFixed(1),
-            onChanged: (v) { setState(() => _lineHeightProgress = v); _apply(); },
+            onChanged: (v) => setState(() => _lineHeightProgress = v),
+            onChangeEnd: (v) { setState(() => _lineHeightProgress = v); _apply(); },
           ),
           _buildSeekBar(
             title: '段距',
@@ -748,7 +752,8 @@ class _StyleDialogState extends State<_StyleDialog> {
             // 对齐原生 dsbParagraphSpacing.valueFormat: (it / 10f).toString()
             // 默认 progress=2 → 显示 0.2。
             display: (_paragraphSpacingProgress / 10.0).toStringAsFixed(1),
-            onChanged: (v) { setState(() => _paragraphSpacingProgress = v); _apply(); },
+            onChanged: (v) => setState(() => _paragraphSpacingProgress = v),
+            onChangeEnd: (v) { setState(() => _paragraphSpacingProgress = v); _apply(); },
           ),
         ],
       ),
@@ -761,6 +766,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     required int max,
     required String display,
     required ValueChanged<int> onChanged,
+    required ValueChanged<int> onChangeEnd,
   }) {
     return DetailSeekBar(
       title: title,
@@ -768,6 +774,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       max: max,
       display: display,
       onChanged: onChanged,
+      onChangeEnd: onChangeEnd,
       textColor: Colors.black54,
     );
   }
@@ -1247,7 +1254,9 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
         progress: value.round().clamp(0, max),
         max: max,
         display: value.round().toString(),
-        onChanged: (v) { onChanged(v); _apply(); },
+        // 拖动只刷数字, 松手才 _apply(对齐原生 DetailSeekBar onStopTrackingTouch)。
+        onChanged: onChanged,
+        onChangeEnd: (v) { onChanged(v); _apply(); },
       ),
     );
   }
@@ -1617,18 +1626,21 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
                 children: [
                   _buildAccentTitle('正文标题'),
                   _buildTitleModeSelector(),
-                  _buildTitleSeekBar('字号', _titleSize, 20, (v) {
-                    setState(() => _titleSize = v);
-                    _updateSettings(s.copyWith(titleSize: v));
-                  }),
-                  _buildTitleSeekBar('上边距', _titleTopSpacing, 100, (v) {
-                    setState(() => _titleTopSpacing = v);
-                    _updateSettings(s.copyWith(titleTopSpacing: v));
-                  }),
-                  _buildTitleSeekBar('下边距', _titleBottomSpacing, 100, (v) {
-                    setState(() => _titleBottomSpacing = v);
-                    _updateSettings(s.copyWith(titleBottomSpacing: v));
-                  }),
+                  _buildTitleSeekBar('字号', _titleSize, 20,
+                    onChanged: (v) => setState(() => _titleSize = v),
+                    onChangeEnd: (v) =>
+                        _updateSettings(s.copyWith(titleSize: v)),
+                  ),
+                  _buildTitleSeekBar('上边距', _titleTopSpacing, 100,
+                    onChanged: (v) => setState(() => _titleTopSpacing = v),
+                    onChangeEnd: (v) =>
+                        _updateSettings(s.copyWith(titleTopSpacing: v)),
+                  ),
+                  _buildTitleSeekBar('下边距', _titleBottomSpacing, 100,
+                    onChanged: (v) => setState(() => _titleBottomSpacing = v),
+                    onChangeEnd: (v) =>
+                        _updateSettings(s.copyWith(titleBottomSpacing: v)),
+                  ),
                   _buildAccentTitle('页眉'),
                   _buildTipRow('显示/隐藏', s.headerConfig.hidden ? '隐藏' : '显示',
                       () => _showHeaderFooterVisibleSelector(isHeader: true)),
@@ -1715,7 +1727,9 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
   }
 
   Widget _buildTitleSeekBar(
-      String label, double value, int max, ValueChanged<double> onChanged) {
+      String label, double value, int max,
+      {required ValueChanged<double> onChanged,
+       required ValueChanged<double> onChangeEnd}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -1728,7 +1742,10 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
               max: max.toDouble(),
               divisions: max,
               label: value.toStringAsFixed(0),
+              // 拖动只刷数字(右侧值 + label bubble), 松手才 _updateSettings 重排
+              // (titleSize/titleTopSpacing/titleBottomSpacing 都进排版指纹)。
               onChanged: onChanged,
+              onChangeEnd: onChangeEnd,
             ),
           ),
           SizedBox(

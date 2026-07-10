@@ -7,15 +7,29 @@ import 'legado_icons.dart';
 ///
 /// 结构(左→右): `[标题 60dp][− 24dp][Slider 4weight][+ 24dp][值 60dp]`。
 /// 标题/±/值文字色随 [textColor](对齐原生 isBottomBackground 时用 primaryText)。
-/// 拖动中实时触发 onChanged(与现有 _StyleDialog 滑块行为一致; 排版有防抖兜底)。
+///
+/// **回调语义(对齐原生 DetailSeekBar.kt)**:
+/// 原生 `onProgressChanged`(拖动每 tick) 只调 `upValue()` 刷新数字显示,
+/// `onStopTrackingTouch`(松手) 才调 `onChanged` 业务回调(重排/写配置)。
+/// 这里拆成两个回调对齐该行为:
+/// - [onChanged]: 拖动每 tick 实时回调, **只用于刷新右侧显示文本**(原生 upValue)。
+///   不应在此触发重排/落库等重操作。
+/// - [onChangeEnd]: 松手(或点 ±按钮)才回调, 触发重排/写配置等确定操作。
+///
+/// [display] 文本随 [progress] 由父 widget 算好传入; 拖动期间父 widget 在
+/// [onChanged] 里 setState 更新 [progress] → 本控件重绘新数字。
 class DetailSeekBar extends StatelessWidget {
   final String title;
   final int progress;
   final int max;
   /// 当前值的显示文本(原生 valueFormat: (Int)->String)。
   final String display;
-  /// 值变化回调(松手或 ± 触发)。
+  /// 拖动中实时回调(对齐原生 onProgressChanged → upValue: 刷新数字显示)。
+  /// 松手前的中间值经此回调; **不应在此触发重排**。
   final ValueChanged<int> onChanged;
+  /// 松手(拖动结束)或点 ±按钮才回调(对齐原生 onStopTrackingTouch → onChanged:
+  /// 触发重排/写配置等确定操作)。
+  final ValueChanged<int> onChangeEnd;
   final Color? textColor;
   final Color? activeColor;
 
@@ -26,6 +40,7 @@ class DetailSeekBar extends StatelessWidget {
     required this.max,
     required this.display,
     required this.onChanged,
+    required this.onChangeEnd,
     this.textColor,
     this.activeColor,
   });
@@ -41,7 +56,8 @@ class DetailSeekBar extends StatelessWidget {
           child: Text(title, style: TextStyle(fontSize: 13, color: fg)),
         ),
         _buildButton(LegadoIcons.reduce(size: 24, color: fg), () {
-          if (progress > 0) onChanged(progress - 1);
+          final v = (progress - 1).clamp(0, max);
+          if (v != progress) onChangeEnd(v);
         }),
         Expanded(
           child: SliderTheme(
@@ -58,11 +74,13 @@ class DetailSeekBar extends StatelessWidget {
               max: max.toDouble(),
               divisions: max,
               onChanged: (v) => onChanged(v.round()),
+              onChangeEnd: (v) => onChangeEnd(v.round()),
             ),
           ),
         ),
         _buildButton(LegadoIcons.add(size: 24, color: fg), () {
-          if (progress < max) onChanged(progress + 1);
+          final v = (progress + 1).clamp(0, max);
+          if (v != progress) onChangeEnd(v);
         }),
         SizedBox(
           width: 60,

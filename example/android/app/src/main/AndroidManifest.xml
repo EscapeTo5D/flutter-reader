@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- release 需要显式声明 INTERNET 权限(debug/profile manifest 自带, main 没有)。
+         不加会导致 release APK 无网络权限, 拉书章节正文时报 SocketException。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="flutter_reader_example"
         android:name="${applicationName}"
