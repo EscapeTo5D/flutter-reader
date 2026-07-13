@@ -114,7 +114,9 @@ class _ReadMenuState extends State<ReadMenu> {
 
   Widget _buildFloatingButtons(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      // horizontal 16 对齐 ll_floating_button paddingStart/End;
+      // bottom 16 对齐 FAB layout_margin(bottom) —— 悬浮按钮行到面板顶的距离。
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -131,13 +133,17 @@ class _ReadMenuState extends State<ReadMenu> {
   }
 
   Widget _buildFab(Widget icon, String tooltip, VoidCallback onPressed) {
+    // 对齐原生 FloatingActionButton fabSize="mini":
+    // - shape CircleBorder (M3 默认是圆角矩形, 需显式指定才为圆形)
+    // - backgroundColor md_grey_200(#E0E0E0) = 原生 background_menu
     return FloatingActionButton.small(
       heroTag: tooltip,
       onPressed: onPressed,
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFE0E0E0),
       foregroundColor: Colors.black54,
       elevation: 2,
       tooltip: tooltip,
+      shape: const CircleBorder(),
       child: icon,
     );
   }
@@ -166,13 +172,25 @@ class _ReadMenuState extends State<ReadMenu> {
         children: [
           _buildChapterTextButton('上一章', widget.controller.canGoPrevious ? () => widget.controller.previousChapter() : null),
           Expanded(
-            child: Slider(
-              value: totalPages > 1 ? widget.controller.currentPageIndex.toDouble() : 0,
-              min: 0,
-              max: totalPages > 1 ? (totalPages - 1).toDouble() : 1,
-              activeColor: Colors.black54,
-              inactiveColor: Colors.black26,
-              onChanged: (v) => widget.controller.goToPage(v.toInt()),
+            // 对齐原生 seek_read_page (height=25dp): SizedBox 夹高度 +
+            // SliderTheme 调细轨道让滑块在 25dp 高度内居中合理。
+            child: SizedBox(
+              height: 25,
+              child: SliderTheme(
+                data: const SliderThemeData(
+                  trackHeight: 2,
+                  thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape: RoundSliderOverlayShape(overlayRadius: 12),
+                ),
+                child: Slider(
+                  value: totalPages > 1 ? widget.controller.currentPageIndex.toDouble() : 0,
+                  min: 0,
+                  max: totalPages > 1 ? (totalPages - 1).toDouble() : 1,
+                  activeColor: Colors.black54,
+                  inactiveColor: Colors.black26,
+                  onChanged: (v) => widget.controller.goToPage(v.toInt()),
+                ),
+              ),
             ),
           ),
           _buildChapterTextButton('下一章', widget.controller.canGoNext ? () => widget.controller.nextChapter() : null),
@@ -232,7 +250,8 @@ class _ReadMenuState extends State<ReadMenu> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(width: 24, height: 24, child: icon),
+            // 对齐原生 ImageView maxHeight=20dp (icon 24→20)。
+            SizedBox(width: 20, height: 20, child: icon),
             const SizedBox(height: 3),
             Text(label, style: const TextStyle(color: Colors.black54, fontSize: 12)),
             const SizedBox(height: 7),
