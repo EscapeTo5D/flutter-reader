@@ -622,7 +622,7 @@ class _StyleDialogState extends State<_StyleDialog> {
   ///
   /// 位于段距滑块之后、底色预设之前, 顶部带 0.8dp 分割线(对齐原生 vw_bg_fg)。
   /// 带边框圆角按钮水平等宽排列, 选中态填充主题强调色(对齐原生 accentColor)。
-  /// 运行时 slide/none/simulation 生效; cover 动画尚未实现, 配置照存。
+  /// 运行时 cover/slide/none/simulation 生效; scroll 暂从入口下线(见下)。
   /// ⚠️ scroll(滚动)模式暂从入口下线: 章节切换处内容跳变问题待后续修复,
   /// 代码(scroll_mode_handler.dart 等)保留, 修好后在下方 modes/labels 恢复即可。
   Widget _buildPageAnimSelector() {

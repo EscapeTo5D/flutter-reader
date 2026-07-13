@@ -8,6 +8,7 @@ import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import '../../core/system_ui_controller.dart';
 import '../entities/text_page.dart';
+import '../page_animations/cover_layout.dart';
 import '../page_animations/simulation_geometry.dart';
 import '../page_animations/simulation_painter.dart';
 import '../page_animations/scroll_mode_handler.dart';
@@ -44,7 +45,8 @@ const int _pageAnimSpeedMs = 300;
 ///   `page_animations/simulation_painter.dart`)。
 /// - scroll 已实现(单一 pageOffset + 边界翻章修正, 见
 ///   `page_animations/scroll_mode_handler.dart`)。
-/// - cover 后续。
+/// - cover 已实现(目标页静止, 当前页/上一页像幕布抽走的覆盖翻页, 见
+///   `page_animations/cover_layout.dart`)。
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
 
@@ -555,13 +557,20 @@ class _ReaderViewState extends State<ReaderView>
     // 拖拽/动画时 element 复用、layer 缓存命中 → 零首帧 hitch。
     // 对齐原生 legado HorizontalPageDelegate.setBitmap 提前录好 prev/next 位图。
     //
-    // 偏移矩阵(progress = 翻页完成度, none 态视为 0):
+    // slide 偏移矩阵(progress = 翻页完成度, none 态视为 0):
     // | 状态      | cur.x        | next.x           | prev.x           |
     // |----------|--------------|------------------|------------------|
     // | none     | 0            | +width (屏外)    | -width (屏外)    |
     // | NEXT(p)  | -p·w         | (1-p)·w          | -width (屏外)    |
     // | PREV(p)  | +p·w         | +width (屏外)    | (p-1)·w          |
     // none→NEXT 在 p=0 时各 offset 都等于静止态值, 过渡完全连续。
+    //
+    // cover 偏移矩阵(目标页静止, 覆盖方平移; 推导见 cover_layout.dart):
+    // | 状态      | cur.x        | next.x           | prev.x           |
+    // |----------|--------------|------------------|------------------|
+    // | none     | 0            | +width (屏外)    | -width (屏外)    |
+    // | NEXT(p)  | -p·w (滑出)  | 0 (静止,被覆盖)  | -width (屏外)    |
+    // | PREV(p)  | 0 (静止)     | +width (屏外)    | (p-1)·w (滑入)   |
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -569,10 +578,11 @@ class _ReaderViewState extends State<ReaderView>
         final progress = _currentProgress(width);
         final isNext = _animDir == _PageDirection.next;
         final isPrev = _animDir == _PageDirection.prev;
-        final isSim =
-            controller.settings.pageAnimMode == PageAnimMode.simulation;
+        final pageAnim = controller.settings.pageAnimMode;
+        final isSim = pageAnim == PageAnimMode.simulation;
+        final isCover = pageAnim == PageAnimMode.cover;
 
-        // 仿真模式: 三页 Stack 始终挂载(供 RepaintBoundary 截图), 但翻页进行中
+        // 仿真模式: 三页 STACK 始终挂载(供 RepaintBoundary 截图), 但翻页进行中
         // (_animDir != none) 在其上覆盖一层 CustomPaint 由 SimulationPainter 接管
         // 绘制卷曲效果(对齐原生 setBitmap 后整页由 bitmap 绘制)。静止态不覆盖,
         // 直接显示当前页, 避免无谓的 CustomPaint 重绘。
@@ -598,26 +608,67 @@ class _ReaderViewState extends State<ReaderView>
         // pageStack 必须静止在原位(offset=0)作为截图源 + 底层支撑。否则 pageStack 按
         // progress 平移会与覆盖层的卷曲叠加 → 用户看到 next 页"滑进来"+"卷曲"双重效果,
         // 即"内容提前变"(卷曲还没完成, 底层 next 已经滑到屏幕中央)。
-        // slide/none 模式才用 progress 偏移做翻页。
+        // slide/none/cover 模式才用 progress 偏移做翻页。
         final effProgress = isSim ? 0.0 : progress;
         final effIsNext = isSim ? false : isNext;
         final effIsPrev = isSim ? false : isPrev;
-        // cur 偏移: NEXT 向左(-p·w), PREV 向右(+p·w), none 留在原位。
-        final curOffsetX = effIsNext ? -effProgress * width
-            : effIsPrev ? effProgress * width
-            : 0.0;
-        // next 偏移: NEXT 从屏右滑入((1-p)·w → 0); 否则屏外(+width)。
-        final nextOffsetX = effIsNext ? width - effProgress * width : width;
-        // prev 偏移: PREV 从屏左滑入((p-1)·w → 0); 否则屏外(-width)。
-        final prevOffsetX = effIsPrev ? effProgress * width - width : -width;
 
-        // 层级 [prev, cur, next]: NEXT 时 next 在最上层覆盖 cur; PREV 时 prev 在 cur 下,
-        // 但 PREV 过程中 cur 右移露出 prev, prev 不被覆盖, 视觉正确。
-        final pageStack = Stack(children: [
-          Transform.translate(offset: Offset(prevOffsetX, 0), child: prevWidget),
-          Transform.translate(offset: Offset(curOffsetX, 0), child: curWidget),
-          Transform.translate(offset: Offset(nextOffsetX, 0), child: nextWidget),
-        ]);
+        double curOffsetX, nextOffsetX, prevOffsetX;
+        double? shadowLeft;
+        if (isCover) {
+          // cover: 目标页静止, 覆盖方平移(对齐原生 CoverPageDelegate.onDraw)。
+          final o = calcCoverOffsets(
+            progress: effProgress,
+            isNext: effIsNext,
+            isPrev: effIsPrev,
+            width: width,
+          );
+          curOffsetX = o.curX;
+          nextOffsetX = o.nextX;
+          prevOffsetX = o.prevX;
+          shadowLeft = o.shadowLeft;
+        } else {
+          // slide/none: cur 和 next/prev 都按 progress 平移。
+          // cur 偏移: NEXT 向左(-p·w), PREV 向右(+p·w), none 留在原位。
+          curOffsetX = effIsNext ? -effProgress * width
+              : effIsPrev ? effProgress * width
+              : 0.0;
+          // next 偏移: NEXT 从屏右滑入((1-p)·w → 0); 否则屏外(+width)。
+          nextOffsetX = effIsNext ? width - effProgress * width : width;
+          // prev 偏移: PREV 从屏左滑入((p-1)·w → 0); 否则屏外(-width)。
+          prevOffsetX = effIsPrev ? effProgress * width - width : -width;
+        }
+
+        // 层级:
+        // - slide/none/sim: [prev, cur, next](NEXT 时 next 在最上层覆盖 cur; PREV 时
+        //   prev 在 cur 下但 cur 右移露出 prev)。
+        // - cover: [next, cur, prev](PREV 时 prev 在最上层覆盖 cur; NEXT 时 next 在
+        //   cur 下, cur 左滑露出 next)。none 态 next/prev 都屏外, 顺序变化不可见,
+        //   故整个翻页周期 children 顺序固定不变, 无 element 重建闪烁。
+        final List<Widget> pageChildren;
+        if (isCover) {
+          pageChildren = [
+            Transform.translate(offset: Offset(nextOffsetX, 0), child: nextWidget),
+            Transform.translate(offset: Offset(curOffsetX, 0), child: curWidget),
+            Transform.translate(offset: Offset(prevOffsetX, 0), child: prevWidget),
+          ];
+        } else {
+          pageChildren = [
+            Transform.translate(offset: Offset(prevOffsetX, 0), child: prevWidget),
+            Transform.translate(offset: Offset(curOffsetX, 0), child: curWidget),
+            Transform.translate(offset: Offset(nextOffsetX, 0), child: nextWidget),
+          ];
+        }
+        final pageStack = Stack(children: pageChildren);
+
+        // cover 翻页阴影: 覆盖层后缘的 30px 渐变(对齐原生 addShadow)。静止态
+        // (progress=0/1)shadowLeft 为 null 不画。
+        if (isCover && shadowLeft != null) {
+          return Stack(children: [
+            pageStack,
+            _buildCoverShadow(shadowLeft, height),
+          ]);
+        }
 
         if (!isSim || _animDir == _PageDirection.none) {
           return pageStack;
@@ -750,6 +801,34 @@ class _ReaderViewState extends State<ReaderView>
       useSafeArea: true,
       showChrome: true,
       batteryLevel: BatteryProvider.instance.value,
+    );
+  }
+
+  /// cover 翻页阴影: 覆盖层后缘的渐变(对齐原生 `CoverPageDelegate.addShadow`)。
+  ///
+  /// 原生用 30px 宽 `GradientDrawable(LEFT_RIGHT, [0x66111111, 0x00000000])` 画在
+  /// 覆盖移动页的右边缘。Flutter 用 [Positioned] + [LinearGradient] 等价实现:
+  /// 从 [left] 向右画 [kCoverShadowWidth] 宽, 深灰→透明。`IgnorePointer` 避免挡手势。
+  Widget _buildCoverShadow(double left, double height) {
+    return Positioned(
+      left: left,
+      top: 0,
+      width: kCoverShadowWidth,
+      height: height,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Color(kCoverShadowColorARGB),
+                const Color(0x00000000),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
