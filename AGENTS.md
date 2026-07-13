@@ -534,15 +534,65 @@ if ((mDirection == NEXT && offsetX > 0) || (mDirection == PREV && offsetX < 0)) 
 pageOffset 初始 0 / 章内滚不翻 / 越底翻下页 / 越顶翻上页 / 首章首页钳 0 / 章末翻下一章 / 下一章首页翻回上一章末页 / 末章末页钳制不翻 / 点击翻页推进 / setCurrentPageSilent 不 notify / scheduleProgressSave 不抛。全套 135 测试通过。
 
 ### 不做（本轮排除）
-- ❌ cover 翻页（仍待实现）。
 - ❌ 水平手势翻页（scroll 模式纯垂直；点击区域翻页保留）。
 - ❌ 长截图模式（原生 `longScreenshot` 分支，无宿主场景）。
 - ❌ autoPager 自动翻页联动（本包无此功能）。
 
+## 覆盖翻页（cover，2026-07-13 实现）
+
+对齐原生 legado `CoverPageDelegate.kt`（117 行）。与 slide（`SlidePageDelegate.kt`，64 行）共享 `HorizontalPageDelegate` 全部手势/方向锁定/动画逻辑，**唯一差异在 `onDraw` 的绘制方式**。
+
+### 核心模型（务必记住）
+
+**cover 与 slide 的本质区别一句话**：slide 让 cur 和 next/prev **都**按 progress 平移；cover 只让**覆盖方**平移，**被覆盖方静止不动**。
+
+- **NEXT**：cur 像幕布向左滑出（`curX = -p·W`），next 静止在原位（`nextX = 0`）被 cur 覆盖，cur 滑走逐渐露出 next。
+- **PREV**：cur 静止（`curX = 0`），prev 像推拉门从右滑入（`prevX = (p-1)·W`）覆盖 cur。
+
+对应原生：`CoverPageDelegate.onDraw` NEXT 用 `withClip(W+offsetX, 0, W, H)` 让 next 静止露出右边缘 + `translate(distanceX-W)` 让 cur 滑出。Flutter 无需 clip，靠 Stack z-order + Transform 等价实现。
+
+### 偏移矩阵（推导见 `cover_layout.dart` 顶部注释）
+
+| 状态 | cur.x | next.x | prev.x | Stack 层级(底→顶) |
+|---|---|---|---|---|
+| none | 0 | +width(屏外) | -width(屏外) | [next, cur, prev] |
+| NEXT(p) | -p·w(滑出) | 0(静止,被覆盖) | -width(屏外) | [next, cur, prev](cur 在 next 之上) |
+| PREV(p) | 0(静止) | +width(屏外) | (p-1)·w(滑入) | [next, cur, prev](prev 在 cur 之上) |
+
+⚠️ **cover 的 Stack children 顺序是 `[next, cur, prev]`**，与 slide 的 `[prev, cur, next]` 不同。这是 cover 的核心：NEXT 时 cur 要在 next 之上（盖住 next），PREV 时 prev 要在 cur 之上（覆盖 cur）。none 态 next/prev 都屏外，顺序变化不可见；模式切换时各页有稳定 `ValueKey`，element 按 key 复用不重建。
+
+### 阴影（对齐原生 `addShadow`）
+
+一层渐变阴影画在覆盖移动页的**后缘（右边缘）**：
+- NEXT：阴影 left = cur 右边缘 = `(1-p)·W`，向右 15dp 渐淡（覆盖在露出的 next 上）。
+- PREV：阴影 left = prev 右边缘 = `p·W`，向右 15dp 渐淡（覆盖在露出的 cur 上）。
+- 起止点（p=0/1）不画（对齐原生 `addShadow` 的 `if (left == 0f) return`）。
+- 颜色 `0x66111111`→透明（对齐原生 `CoverPageDelegate.kt:15`）。
+- 宽度 15 逻辑像素（原生 30 是物理像素，xxhdpi ≈ 10dp；Flutter 取 15dp 视觉接近）。
+
+### 文件结构
+- `lib/src/reader/page_animations/cover_layout.dart` — **纯函数 `calcCoverOffsets`**（无 Canvas 依赖，可单测）。返回 `CoverOffsets(curX, nextX, prevX, shadowLeft)`。常量 `kCoverShadowWidth=15` / `kCoverShadowColorARGB=0x66111111`。
+- `lib/src/reader/widgets/reader_view.dart` `_buildPagedContent` — cover 分支（约 20 行）：调 `calcCoverOffsets` 算偏移 + `[next,cur,prev]` 层级 + 阴影层 `_buildCoverShadow`。
+
+### 零改动复用（关键，cover 之所以简单）
+- **整个手势状态机**：`_animDir/_isCancel/_isDragging/_dragOffset/_animGen` —— cover 与 slide 用**完全相同**的 progress 概念，只是渲染层偏移公式不同。
+- **`_dragProgress`/`_currentProgress`**：cover 复用 slide 同款 progress（方向锁定 + 防越界）。
+- **`_onDragStart`/`_onDragUpdate`/`_onDragEnd`**：cover 自动落入 slide 的 default 路径（没有 sim/scroll/none 的特殊分支）。
+- **`_turnByAnim`**：cover 走 slide 路径（`_startPageAnim(from:0, to:1)`）。
+- **`_startPageAnim`/`_onPageAnimStatus`**：cover 走 PostFrame 延迟 commit（与 slide/none 一致；sim 才立即 commit）。
+- **peek 缓存/`_resolveTarget`/`_deferredCommit`**：完全复用。
+- **`PageAnimMode.cover` 枚举 + UI 入口「覆盖」按钮 + 序列化 codec**：本轮之前已预留，无需改动。
+
+### 为什么 cover 比 simulation 简单得多
+cover 不需要：截图（RepaintBoundary.toImage）、CustomPainter、几何核心（贝塞尔曲线）、异步时序管理。纯 `Transform.translate` 偏移 + 一层渐变 Container 即可。
+
+### 测试（`test/cover_offset_test.dart`，18 用例）
+none 态三页归位 / none 与 slide 一致（过渡连续）/ NEXT 各进度点偏移 / NEXT cover 与 slide 差异（next 不平移）/ PREV 各进度点偏移 / PREV cover 与 slide 差异（cur 不平移）/ 阴影 NEXT/PREV 位置正确 / 阴影起止点不画 / 边界（width=0/负/progress 超界不崩）/ 过渡连续性（none→NEXT/PREV p=0 偏移连续）。全套 168 测试通过。
+
 ## 待办（先不做动画）
 
 - ~~`reader_view.dart` import 的 `page_animations/*.dart`（6个文件）整个目录缺失，根包当前无法编译。`flutter analyze` 的 38 个 error 全部源于此~~。**2026-06-29 复核**：根包 `flutter analyze` 现仅剩 2 个 info（`unnecessary_library_name` + `last_page_truncation_test.dart` 的 `prefer_interpolation`），0 error 0 warning，可整体编译。page_animations 缺失问题已不存在（reader_view 不再 import 该目录，或之前的提交已处理）。如确需补动画目录，从零开始即可。
-- ~~cover/scroll 待实现~~。**2026-07-07 更新**：scroll 已实现（见上「滚动翻页」节）。cover 仍待实现。
+- ~~cover/scroll 待实现~~。**2026-07-13 更新**：cover（见上「覆盖翻页」节）与 scroll 均已实现。五种翻页模式（cover/slide/simulation/scroll/none）全部完成。
 
 ## 键盘 viewInsets 引发的 rebuild 卡顿（2026-07-03 修复，commit 78d289a）
 
