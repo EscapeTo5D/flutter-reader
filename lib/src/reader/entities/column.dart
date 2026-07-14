@@ -36,12 +36,19 @@ class TextColumn extends BaseColumn {
   /// 是否为搜索结果
   bool isSearchResult;
 
+  /// 是否为朗读高亮(对应原生 `TextPage.upPageAloudSpan` 标记)。
+  ///
+  /// mutable 字段, 在 `PageView._buildLine` 每次构建时重算(先清后标),
+  /// 与 [selected]/[isSearchResult] 同套机制。详见 `_markAloud`。
+  bool isAloud;
+
   TextColumn({
     required this.charData,
     required super.start,
     required super.end,
     this.selected = false,
     this.isSearchResult = false,
+    this.isAloud = false,
   });
 
   @override
@@ -61,6 +68,17 @@ class TextColumn extends BaseColumn {
     if (isSearchResult) {
       final bgPaint = Paint()
         ..color = Colors.yellow.withValues(alpha: 0.5)
+        ..style = PaintingStyle.fill;
+      canvas.drawRect(
+        Rect.fromLTRB(start, 0, end, lineBase + style.fontSize! * 0.3),
+        bgPaint,
+      );
+    }
+
+    // 绘制朗读高亮背景(对齐原生 aloudSpan, 用柔和的橙色背景)
+    if (isAloud) {
+      final bgPaint = Paint()
+        ..color = Colors.orange.withValues(alpha: 0.25)
         ..style = PaintingStyle.fill;
       canvas.drawRect(
         Rect.fromLTRB(start, 0, end, lineBase + style.fontSize! * 0.3),

@@ -16,6 +16,7 @@ import 'page_view.dart' as pv;
 import 'tip_layout.dart';
 import 'read_menu.dart';
 import 'search_menu.dart';
+import '../../aloud/aloud_controller.dart';
 
 part 'reader_view_scroll.dart';
 part 'reader_view_simulation.dart';
@@ -50,7 +51,14 @@ const int _pageAnimSpeedMs = 300;
 class ReaderView extends StatefulWidget {
   final ReadingController controller;
 
-  const ReaderView({super.key, required this.controller});
+  /// 朗读控制器(可选)。非 null 时, 朗读进度变化会驱动本视图重绘当前段高亮。
+  ///
+  /// 用法: 宿主创建 [AloudController] 后传入。朗读高亮由 [PageView._markAloud]
+  /// 在构建时按当前 [AloudCursor] 标记对应字符列, 本视图监听 aloudController
+  /// 的变化触发 setState(复用现有 `_onControllerUpdate` 模式)。
+  final AloudController? aloudController;
+
+  const ReaderView({super.key, required this.controller, this.aloudController});
 
   @override
   State<ReaderView> createState() => _ReaderViewState();
@@ -155,6 +163,8 @@ class _ReaderViewState extends State<ReaderView>
     );
     _pageAnim.addStatusListener(_onPageAnimStatus);
     widget.controller.addListener(_onControllerUpdate);
+    // 朗读高亮: 监听 aloudController 变化触发重绘(复用 _onControllerUpdate 模式)。
+    widget.aloudController?.addListener(_onAloudUpdate);
     // 启动电量监听并跟随刷新(对齐原生 legado ACTION_BATTERY_CHANGED 实时刷页眉电量)。
     BatteryProvider.instance.start();
     BatteryProvider.instance.addListener(_onBatteryUpdate);
@@ -244,6 +254,7 @@ class _ReaderViewState extends State<ReaderView>
     _secondaryAnimation?.removeStatusListener(_onSecondaryAnimation);
     _secondaryAnimation?.removeListener(_onSecondaryFrame);
     widget.controller.removeListener(_onControllerUpdate);
+    widget.aloudController?.removeListener(_onAloudUpdate);
     BatteryProvider.instance.removeListener(_onBatteryUpdate);
     // 恢复显示系统栏(离开阅读页)。
     SystemUiController.setSystemBars(
@@ -256,6 +267,13 @@ class _ReaderViewState extends State<ReaderView>
   /// 电量变化触发重绘(更新页眉电量图标/百分比)。ValueNotifier 自身去重,
   /// 相同 level 不会重复回调。
   void _onBatteryUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  /// 朗读进度/状态变化触发重绘(更新当前段朗读高亮)。
+  /// 复用 _onBatteryUpdate 模式: 简单 setState 让 _buildPage 重跑,
+  /// PageView 内部的 _markAloud 会按最新 aloudController.cursor 重标。
+  void _onAloudUpdate() {
     if (mounted) setState(() {});
   }
 
@@ -434,6 +452,7 @@ class _ReaderViewState extends State<ReaderView>
                 Positioned.fill(
                   child: ReadMenu(
                     controller: widget.controller,
+                    aloudController: widget.aloudController,
                     visible: widget.controller.menuVisible,
                   ),
                 ),
@@ -762,6 +781,8 @@ class _ReaderViewState extends State<ReaderView>
       useSafeArea: true,
       showChrome: true,
       batteryLevel: BatteryProvider.instance.value,
+      aloudController: widget.aloudController,
+      aloudVersion: widget.aloudController?.aloudVersion ?? 0,
     );
   }
 
@@ -801,6 +822,8 @@ class _ReaderViewState extends State<ReaderView>
       useSafeArea: true,
       showChrome: true,
       batteryLevel: BatteryProvider.instance.value,
+      aloudController: widget.aloudController,
+      aloudVersion: widget.aloudController?.aloudVersion ?? 0,
     );
   }
 

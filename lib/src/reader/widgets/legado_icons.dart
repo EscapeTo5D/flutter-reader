@@ -51,6 +51,40 @@ class LegadoIcons {
 
   static Widget add({double size = 24, Color color = const Color(0xFF595757)}) =>
       CustomPaint(size: Size(size, size), painter: _AddPainter(color));
+
+  // ── 朗读弹窗用图标(对齐原生 dialog_read_aloud.xml 引用的 drawable) ──
+
+  /// 上一段(ic_skip_previous)。
+  static Widget skipPrevious({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _SkipPreviousPainter(color));
+
+  /// 下一段(ic_skip_next)。
+  static Widget skipNext({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _SkipNextPainter(color));
+
+  /// 播放(ic_play_24dp)。
+  static Widget play({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _PlayPainter(color));
+
+  /// 暂停(ic_pause_24dp)。
+  static Widget pause({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _PausePainter(color));
+
+  /// 停止(ic_stop_black_24dp)。
+  static Widget stop({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _StopPainter(color));
+
+  /// 定时(ic_time_add_24dp, viewport 1000)。
+  static Widget timer({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _TimerPainter(color));
+
+  /// 主菜单(ic_menu)。
+  static Widget mainMenu({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _MainMenuPainter(color));
+
+  /// 后台/隐藏(ic_visibility_off)。
+  static Widget visibilityOff({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _VisibilityOffPainter(color));
 }
 
 // ic_arrow_back.xml
@@ -894,4 +928,260 @@ class _AddPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AddPainter old) => old.color != color;
+}
+
+// ── 朗读弹窗图标 painter(对齐原生 drawable 矢量路径) ──
+
+// ic_skip_previous.xml
+class _SkipPreviousPainter extends CustomPainter {
+  final Color color;
+  _SkipPreviousPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawPath(
+      Path()
+        ..moveTo(6, 6)..lineTo(8, 6)..lineTo(8, 18)..lineTo(6, 18)..close()
+        ..moveTo(9.5, 12)..lineTo(18, 18)..lineTo(18, 6)..close(),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _SkipPreviousPainter old) => old.color != color;
+}
+
+// ic_skip_next.xml
+class _SkipNextPainter extends CustomPainter {
+  final Color color;
+  _SkipNextPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawPath(
+      Path()
+        ..moveTo(6, 18)..lineTo(14.5, 12)..lineTo(6, 6)..close()
+        ..moveTo(16, 6)..lineTo(16, 18)..lineTo(18, 18)..lineTo(18, 6)..close(),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _SkipNextPainter old) => old.color != color;
+}
+
+// ic_play_24dp.xml
+class _PlayPainter extends CustomPainter {
+  final Color color;
+  _PlayPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawPath(
+      Path()..moveTo(8, 5)..lineTo(8, 19)..lineTo(19, 12)..close(),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _PlayPainter old) => old.color != color;
+}
+
+// ic_pause_24dp.xml
+class _PausePainter extends CustomPainter {
+  final Color color;
+  _PausePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawPath(
+      Path()
+        ..moveTo(6, 19)..lineTo(10, 19)..lineTo(10, 5)..lineTo(6, 5)..close()
+        ..moveTo(14, 5)..lineTo(14, 19)..lineTo(18, 19)..lineTo(18, 5)..close(),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _PausePainter old) => old.color != color;
+}
+
+// ic_stop_black_24dp.xml
+class _StopPainter extends CustomPainter {
+  final Color color;
+  _StopPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawRect(Rect.fromLTWH(6 * s, 6 * s, 12 * s, 12 * s), paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _StopPainter old) => old.color != color;
+}
+
+// ic_time_add_24dp.xml (viewport 1000)
+class _TimerPainter extends CustomPainter {
+  final Color color;
+  _TimerPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 1000;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawPath(
+      Path()
+        // 上箭头左翼
+        ..moveTo(698.24, 166.67)
+        ..lineTo(869.37, 309.50)
+        ..lineTo(821.82, 366.52)
+        ..lineTo(650.58, 223.76)
+        ..close()
+        // 上箭头右翼
+        ..moveTo(301.73, 166.67)
+        ..lineTo(349.35, 223.72)
+        ..lineTo(178.18, 366.52)
+        ..lineTo(130.63, 309.46)
+        ..close()
+        // 钟外圈
+        ..moveTo(499.98, 248.02)
+        ..cubicTo(315.36, 248.02, 165.66, 397.72, 165.66, 582.34)
+        ..cubicTo(165.66, 766.96, 315.36, 916.67, 499.98, 916.67)
+        ..cubicTo(684.60, 916.67, 834.31, 766.96, 834.31, 582.34)
+        ..cubicTo(834.31, 397.72, 684.60, 248.02, 499.98, 248.02)
+        ..close()
+        ..moveTo(499.98, 842.37)
+        ..cubicTo(356.59, 842.37, 239.95, 725.73, 239.95, 582.34)
+        ..cubicTo(239.95, 438.95, 356.59, 322.31, 499.98, 322.31)
+        ..cubicTo(643.37, 322.31, 760.01, 438.95, 760.01, 582.34)
+        ..cubicTo(760.01, 725.73, 643.37, 842.37, 499.98, 842.37)
+        ..close()
+        // 钟内十字(加号)
+        ..moveTo(537.13, 433.75)
+        ..lineTo(462.83, 433.75)
+        ..lineTo(462.83, 545.20)
+        ..lineTo(351.39, 545.20)
+        ..lineTo(351.39, 619.49)
+        ..lineTo(462.83, 619.49)
+        ..lineTo(462.83, 730.93)
+        ..lineTo(537.13, 730.93)
+        ..lineTo(537.13, 619.49)
+        ..lineTo(648.57, 619.49)
+        ..lineTo(648.57, 545.20)
+        ..lineTo(537.13, 545.20)
+        ..close(),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _TimerPainter old) => old.color != color;
+}
+
+// ic_menu.xml
+class _MainMenuPainter extends CustomPainter {
+  final Color color;
+  _MainMenuPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    // 三条横线(汉堡菜单), 用矩形填充。
+    canvas.drawRect(Rect.fromLTWH(3 * s, 16 * s, 18 * s, 2 * s), paint);
+    canvas.drawRect(Rect.fromLTWH(3 * s, 11 * s, 18 * s, 2 * s), paint);
+    canvas.drawRect(Rect.fromLTWH(3 * s, 6 * s, 18 * s, 2 * s), paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _MainMenuPainter old) => old.color != color;
+}
+
+// ic_visibility_off.xml
+class _VisibilityOffPainter extends CustomPainter {
+  final Color color;
+  _VisibilityOffPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+    canvas.drawPath(
+      Path()
+        ..moveTo(12, 7)
+        ..cubicTo(14.76, 7, 17, 9.24, 17, 12)
+        ..cubicTo(17, 12.65, 16.87, 13.26, 16.64, 13.83)
+        ..lineTo(19.56, 16.75)
+        ..cubicTo(21.07, 15.49, 22.26, 13.86, 22.99, 12)
+        ..cubicTo(21.26, 7.61, 16.99, 4.5, 11.99, 4.5)
+        ..cubicTo(10.59, 4.5, 9.25, 4.75, 8.01, 5.2)
+        ..lineTo(10.17, 7.36)
+        ..cubicTo(10.74, 7.13, 11.35, 7, 12, 7)
+        ..close()
+        ..moveTo(2, 4.27)
+        ..lineTo(4.28, 6.55)
+        ..lineTo(4.74, 7.01)
+        ..cubicTo(3.08, 8.3, 1.78, 10.02, 1, 12)
+        ..cubicTo(2.73, 16.39, 7, 19.5, 12, 19.5)
+        ..cubicTo(13.55, 19.5, 15.03, 19.2, 16.38, 18.66)
+        ..lineTo(16.8, 19.08)
+        ..lineTo(19.73, 22)
+        ..lineTo(21, 20.73)
+        ..lineTo(3.27, 3)
+        ..close()
+        ..moveTo(7.53, 9.8)
+        ..lineTo(9.08, 11.35)
+        ..cubicTo(9.03, 11.56, 9, 11.78, 9, 12)
+        ..cubicTo(9, 13.66, 10.34, 15, 12, 15)
+        ..cubicTo(12.22, 15, 12.44, 14.97, 12.65, 14.92)
+        ..lineTo(14.2, 16.47)
+        ..cubicTo(13.53, 16.8, 12.79, 17, 12, 17)
+        ..cubicTo(9.24, 17, 7, 14.76, 7, 12)
+        ..cubicTo(7, 11.21, 7.2, 10.47, 7.53, 9.8)
+        ..close()
+        ..moveTo(11.84, 9.02)
+        ..lineTo(14.99, 12.17)
+        ..lineTo(15.01, 12.01)
+        ..cubicTo(15.01, 10.35, 13.67, 9.01, 12.01, 9.01)
+        ..close(),
+      paint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _VisibilityOffPainter old) => old.color != color;
 }

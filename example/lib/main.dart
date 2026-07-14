@@ -148,6 +148,8 @@ class _ReaderPageState extends State<ReaderPage> {
   // 注入持久化仓库 + 演示用户。controller 在 loadBook 时会自动恢复该用户在此书的进度。
   final ReadingController _controller =
       ReadingController(repository: AppDatabase.repo, userId: AppDatabase.demoUserId);
+  // 朗读控制器(注入阅读 controller 与持久化仓库, 进度复用现有进度表)。
+  late final AloudController _aloudController;
   final _api = ApiService();
   bool _loading = true;
   String? _error;
@@ -155,6 +157,10 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void initState() {
     super.initState();
+    _aloudController = AloudController(
+      reader: _controller,
+      repository: AppDatabase.repo,
+    );
     _loadChapters();
   }
 
@@ -272,6 +278,8 @@ class _ReaderPageState extends State<ReaderPage> {
   @override
   void dispose() {
     // 退出前强制落盘进度(防抖定时器可能还没触发)
+    _aloudController.flushProgress();
+    _aloudController.dispose();
     _controller.flushProgress();
     _controller.dispose();
     super.dispose();
@@ -315,7 +323,10 @@ class _ReaderPageState extends State<ReaderPage> {
     // 对齐 legado: 目录/搜索是独立 Activity, 底层阅读 View 根本不被 resize。
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      body: ReaderView(controller: _controller),
+      body: ReaderView(
+        controller: _controller,
+        aloudController: _aloudController,
+      ),
     );
   }
 }

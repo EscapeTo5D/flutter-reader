@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../entities/text_page.dart';
 import '../entities/column.dart';
 import '../../core/models/reading_settings.dart';
+import '../../aloud/aloud_controller.dart';
 import 'tip_layout.dart'; // 渲染尺寸常量(与测量函数同源)
 
 class PageView extends StatelessWidget {
@@ -20,6 +21,12 @@ class PageView extends StatelessWidget {
   final bool showFooterOnly;
   final bool showHeaderOnly;
 
+  /// 朗读控制器(可选)。非 null 时, 当前朗读段会被高亮(对应原生 aloudSpan)。
+  final AloudController? aloudController;
+
+  /// 朗读高亮版本号。每次朗读进度推进自增, 驱动 [shouldRepaint] 重绘。
+  final int aloudVersion;
+
   const PageView({
     super.key,
     this.page,
@@ -36,6 +43,8 @@ class PageView extends StatelessWidget {
     this.showChrome = true,
     this.showFooterOnly = false,
     this.showHeaderOnly = false,
+    this.aloudController,
+    this.aloudVersion = 0,
   });
 
   @override
@@ -353,6 +362,13 @@ class PageView extends StatelessWidget {
       _markSearchResults(line, searchQuery!);
     }
 
+    // 朗读高亮: 标记当前朗读段落在本行的字符区间。
+    // 每次构建先清后标(isAloud 是 mutable 字段, 上次构建的标记会残留)。
+    _resetAloudMarks(line);
+    if (aloudController != null) {
+      _markAloud(line, aloudController!);
+    }
+
     final lineHeight = line.height;
 
     // 有 Column 数据: 用 CustomPainter 逐字符绘制
@@ -366,6 +382,7 @@ class PageView extends StatelessWidget {
           painter: _TextLinePainter(
             line: line,
             style: style,
+            aloudVersion: aloudVersion,
           ),
         ),
       );
@@ -405,6 +422,42 @@ class PageView extends StatelessWidget {
     }
   }
 
+  /// 清除本行所有 Column 的朗读高亮标记(每次构建先清, 避免上次标记残留)。
+  void _resetAloudMarks(TextLine line) {
+    for (final col in line.columns) {
+      if (col is TextColumn) col.isAloud = false;
+    }
+  }
+
+  /// 标记当前朗读段在本行的字符区间。
+  ///
+  /// 朗读光标 [AloudCursor] 的 [chapterCharOffset] 是章内绝对偏移,
+  /// [charOffsetInParagraph] 是段内已读偏移。本行的字符区间是
+  /// [line.chapterPosition, line.chapterPosition + line.text.length)。
+  ///
+  /// 高亮规则: 高亮 [segStart, chapterCharOffset), 即段首到当前朗读位置
+  /// (已读部分)。与原生 `upPageAloudSpan` 高亮整段的差异是已知简化 —— 段尾
+  /// 无法从 cursor 直接得(需查下一段偏移), 已读部分高亮更直观地反映进度。
+  void _markAloud(TextLine line, AloudController controller) {
+    final cursor = controller.cursor;
+    if (cursor == null) return;
+    // 朗读段在章内的绝对范围 [segStart, segEnd): 段首 → 当前已读位置。
+    final segStart = cursor.chapterCharOffset - cursor.charOffsetInParagraph;
+    final segEnd = cursor.chapterCharOffset;
+    final lineStart = line.chapterPosition;
+    final lineEnd = lineStart + line.text.length;
+    // 区间不相交 → 跳过。
+    if (segEnd <= lineStart || segStart >= lineEnd) return;
+    // 计算本行内需高亮的字符下标区间 [from, to)。
+    final from = (segStart - lineStart).clamp(0, line.columns.length);
+    final to = (segEnd - lineStart).clamp(0, line.columns.length);
+    for (var i = from; i < to; i++) {
+      if (line.columns[i] is TextColumn) {
+        (line.columns[i] as TextColumn).isAloud = true;
+      }
+    }
+  }
+
   BoxDecoration _buildBackground() {
     if (settings.backgroundImage != null &&
         settings.backgroundImage!.isNotEmpty) {
@@ -428,9 +481,17 @@ class _TextLinePainter extends CustomPainter {
   final TextLine line;
   final TextStyle style;
 
+  /// 朗读高亮版本号。朗读进度推进时自增, 驱动 [shouldRepaint] 重绘当前段高亮。
+  ///
+  /// 必要性: [TextLine] 是不可变 const 对象, `old.line != line` 比对象引用。
+  /// 朗读高亮变化时 line 引用不变 → shouldRepaint 返 false → 不重绘 → 高亮不动。
+  /// 引入版本号打破这个僵局: 版本号变 → shouldRepaint 返 true → 重绘。
+  final int aloudVersion;
+
   _TextLinePainter({
     required this.line,
     required this.style,
+    this.aloudVersion = 0,
   });
 
   @override
@@ -445,7 +506,9 @@ class _TextLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TextLinePainter oldDelegate) {
-    return oldDelegate.line != line || oldDelegate.style != style;
+    return oldDelegate.line != line ||
+        oldDelegate.style != style ||
+        oldDelegate.aloudVersion != aloudVersion;
   }
 }
 

@@ -27,15 +27,23 @@ lib/                          # 包代码（对外发布）
     core/                     # 与渲染无关的核心：controller / models / storage / content_processor
       controller/             # ReadingController（外部主入口）
       models/                 # Book / Chapter / ReadingSettings + codec
-      storage/                # ReaderRepository 抽象 + SqfliteReaderRepository + 数据模型
+      storage/                # ReaderRepository 抽象 + SqfliteReaderRepository + 数据模型 + HttpTtsSource
+    aloud/                    # 朗读(TTS)子系统(独立, 不污染 ReadingController)
+      aloud_controller.dart   # AloudController(对外主入口, 引擎选择/状态机/翻页联动/进度持久化)
+      aloud_engine.dart       # AloudEngine 抽象 + AloudState/AloudProgressEvent + AloudEngineType
+      aloud_cursor.dart       # AloudCursor 进度坐标(chapterCharOffset + paragraphIndex + 段内偏移)
+      text_slicer.dart        # TextSlicer 切段(偏移与 chapterPosition 同源)
+      http_tts_config.dart    # HttpTtsConfig 实体 + URL 字面替换 Resolver
+      audio_handler.dart      # AudioHandler 抽象(后台预留) + NoopAudioHandler(第一版)
+      engines/                # system_tts_engine(flutter_tts) / http_tts_engine(just_audio+dio)
     reader/                   # 排版与渲染
       engine/                 # page_engine（排版核心）/ paginate_isolate（isolate 排版）
       entities/               # TextPage / Column
       page_animations/        # simulation_geometry/painter, scroll_mode_handler
-      widgets/                # reader_view（容器）, page_view（单页+chrome）, read_menu, ...
+      widgets/                # reader_view（容器）, page_view（单页+chrome+朗读高亮）, read_menu, read_aloud_dialog, ...
 example/                      # 演示 app（path 依赖 ../）
 docs/legado_reader/           # legado 中文技术文档 00~10（与源码冲突时以源码为准）
-test/                         # 单测（几何/排版/持久化/滚动/仿真 …）
+test/                         # 单测（几何/排版/持久化/滚动/仿真/朗读切段 …）
 ```
 
 ### 架构边界（改代码前必读）
@@ -677,4 +685,58 @@ class _RippleButtonState extends State<_RippleButton> {
 **判断是否需要这套方案的快速检查**：widget 是否在 `SmartDialog.show(builder:)` 的回调里挂载？是 → 走手画；否（在 Scaffold/Material 常规树里）→ InkWell/InkResponse 正常用。
 
 **原生对照**：legado 在 `view_detail_seek_bar.xml:24,41` 用 `?android:attr/selectableItemBackgroundBorderless`（无边界圆形涟漪），那是 Android framework 提供的、画在根 DecorView 上的机制，不依赖 view 自身有特殊背景。Flutter 没有等价的"画在根上"的 ripple，ink 必须挂在 Material 上 —— 这是两个平台机制的差异，SmartDialog 弹窗正好踩中这个差异。
+
+## 朗读功能（TTS，2026-07-13 实现）
+
+移植原生 legado 的 TTS 语音朗读。独立 `lib/src/aloud/` 子系统（方案 B：干净分层），**不污染 ReadingController**。双引擎：系统 TTS（`flutter_tts`）+ HTTP TTS（`just_audio` + `dio`）。
+
+### 架构边界（改代码前必读）
+- **`AloudController` 是朗读子系统唯一主入口**，通过构造注入 `ReadingController` 引用，调它的 public 方法翻页/取页/取预处理文本，**不修改 ReadingController 字段**。宿主不用朗读就完全不引入。
+- **`AloudEngine` 抽象**（对应原生 `BaseReadAloudService`）：只管「一段话怎么发声、何时播完、当前读到段内哪个字符」；章节坐标/翻页联动/进度持久化是 `AloudController` 的职责（引擎无关）。
+- **公共出口**：`lib/flutter_reader.dart` export 了 `AloudController`/`AloudEngine`/`AloudCursor`/`TextSlicer`/`HttpTtsConfig`/`AudioHandler`/`HttpTtsSource`/`showReadAloudDialog`。
+
+### 进度坐标（复用现有持久化，不新建表）
+- `AloudCursor`：`chapterCharOffset`（章内绝对偏移，**与 `TextLine.chapterPosition` 同源**）+ `paragraphIndex`（段下标）+ `charOffsetInParagraph`（段内偏移，逐字高亮用）。
+- 朗读进度直接喂给 `ReadingProgress.chapterCharOffset`，**完全复用现有 `ReaderRepository.saveProgress` / `restoreProgress`**。用户下次打开书，现有 `restoreProgress` 用 `pageIndexForCharOffset` 二分落页，朗读从该段续读。
+- `AloudController._scheduleProgressSave` 1.5s 防抖落盘（对齐 `ReadingController`）；`flushProgress()` dispose 前调。
+
+### 切段偏移对齐（⚠️ 关键正确性，单测 `text_slicer_test.dart` 锁定）
+- `TextSlicer.slice(processedContent)` 输入必须是 `ReadingController.chapterProcessedContent(chIdx)` 的返回值（= `ContentProcessor.getContent(...).textList.join('\n')`，**与排版引擎输入同源**）。
+- 切段**不剥缩进**（`chapterPosition` 含缩进偏移），每段偏移 = 累加 `raw.length + 1`（含 `\n`）。`TextSlicer` 入口做 `\r\n`/`\r` → `\n` 规范化兜底（书源正文可能含 `\r`）。
+- 纯标点/空白段用 `_skipRegex = ^[\s\p{C}\p{P}\p{Z}\p{S}]+$`（unicode）过滤（对应原生 `notReadAloudRegex`），但偏移照常累加。
+- **断言**：切段第 N 段的 `charOffsetInChapter` == 排版后该段首个非空 `TextLine.chapterPosition`。
+
+### 翻页/翻章联动（对应原生 `readAloudNumber+charOffset > getReadLength`）
+- 引擎每报告一次 `AloudProgressEvent` → `AloudController._onEngineProgress` → 更新 cursor → `_maybeFlipPage` → `setCurrentPageSilent`（**静默无动画**，不 notify 整树）。
+- 章末（引擎发 idle）→ `_advanceToNextChapter`：快照目标章索引（**TOCTOU 修复**：全程用快照变量，不再 await 后读 `reader.currentChapterIndex`）+ `_advancing` 重入守卫。共用 `_loadChapterAndPlay`（与 `start` 合并，消除重复）。
+
+### 两个引擎的差异（改引擎时记住）
+| | 系统 TTS (`SystemTtsEngine`) | HTTP TTS (`HttpTtsEngine`) |
+|---|---|---|
+| 底层 | `flutter_tts`（Android TextToSpeech / iOS AVSpeechSynthesizer） | `just_audio`（ExoPlayer）+ `dio`（OkHttp） |
+| 进度精度 | **字符级**（`setProgressHandler` 的 start/end，对应原生 onRangeStart） | **估算**（音频时长 ÷ 段字符数，100ms 定时器推进，对应原生 `upPlayPos`） |
+| 暂停 | 无真 pause，`stop` + 回段首重读（对齐原生） | `just_audio` 原生 pause/resume（保留音频位置） |
+| 倍速 | `setSpeechRate` 实时改 | url 含 `{{speakSpeed}}` = 后端合成→重下载；否则 `setSpeed` 实时改 |
+| 缓存 | 无 | md5(url+speed+text) 落盘（`path_provider` 临时目录） |
+| 队列 | **纯 completion 驱动**（FLUSH + speak 一段，completion 触发下一段；**不用 QUEUE_ADD**，避免 onError/onComplete 双触发跳段） | `ConcatenatingAudioSource` **单调追加**（不做头部回收——曾用 removeRange 破坏 `_currentIndex+player.currentIndex` 不变式，已弃用） |
+
+### 朗读高亮（复用现有 mutable Column 模式）
+- `TextColumn` 加 `bool isAloud` 字段（mutable，照搬 `selected`/`isSearchResult` 模式）+ `draw()` 画橙色底色（`Colors.orange.alpha=0.25`）。
+- `PageView` 加可选 `aloudController`/`aloudVersion` 字段；`_buildLine` 里 `_resetAloudMarks` + `_markAloud`（**每次 build 先清后标**，避免上次标记残留）。
+- `_TextLinePainter.shouldRepaint` 加 `aloudVersion` 版本号比较 —— **必要性**：`TextLine` 是不可变 const，`old.line != line` 比对象引用，朗读高亮变化时 line 引用不变→不重绘。版本号打破僵局。
+- `ReaderView` 加可选 `aloudController` 参数；`initState` 监听 `addListener(_onAloudUpdate)` → `setState` 触发重绘（复用 `_onControllerUpdate` 模式）；`_buildPage`/`_buildPeekPage` 透传。
+- 高亮区间：段首（`chapterCharOffset - charOffsetInParagraph`）到当前已读位置（`chapterCharOffset`），即「已读部分」高亮。与原生 `upPageAloudSpan` 高亮整段的差异是已知简化。
+
+### 第一版不做（留待后续，架构已预留）
+- ❌ **后台/锁屏/通知栏/MediaSession**：`AudioHandler` 抽象 + `NoopAudioHandler` 已预留，第二版接 `audio_service`（ryanheise）即可，控制器主逻辑不动。
+- ❌ **JS 模板执行**（`{{java.xxx}}`/`@js:`）：HttpTTS url 只做字面替换 `{{speakText}}`/`{{speakSpeed}}`，能跑百度类纯替换源；Edge（`@js:apiurl`）/阿里云（签名）留待集成 `flutter_js`/`quickjs_engine`。
+- ❌ 定时停止、电话自动暂停、唤醒锁（随 audio_service 一起做）。
+- ❌ HttpTTS 配置的 sqflite 默认实现（接口 `HttpTtsSource` + `MemoryHttpTtsSource` 已有，sqflite 实现留待宿主需要时补，schema v4）。
+
+### 已知问题（非本轮范围）
+- `example/test/widget_test.dart` 是 `flutter create` 默认模板的计数器测试，example 已改成阅读器后此测试失效（`Expected text "0" Found 0`）。无参数 `flutter test` 会扫到它报失败；包内测试 `flutter test test/` 全过（175 用例）。
+
+### 新增依赖（pubspec.yaml）
+`flutter_tts: ^4.2.5` / `just_audio: ^0.10.6` / `dio: ^5.7.0` / `crypto: ^3.0.6`（+ 传递依赖 `rxdart`/`uuid`/`just_audio_web`）。
+
 

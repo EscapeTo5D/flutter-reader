@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import '../../aloud/aloud_controller.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import '../../core/storage/reading_style_preset.dart';
 import 'chapter_list_page.dart';
 import 'detail_seek_bar.dart';
 import 'legado_icons.dart';
+import 'read_aloud_dialog.dart';
 
 class ReadMenu extends StatefulWidget {
   final ReadingController controller;
+
+  /// 朗读控制器。非空时底栏「朗读」按钮接 [showReadAloudDialog];
+  /// 为空时按钮不显示(对齐原生无 TTS 引擎时的占位, 也避免包强制依赖 aloud 子系统)。
+  final AloudController? aloudController;
 
   /// 菜单是否可见(驱动顶栏/底栏/浮动按钮的滑入滑出动画)。
   ///
@@ -20,6 +26,7 @@ class ReadMenu extends StatefulWidget {
   const ReadMenu({
     super.key,
     required this.controller,
+    this.aloudController,
     this.visible = true,
   });
 
@@ -217,6 +224,9 @@ class _ReadMenuState extends State<ReadMenu> {
   }
 
   Widget _buildBottomButtons(BuildContext context) {
+    final aloud = widget.aloudController;
+    // 朗读按钮颜色: 注入了 AloudController 才用正常色 + 可点击; 否则灰显且不响应。
+    final aloudEnabled = aloud != null;
     return Row(
       children: [
         const Spacer(flex: 1),
@@ -225,7 +235,22 @@ class _ReadMenuState extends State<ReadMenu> {
           _showChapterDrawer(context);
         }),
         const Spacer(flex: 2),
-        _buildBottomIcon(LegadoIcons.readAloud(), '朗读', () {}),
+        // 朗读按钮: 对齐原生 legado 底栏固定四按钮之一。
+        // 注入了 [AloudController] 才启用, 点击弹朗读控制弹窗; 未注入时灰显禁用
+        // (避免宿主不使用 TTS 时按钮点了无反应)。
+        _buildBottomIcon(
+          LegadoIcons.readAloud(
+            color: aloudEnabled ? const Color(0xFF595757) : Colors.black26,
+          ),
+          '朗读',
+          aloudEnabled
+              ? () {
+                  widget.controller.hideMenu();
+                  showReadAloudDialog(context, controller: aloud);
+                }
+              : null,
+          iconColor: aloudEnabled ? Colors.black54 : Colors.black26,
+        ),
         const Spacer(flex: 2),
         _buildBottomIcon(LegadoIcons.interfaceSetting(), '界面', () {
           widget.controller.hideMenu();
@@ -241,7 +266,12 @@ class _ReadMenuState extends State<ReadMenu> {
     );
   }
 
-  Widget _buildBottomIcon(Widget icon, String label, VoidCallback onTap) {
+  /// 底栏图标按钮(对齐原生 view_read_menu.xml 底部 ImageView+TextView)。
+  /// [onTap] 为 null 时按钮不响应点击但仍占位(用于朗读按钮在未注入引擎时灰显)。
+  /// [iconColor] 仅影响标签文字色(图标颜色由 icon widget 自身携带, 见 LegadoIcons)。
+  Widget _buildBottomIcon(Widget icon, String label, VoidCallback? onTap,
+      {Color? iconColor}) {
+    final color = iconColor ?? Colors.black54;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -253,7 +283,7 @@ class _ReadMenuState extends State<ReadMenu> {
             // 对齐原生 ImageView maxHeight=20dp (icon 24→20)。
             SizedBox(width: 20, height: 20, child: icon),
             const SizedBox(height: 3),
-            Text(label, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            Text(label, style: TextStyle(color: color, fontSize: 12)),
             const SizedBox(height: 7),
           ],
         ),

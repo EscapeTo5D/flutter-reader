@@ -265,7 +265,7 @@ class ReadingController extends ChangeNotifier {
         _rePaginate();
       }
       // charOffset → 页码
-      final page = _pageIndexForCharOffset(p.chapterCharOffset);
+      final page = pageIndexForCharOffset(p.chapterCharOffset);
       _currentPageIndex = page;
       notifyListeners();
     }
@@ -284,7 +284,7 @@ class ReadingController extends ChangeNotifier {
       userId: uid,
       bookId: book.id,
       chapterIndex: _currentChapterIndex,
-      chapterCharOffset: _charOffsetForCurrentPage(),
+      chapterCharOffset: charOffsetForCurrentPage(),
       pageIndex: _currentPageIndex,
       lastReadAt: DateTime.now(),
     );
@@ -292,7 +292,9 @@ class ReadingController extends ChangeNotifier {
 
   /// 当前页首行(第一个非空文字行)的 chapterPosition = 该页起始字符偏移。
   /// 找不到文字行时返回 0(降级到章首)。
-  int _charOffsetForCurrentPage() {
+  ///
+  /// 朗读子系统据此定位「当前页起点在章内的偏移」, 从而从当前页首段开始朗读。
+  int charOffsetForCurrentPage() {
     if (_pages.isEmpty || _currentPageIndex >= _pages.length) return 0;
     for (final line in _pages[_currentPageIndex].lines) {
       if (line.text.isNotEmpty) return line.chapterPosition;
@@ -304,11 +306,13 @@ class ReadingController extends ChangeNotifier {
   ///
   /// 找到「首行偏移 <= offset」的最后一页; offset 超过末页首行则落末页。
   /// 用于跨字号/换设备恢复进度——重排后页数变了, 但 charOffset 不变, 仍能定位。
-  int _pageIndexForCharOffset(int charOffset) {
+  ///
+  /// 朗读子系统据此做翻页联动: 引擎报告段偏移后, 判断是否已越过下一页边界。
+  int pageIndexForCharOffset(int charOffset) {
     if (_pages.isEmpty) return 0;
     var result = 0;
     for (var i = _pages.length - 1; i >= 0; i--) {
-      final firstOffset = _firstCharOffsetOfPage(_pages[i]);
+      final firstOffset = firstCharOffsetOfPage(_pages[i]);
       if (firstOffset <= charOffset) {
         result = i;
         break;
@@ -317,7 +321,8 @@ class ReadingController extends ChangeNotifier {
     return result;
   }
 
-  int _firstCharOffsetOfPage(TextPage page) {
+  /// 某页首行(第一个非空文字行)的 chapterPosition。
+  int firstCharOffsetOfPage(TextPage page) {
     for (final line in page.lines) {
       if (line.text.isNotEmpty) return line.chapterPosition;
     }
@@ -687,7 +692,7 @@ class ReadingController extends ChangeNotifier {
         pageIndex: _currentPageIndex,
         content: content,
         createdAt: DateTime.now(),
-        chapterCharOffset: _charOffsetForCurrentPage(),
+        chapterCharOffset: charOffsetForCurrentPage(),
         userId: _userId,
       );
       _bookmarks.add(bookmark);
@@ -869,6 +874,46 @@ class ReadingController extends ChangeNotifier {
     }
     // 全量内存模式: 同步管线(章节已在 chapters[].content 里), 命中缓存 O(1)。
     return _paginateChapterWithPipeline(chapterIndex);
+  }
+
+  /// 读取指定章的预处理后正文(朗读子系统用)。
+  ///
+  /// 返回 `ContentProcessor.getContent(...).textList.join('\n')` —— 与排版引擎
+  /// ([_paginateChapterWithPipeline] / [_loadAndPaginateCurrentAsync]) 输入**完全同源**,
+  /// 故朗读切段偏移与 [TextLine.chapterPosition] 对齐。
+  ///
+  /// 全量内存模式: 同步从 `_book.chapters[index].content` 取。
+  /// 按章加载模式: 异步从 `_chapterSource.loadContent` 取, 正文未就绪时返回 null
+  /// (调用方应 fallback 到 [paginateChapterAsync] 预热后再取)。
+  ///
+  /// 朗读子系统据此调 `TextSlicer.slice(content)` 切段。此方法是朗读与排版的
+  /// 唯一文本交汇点, 保证两者看到的章节内容完全一致。
+  Future<String?> chapterProcessedContent(int chapterIndex) async {
+    if (_book == null) return null;
+    if (chapterIndex < 0 || chapterIndex >= totalChapters) return null;
+    final source = _chapterSource;
+    String title;
+    String content;
+    if (source == null) {
+      // 全量内存模式。
+      if (chapterIndex >= _book!.chapters.length) return null;
+      final chapter = _book!.chapters[chapterIndex];
+      title = chapter.title;
+      content = chapter.content;
+    } else {
+      // 按章加载模式。
+      title = source.chapterTitle(chapterIndex);
+      final cached = await source.loadContent(chapterIndex);
+      if (cached == null) return null;
+      content = cached;
+    }
+    final bookContent = ContentProcessor.getContent(
+      title: title,
+      content: content,
+      bookName: _book!.title,
+      textIndent: _settings.textIndent,
+    );
+    return bookContent.textList.join('\n');
   }
 
   Chapter? getChapter(int index) {
