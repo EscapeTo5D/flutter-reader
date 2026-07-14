@@ -235,21 +235,35 @@ class _ReadMenuState extends State<ReadMenu> {
           _showChapterDrawer(context);
         }),
         const Spacer(flex: 2),
-        // 朗读按钮: 对齐原生 legado 底栏固定四按钮之一。
-        // 注入了 [AloudController] 才启用, 点击弹朗读控制弹窗; 未注入时灰显禁用
-        // (避免宿主不使用 TTS 时按钮点了无反应)。
+        // 朗读按钮: 对齐原生 legado ReadMenu.kt:580-589。
+        // 短按 = 智能播放切换(对应原生 onClickReadAloud):
+        //   未运行 → start, 播放中 → pause, 暂停 → resume。
+        // 长按 = 弹朗读控制面板(对应原生 showReadAloudDialog)。
         _buildBottomIcon(
           LegadoIcons.readAloud(
             color: aloudEnabled ? const Color(0xFF595757) : Colors.black26,
           ),
           '朗读',
           aloudEnabled
+              ? () async {
+                  widget.controller.hideMenu();
+                  // 智能切换(对齐原生 onClickReadAloud)。
+                  if (aloud.isPlaying) {
+                    await aloud.pause();
+                  } else if (aloud.isPaused) {
+                    await aloud.resume();
+                  } else {
+                    await aloud.start();
+                  }
+                }
+              : null,
+          iconColor: aloudEnabled ? Colors.black54 : Colors.black26,
+          onLongPress: aloudEnabled
               ? () {
                   widget.controller.hideMenu();
                   showReadAloudDialog(context, controller: aloud);
                 }
               : null,
-          iconColor: aloudEnabled ? Colors.black54 : Colors.black26,
         ),
         const Spacer(flex: 2),
         _buildBottomIcon(LegadoIcons.interfaceSetting(), '界面', () {
@@ -268,12 +282,14 @@ class _ReadMenuState extends State<ReadMenu> {
 
   /// 底栏图标按钮(对齐原生 view_read_menu.xml 底部 ImageView+TextView)。
   /// [onTap] 为 null 时按钮不响应点击但仍占位(用于朗读按钮在未注入引擎时灰显)。
+  /// [onLongPress] 用于朗读按钮: 长按弹控制面板(对齐原生 ReadMenu.kt:585-588)。
   /// [iconColor] 仅影响标签文字色(图标颜色由 icon widget 自身携带, 见 LegadoIcons)。
   Widget _buildBottomIcon(Widget icon, String label, VoidCallback? onTap,
-      {Color? iconColor}) {
+      {Color? iconColor, VoidCallback? onLongPress}) {
     final color = iconColor ?? Colors.black54;
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: BorderRadius.circular(8),
       child: SizedBox(
         width: 60,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import '../aloud_engine.dart';
@@ -48,16 +49,34 @@ class SystemTtsEngine implements AloudEngine {
   /// 标记当前段是否正在播(避免 completion 与手动 stop 混淆)。
   bool _speaking = false;
 
-  /// 初始化 flutter_tts(挂回调、设语言)。幂等。
+  /// 初始化 flutter_tts(挂回调、设语速)。幂等。
+  ///
+  /// **不要调 setLanguage**(对齐原生 legado `TTSReadAloudService`: 整个 service 里
+  /// 完全没有 setLanguage/isLanguageAvailable 调用)。Android TTS 引擎的默认 locale
+  /// 跟随系统语言——手机系统是中文,引擎默认就播中文。强行 `setLanguage('zh-CN')`
+  /// 在某些设备上 `Locale.forLanguageTag("zh-CN")` 不被引擎接受(引擎可能只认
+  /// `zh-Hans-CN`/`zh_CN_#Hans`),返回 false → locale 设置失败 → speak 用 fallback
+  /// locale,可能不出声或播别的语言。
+  ///
+  /// **不要轮询/等待引擎绑定**: flutter_tts Android 插件内部自带 pending 机制——
+  /// `onMethodCall` 在 `ttsStatus == null`(引擎未绑定时)会把方法调用暂存到
+  /// `pendingMethodCalls` 队列,待 `onInitListenerWithoutCallback` 回调后自动重放。
+  ///
+  /// `setSpeechRate` 也走 pending(引擎绑定前调会被排队,不会丢)。
   Future<void> _ensureInit() async {
     if (_initialized) return;
     _initialized = true;
     await _tts.awaitSpeakCompletion(true);
-    await _tts.setSpeechRate(_toSpeechRate(_speed));
     _tts.setStartHandler(_onSpeakStart);
     _tts.setCompletionHandler(_onSpeakComplete);
     _tts.setProgressHandler(_onSpeakProgress);
     _tts.setErrorHandler(_onSpeakError);
+    // 不设 locale(对齐 legado, 用引擎默认 = 系统语言)。只设语速。
+    try {
+      await _tts.setSpeechRate(_toSpeechRate(_speed));
+    } catch (e) {
+      debugPrint('[SystemTts] setSpeechRate 异常(忽略): $e');
+    }
   }
 
   @override
@@ -79,6 +98,14 @@ class SystemTtsEngine implements AloudEngine {
 
   /// 播放当前段。纯 completion 驱动: 一段播完(completion)再喂下一段,
   /// 不用 QUEUE_ADD(避免 onError/onComplete 双触发导致跳段)。
+  ///
+  /// **不要加 timeout/重试**。开了 `awaitSpeakCompletion(true)` 后,
+  /// `await _tts.speak()` 会阻塞到整段播完(onDone)才 resolve——这正是它的设计,
+  /// 配合 `completionHandler` 驱动下一段。加 timeout 会把"正在播长段"误判为失败,
+  /// 重试 speak 会因 QUEUE_FLUSH 把正在播的段打断 → 段衔接混乱。
+  ///
+  /// 引擎绑定 race(极罕见)已由宿主 `AndroidManifest.xml` 的 `TTS_SERVICE` queries
+  /// 声明根治(见 AGENTS.md「朗读功能宿主配置」)。无需 Dart 侧兜底。
   Future<void> _speakCurrent() async {
     if (_disposed) return;
     if (_currentIndex >= _paragraphs.length) {
@@ -86,7 +113,15 @@ class SystemTtsEngine implements AloudEngine {
       return;
     }
     _speaking = true;
-    await _tts.speak(_paragraphs[_currentIndex]);
+    final text = _paragraphs[_currentIndex];
+    // awaitSpeakCompletion(true): 阻塞到本段播完。失败会从 errorHandler 回来,
+    // 由 _onSpeakError 处理(跳段), 这里无需判返回值。
+    try {
+      await _tts.speak(text);
+    } catch (e) {
+      debugPrint('[SystemTts] speak 异常: $e');
+      if (_speaking) _onSpeakError('speak 异常: $e');
+    }
   }
 
   void _onSpeakStart() {
@@ -123,6 +158,7 @@ class SystemTtsEngine implements AloudEngine {
   }
 
   void _onSpeakError(dynamic message) {
+    debugPrint('[SystemTts] onError idx=$_currentIndex msg=$message');
     if (!_speaking) return;
     _speaking = false;
     // 对齐原生: onError 跳段, 不重试、不中断。

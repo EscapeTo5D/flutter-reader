@@ -16,6 +16,27 @@
 | 跑 example app | `cd example && fvm flutter run`（桌面端需先 `databaseFactory=databaseFactoryFfi`，见 `example/lib/db.dart`） |
 | Flutter SDK | `.fvmrc` 锁 `stable`，`sdk: ^3.11.0`（见 `pubspec.yaml`） |
 
+### ⚠️ 运行环境约束
+
+- **不要用模拟器**（Android emulator / iOS simulator）。调试与运行验证一律用**真机**（`adb devices` 连物理设备后 `cd example && fvm flutter run`）。模拟器启动慢/易卡死，且部分硬件特性（TTS 引擎、音频后台等）与真机行为不一致，会误导诊断。需要 UI 截图对比时也用真机截图。
+- **调试 TTS/音频类问题**：模拟器常缺中文 TTS 引擎或 TTS 数据未下载，系统 TTS 会静默失败。真机上才能可靠复现。
+
+### ⚠️ 朗读功能宿主配置（必读，否则系统 TTS 静默不出声）
+
+启用朗读（系统 TTS 引擎）的宿主必须在 `AndroidManifest.xml` 的 `<queries>` 块里声明 TTS 服务可见性：
+
+```xml
+<queries>
+    <intent>
+        <action android:name="android.intent.action.TTS_SERVICE" />
+    </intent>
+    <!-- ... 其他 queries (如 PROCESS_TEXT) ... -->
+</queries>
+```
+
+**原因**：Android 11+（API 30）包可见性限制——应用不显式声明要查询的 intent action，系统会隐藏对应服务，`TextToSpeech` 构造后绑定**永远完不成**。症状：`W/TextToSpeech: speak failed: not bound to TTS engine` + `getDefaultEngine` 返回 null。这**不是**包代码 bug，**无法**在 Dart 侧绕过（轮询/setEngine re-init 都无效，setEngine 还会触发插件 pending ArrayList 的 `ConcurrentModificationException` 崩溃）。对齐原生 legado `AndroidManifest.xml:561-563` 的同款 queries。example app 已配置（`example/android/app/src/main/AndroidManifest.xml`）。
+- iOS 不需要任何配置（AVSpeechSynthesizer 无服务发现机制）。
+
 lint 用 `flutter_lints`（`analysis_options.yaml` 仅 `include: package:flutter_lints/flutter.yaml`，无自定义规则）。目标：根包 `flutter analyze` **0 error / 0 warning**（容忍少量 info）。
 
 ### 目录结构

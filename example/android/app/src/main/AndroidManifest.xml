@@ -34,12 +34,17 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
-    <!-- Required to query activities that can process text, see:
-         https://developer.android.com/training/package-visibility and
-         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
-
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <!-- Android 11+(API 30) 包可见性: 应用必须显式声明要查询的 intent action,
+         否则系统会隐藏对应服务/Activity, 相关功能静默失败(不抛异常)。
+         参考 https://developer.android.com/training/package-visibility -->
     <queries>
+        <!-- TTS 引擎服务。朗读功能依赖: 缺这条 TextToSpeech 绑定会永远不完成,
+             报 "not bound to TTS engine", getDefaultEngine 返回 null。
+             对齐原生 legado AndroidManifest.xml 的同款 queries 声明。 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- 用于 Flutter 引擎的 ProcessTextPlugin(文本选择菜单)。 -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
