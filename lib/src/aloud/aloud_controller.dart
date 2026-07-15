@@ -124,16 +124,26 @@ class AloudController extends ChangeNotifier {
     final repo = repository;
     if (repo == null || _disposed) return;
     final s = await repo.getAloudSettings();
+    if (_disposed) return; // await 期间可能已 dispose。
     if (s == null) return; // 未配置, 保持初值。
-    _engineType = s.engineType;
-    _followSysRate = s.followSysRate;
     // 引擎实例若已创建且 type 变了, 丢弃旧实例(懒重建); 未创建则无需动。
+    // ⚠️ 必须先比对再赋值: 若先 _engineType = s.engineType 再比, 条件恒 false。
     if (_engine != null && _engineType != s.engineType) {
+      _engine?.dispose();
       _engine = null;
     }
+    _engineType = s.engineType;
+    _followSysRate = s.followSysRate;
     // 语速: 若正在朗读, 不实时改(避免中断); 否则静默设字段。
     if (_state != AloudState.playing) {
       _rate = s.rate;
+    }
+    // 读回的语速同步到已创建的引擎实例, 修复「loadSettings 在首次 start 之后
+    // 才返回」的竞态: 该窗口内引擎已用初值 1.0 开始播, 此处让它追上持久化值。
+    // 用 _rate(已按上方规则更新, playing 时保持原值), 非引擎初值。
+    final engine = _engine;
+    if (engine != null && _state != AloudState.playing) {
+      await engine.setRate(_rate);
     }
     notifyListeners();
   }

@@ -161,7 +161,11 @@ class _ReaderPageState extends State<ReaderPage> {
       reader: _controller,
       repository: AppDatabase.repo,
     );
-    // 异步加载持久化的朗读配置(语速/引擎类型/跟随系统), 不阻塞首帧渲染。
+    // 异步加载持久化的朗读配置(语速/引擎类型/跟随系统)。
+    // 不阻塞首帧渲染, 但需在用户首次点朗读前完成(await 在 _loadChapters 串行链路里,
+    // 因 loadBook 还要做本地优先 + 网络兜底, 耗时远大于一次 DB 读, 故朗读前必已就绪)。
+    // 即便极端情况下用户在 loadSettings 返回前点朗读, AloudController.loadSettings
+    // 读完会调 engine.setRate 追上持久化值(竞态兜底), 不会丢语速。
     _aloudController.loadSettings();
     _loadChapters();
   }
