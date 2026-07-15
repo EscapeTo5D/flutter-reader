@@ -11,7 +11,7 @@
 | 任务 | 命令 |
 |------|------|
 | 静态分析（包+example） | `fvm flutter analyze`（仓库根） |
-| 全量测试 | `fvm flutter test`（仓库根，135 用例） |
+| 全量测试 | `fvm flutter test`（仓库根，195 用例） |
 | 单文件测试 | `fvm flutter test test/scroll_mode_test.dart` |
 | 跑 example app | `cd example && fvm flutter run`（桌面端需先 `databaseFactory=databaseFactoryFfi`，见 `example/lib/db.dart`） |
 | Flutter SDK | `.fvmrc` 锁 `stable`，`sdk: ^3.11.0`（见 `pubspec.yaml`） |
@@ -714,12 +714,28 @@ class _RippleButtonState extends State<_RippleButton> {
 ### 架构边界（改代码前必读）
 - **`AloudController` 是朗读子系统唯一主入口**，通过构造注入 `ReadingController` 引用，调它的 public 方法翻页/取页/取预处理文本，**不修改 ReadingController 字段**。宿主不用朗读就完全不引入。
 - **`AloudEngine` 抽象**（对应原生 `BaseReadAloudService`）：只管「一段话怎么发声、何时播完、当前读到段内哪个字符」；章节坐标/翻页联动/进度持久化是 `AloudController` 的职责（引擎无关）。
-- **公共出口**：`lib/flutter_reader.dart` export 了 `AloudController`/`AloudEngine`/`AloudCursor`/`TextSlicer`/`HttpTtsConfig`/`AudioHandler`/`HttpTtsSource`/`showReadAloudDialog`。
+- **公共出口**：`lib/flutter_reader.dart` export 了 `AloudController`/`AloudEngine`/`AloudCursor`/`AloudSettings`/`TextSlicer`/`HttpTtsConfig`/`AudioHandler`/`HttpTtsSource`/`showReadAloudDialog`。
 
 ### 进度坐标（复用现有持久化，不新建表）
 - `AloudCursor`：`chapterCharOffset`（章内绝对偏移，**与 `TextLine.chapterPosition` 同源**）+ `paragraphIndex`（段下标）+ `charOffsetInParagraph`（段内偏移，逐字高亮用）。
 - 朗读进度直接喂给 `ReadingProgress.chapterCharOffset`，**完全复用现有 `ReaderRepository.saveProgress` / `restoreProgress`**。用户下次打开书，现有 `restoreProgress` 用 `pageIndexForCharOffset` 二分落页，朗读从该段续读。
 - `AloudController._scheduleProgressSave` 1.5s 防抖落盘（对齐 `ReadingController`）；`flushProgress()` dispose 前调。
+
+### 朗读配置持久化（2026-07-15 实现，commit 5aa4cb0）
+- **`AloudSettings`**（`lib/src/aloud/aloud_settings.dart`）：`rate`（倍率，默认 1.0）/`engineType`（默认 system）/`followSysRate`（**默认 true**，对齐原生 `ttsFollowSys`）。带 `toJson`/`fromJson`（缺失/null/类型不符字段回落 `defaults`，向前兼容）+ `copyWith`。
+- **全局存储，复用 `settings` KV 表**：用专用 key `'__aloud__'`，**不加新表、不升 schema**。对齐原生 legado 的全局 SharedPreferences（`ttsSpeechRate`/`appTtsEngine`/`ttsFollowSys`）。与进度（按 userId+bookId 隔离）不同：朗读配置与书无关、与用户无关（全局）。
+- **Repository**：`getAloudSettings()`（未配置返回 null → 调用方回落 `AloudSettings.defaults`）/`saveAloudSettings()`（upsert）。`sqflite_reader_repository.dart` 落库到 `settings(user_id PK, json, updated_at)`，`_aloudSettingsKey = '__aloud__'`。
+- **`AloudController`**：构造可注入 `initialSettings`（同步）或构造后 `await loadSettings()`（异步，repo 返回 null 时保持初值，读回不触发持久化）；`setRate`/`setFollowSysRate`/`selectEngine` 改后 `_scheduleSettingsSave`（1.5s 防抖，同进度节奏）；`flushSettings()` dispose 前调。正在朗读时 `loadSettings` 不实时改语速（避免中断），仅同步 followSysRate；engineType 变了则丢弃旧引擎实例（懒重建）。
+- **`read_aloud_dialog` 跟随系统开关**：由原先的本地 `_followSysRate` 占位改为读 `controller.followSysRate`，开关写 `controller.setFollowSysRate`；跟随时隐藏语速数值（对齐原生 `upTtsSpeechRateEnabled` 隐藏 value）+ 禁用语速滑块/± 按钮。
+- ⚠️ **`followSysRate=true` 时实际仍用 `rate` 字段（读系统 TTS rate 逻辑留 TODO）**：Android 无公开 API 读系统 TTS rate，iOS 可读 `AVSpeechUtteranceDefaultSpeechRate`，留待后续。本轮仅持久化开关态。
+
+### ⚠️ 系统 TTS 语速换算分平台（2026-07-15 修复）
+旧实现 `(rate × 0.5).clamp(0,1)` 统一映射，**Android 端倍率永远 ≤ 1.0**（拉满滑块也只 1 倍速），与原生 legado 5 倍速上限严重不符。根因：`flutter_tts` 的 `speechRate` 不是 0~1 统一语义，而是各平台透传值，需分平台换算：
+- **Android**：`flutter_tts` Android 插件内部执行 `tts.setSpeechRate(rate × 2.0f)`（`FlutterTtsPlugin.kt:394`），即它收到的参数 = Android `TextToSpeech` 值 ÷ 2。原生 legado 透传 UI 倍率（0.5..5.0）给 `TextToSpeech`，故给 flutter_tts 的值 = **UI 倍率 ÷ 2**（0.25..2.5），插件 ×2 后还原成 0.5..5.0，与 legado 完全一致。`(rate/2).clamp(0, 2.5)`。
+- **iOS**：`flutter_tts` 直接把参数赋给 `AVSpeechUtterance.rate`（0..1，默认 ≈ 0.5，上限 `AVSpeechUtteranceMaxSpeechRate`）。UI 倍率 1.0 → 0.5 正常。`(rate × 0.5).clamp(0, 1.0)`。
+
+### ⚠️ HttpTTS 后端刻度 clamp（2026-07-15 修复）
+`HttpTtsConfigResolver._speakSpeedForBackend` 旧 clamp `(1,20)` 不符原生。对齐 `HttpReadAloudService.kt:91`：`speechRate = AppConfig.speechRatePlay + 5`，`speechRatePlay` = seekbar progress（0..45），与 UI 倍率关系 `倍率 = (progress+5)/10`。代入 `speechRate = progress + 5 = (倍率×10 − 5) + 5 = 倍率 × 10`，范围 5..50（默认 1.0→10）。改 `(speed × 10).round().clamp(5, 50)`。
 
 ### 切段偏移对齐（⚠️ 关键正确性，单测 `text_slicer_test.dart` 锁定）
 - `TextSlicer.slice(processedContent)` 输入必须是 `ReadingController.chapterProcessedContent(chIdx)` 的返回值（= `ContentProcessor.getContent(...).textList.join('\n')`，**与排版引擎输入同源**）。
@@ -755,7 +771,7 @@ class _RippleButtonState extends State<_RippleButton> {
 - ❌ HttpTTS 配置的 sqflite 默认实现（接口 `HttpTtsSource` + `MemoryHttpTtsSource` 已有，sqflite 实现留待宿主需要时补，schema v4）。
 
 ### 已知问题（非本轮范围）
-- `example/test/widget_test.dart` 是 `flutter create` 默认模板的计数器测试，example 已改成阅读器后此测试失效（`Expected text "0" Found 0`）。无参数 `flutter test` 会扫到它报失败；包内测试 `flutter test test/` 全过（175 用例）。
+- `example/test/widget_test.dart` 是 `flutter create` 默认模板的计数器测试，example 已改成阅读器后此测试失效（`Expected text "0" Found 0`）。无参数 `flutter test` 会扫到它报失败；包内测试 `flutter test test/` 全过（195 用例）。
 
 ### 新增依赖（pubspec.yaml）
 `flutter_tts: ^4.2.5` / `just_audio: ^0.10.6` / `dio: ^5.7.0` / `crypto: ^3.0.6`（+ 传递依赖 `rxdart`/`uuid`/`just_audio_web`）。
