@@ -345,6 +345,12 @@ class AloudController extends ChangeNotifier {
     _audioHandler.notifyProgress(e);
     _maybeFlipPage();
     _bumpVersion();
+    // notifyListeners 驱动 ReaderView._onAloudUpdate → setState → _TextLinePainter
+    // 重建 → _markAloud 按新 cursor 重标高亮。⚠️ 必须 notify: 段落推进时若未翻页
+    // (同页内换段), 无任何其他途径触发重绘 → 高亮静止不跟随段。
+    // 对齐原生 legado: TTS_PROGRESS 事件每次段落变化都 upContent() 全量重绘。
+    // 频率低(每几秒一段), notify 整树开销可接受。
+    notifyListeners();
     _scheduleProgressSave();
   }
 
