@@ -93,7 +93,19 @@ class AloudController extends ChangeNotifier {
   /// 防环标志: 朗读自己改 reader 页码(_maybeFlipPage/_advanceToNextChapter)时
   /// 置 true, 让 [_onReaderUpdate] 跳过(避免朗读自动翻页又触发重读成环)。
   /// ChangeNotifier.notifyListeners 是同步的, 故标志在同步调用窗口内有效。
+  ///
+  /// ⚠️ **绝不在长时间 await 期间持有**(如 `await start()`): start 内
+  /// `engine.play` 现虽不阻塞(见 SystemTtsEngine._speakCurrent 改 fire-and-forget),
+  /// 但 `_ensureEngine`/`_loadChapterAndPlay` 仍有 platform channel/IO 异步等待。
+  /// 若全程挂 suspend, 用户在这窗口内的二次翻页 notify 会被 [_onReaderUpdate]
+  /// 吞掉 → 「第一次翻页有效、第二次无效」。残留进度竞争改用 [_restarting] 专挡。
   bool _suspendReaderListener = false;
+
+  /// 重启朗读中标志: `_restartAloudFromCurrentPage` 期间置 true, 专挡
+  /// [_onEngineProgress](旧引擎 stop 后残留的 completion 回调, 会用旧 cursor 翻回
+  /// 旧页)。与 [_suspendReaderListener] 区分: 后者挡 reader 的 notify listener
+  /// (会误伤用户翻页), 本标志只挡引擎进度回调(不涉及用户操作)。
+  bool _restarting = false;
 
   // ─────────── 对外 getters ───────────
 
@@ -376,7 +388,7 @@ class AloudController extends ChangeNotifier {
   }
 
   void _onEngineProgress(AloudProgressEvent e) {
-    if (_disposed) return;
+    if (_disposed || _restarting) return;
     if (e.paragraphIndex >= _paragraphs.length) return;
     final para = _paragraphs[e.paragraphIndex];
     // 引擎报告的段内偏移是相对「喂给引擎的(可能已截掉前缀)文本」的。
@@ -446,27 +458,34 @@ class AloudController extends ChangeNotifier {
   ///
   /// 对齐原生 `curPageChanged → readAloud(!pause)`: 从用户翻到的新页起始段重读。
   ///
-  /// ⚠️ **必须先停引擎 + 快照位置 + 全程挂 suspend**: 若不停引擎, 旧朗读的进度
-  /// 回调(_onEngineProgress → _maybeFlipPage)会在 start() 的 await 期间把页翻回
-  /// 旧 cursor 所在页(竞争), 导致重读仍落在旧页 → 用户感知「朗读没变化」。
-  /// 全程挂 _suspendReaderListener 防止 start → engine.play 触发的进度回调又翻页。
+  /// ⚠️ **进度竞争用 [_restarting] 专挡, 不用 [_suspendReaderListener]**:
+  /// 旧引擎 stop 后可能仍有残留的 completion 回调(`flutter_tts.stop` 是 platform
+  /// channel 异步, completionHandler 可能在 stop 返回后才触发), 这些回调带着旧
+  /// cursor 进 `_onEngineProgress` → `_maybeFlipPage`, 会把页翻回旧 cursor 所在页
+  /// → 重读落回旧页 → 用户感知「朗读没变化」。用 [_restarting] 在 `_onEngineProgress`
+  /// 入口直接 return 丢弃这些残留回调(只挡引擎进度, 不涉及用户操作)。
+  ///
+  /// **不长时间持有 [_suspendReaderListener]**: start 内 `_ensureEngine`/
+  /// `_loadChapterAndPlay` 有 platform channel/IO 异步等待, 若全程挂 suspend, 用户
+  /// 在这窗口内的二次翻页 notify 会被 `_onReaderUpdate` 吞掉 → 「第一次翻页有效、
+  /// 第二次无效」。`_suspendReaderListener` 仅在 `_maybeFlipPage`/`_advanceToNextChapter`
+  /// 的同步 notify 窗口内持有(见各自实现)。
   Future<void> _restartAloudFromCurrentPage() async {
-    if (_disposed) return;
+    if (_disposed || _restarting) return;
+    _restarting = true;
     final wasPaused = isPaused;
     // 快照用户翻到的新位置(此时 reader 已是 commitTurn 后的新页)。
     final ch = reader.currentChapterIndex;
     final off = reader.charOffsetForCurrentPage();
-    // 停引擎: 截断旧朗读的进度回调流, 防止 _maybeFlipPage 在 await 期间翻回旧页。
-    await _engine?.stop();
-    // 全程挂 suspend: start → engine.play 触发的首批进度回调不应触发翻页竞争。
-    _suspendReaderListener = true;
     try {
+      // 停引擎: 截断旧朗读。残留 completion 回调被 _restarting 丢弃, 不再翻页竞争。
+      await _engine?.stop();
       await start(chapterIndex: ch, charOffset: off);
       if (!_disposed && wasPaused) {
         await pause(); // 恢复暂停态(对齐原生保持 pause)
       }
     } finally {
-      _suspendReaderListener = false;
+      _restarting = false;
     }
   }
 

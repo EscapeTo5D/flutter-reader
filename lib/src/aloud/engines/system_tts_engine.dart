@@ -64,10 +64,17 @@ class SystemTtsEngine implements AloudEngine {
   /// `pendingMethodCalls` 队列,待 `onInitListenerWithoutCallback` 回调后自动重放。
   ///
   /// `setSpeechRate` 也走 pending(引擎绑定前调会被排队,不会丢)。
+  ///
+  /// ⚠️ **不要开 `awaitSpeakCompletion(true)`**: 它会让 `await _tts.speak()` 阻塞
+  /// 到整段播完(数秒),导致 [play] 长期不返回 → 上游 `AloudController.start`/
+  /// `_restartAloudFromCurrentPage` 跟着阻塞 → 用户翻页跟随功能在阻塞窗口内失效
+  /// (实测「第一次翻页有效、第二次无效」)。段切换完全由 completionHandler
+  /// ([_onSpeakComplete]) 驱动, 不依赖 speak 的 future resolve, 故保持默认
+  /// `awaitSpeakCompletion=false`, [play] 排入 TTS 队列即返回, 与 [HttpTtsEngine]
+  /// 的非阻塞语义一致。
   Future<void> _ensureInit() async {
     if (_initialized) return;
     _initialized = true;
-    await _tts.awaitSpeakCompletion(true);
     _tts.setStartHandler(_onSpeakStart);
     _tts.setCompletionHandler(_onSpeakComplete);
     _tts.setProgressHandler(_onSpeakProgress);
@@ -94,20 +101,24 @@ class SystemTtsEngine implements AloudEngine {
     // QUEUE_FLUSH: 清掉之前可能残留的队列(pause/seek 后重启场景)。
     await _tts.setQueueMode(0);
     _setState(AloudState.playing);
-    await _speakCurrent();
+    _speakCurrent();
   }
 
   /// 播放当前段。纯 completion 驱动: 一段播完(completion)再喂下一段,
   /// 不用 QUEUE_ADD(避免 onError/onComplete 双触发导致跳段)。
   ///
-  /// **不要加 timeout/重试**。开了 `awaitSpeakCompletion(true)` 后,
-  /// `await _tts.speak()` 会阻塞到整段播完(onDone)才 resolve——这正是它的设计,
-  /// 配合 `completionHandler` 驱动下一段。加 timeout 会把"正在播长段"误判为失败,
+  /// **不要加 timeout/重试**。段切换由 [_onSpeakComplete](completionHandler)驱动,
+  /// 不依赖 `_tts.speak` 的 future。加 timeout 会把"正在播长段"误判为失败,
   /// 重试 speak 会因 QUEUE_FLUSH 把正在播的段打断 → 段衔接混乱。
+  ///
+  /// **`_tts.speak` 不 await 阻塞**(保持默认 `awaitSpeakCompletion=false`):
+  /// speak 排入 TTS 引擎队列即返回, 整段播完后由 completionHandler 回调推进下一段。
+  /// 若 await 阻塞, [play] 会卡住数秒, 上游 `AloudController.start`/翻页跟随的
+  /// suspend 窗口随之拉长, 屏蔽用户在阻塞期内的二次翻页。
   ///
   /// 引擎绑定 race(极罕见)已由宿主 `AndroidManifest.xml` 的 `TTS_SERVICE` queries
   /// 声明根治(见 AGENTS.md「朗读功能宿主配置」)。无需 Dart 侧兜底。
-  Future<void> _speakCurrent() async {
+  void _speakCurrent() {
     if (_disposed) return;
     if (_currentIndex >= _paragraphs.length) {
       _setState(AloudState.idle); // 章末, 由 Controller 决定翻章
@@ -115,14 +126,12 @@ class SystemTtsEngine implements AloudEngine {
     }
     _speaking = true;
     final text = _paragraphs[_currentIndex];
-    // awaitSpeakCompletion(true): 阻塞到本段播完。失败会从 errorHandler 回来,
+    // speak 排队即返回(fire-and-forget)。失败由 errorHandler 回来,
     // 由 _onSpeakError 处理(跳段), 这里无需判返回值。
-    try {
-      await _tts.speak(text);
-    } catch (e) {
+    _tts.speak(text).catchError((e) {
       debugPrint('[SystemTts] speak 异常: $e');
       if (_speaking) _onSpeakError('speak 异常: $e');
-    }
+    });
   }
 
   void _onSpeakStart() {
@@ -152,7 +161,7 @@ class SystemTtsEngine implements AloudEngine {
     if (_currentIndex < _paragraphs.length) {
       // 纯 completion 驱动: FLUSH + 喂下一段。不用 QUEUE_ADD。
       await _tts.setQueueMode(0);
-      await _speakCurrent();
+      _speakCurrent();
     } else {
       _setState(AloudState.idle); // 章末
     }
@@ -186,7 +195,7 @@ class SystemTtsEngine implements AloudEngine {
     // 从当前段段首重 play(对齐原生: paragraphStartPos 清零, nowSpeak 不变)。
     _setState(AloudState.playing);
     await _tts.setQueueMode(0);
-    await _speakCurrent();
+    _speakCurrent();
   }
 
   @override
@@ -210,7 +219,7 @@ class SystemTtsEngine implements AloudEngine {
     _currentIndex = index.clamp(0, _paragraphs.length);
     if (_currentIndex < _paragraphs.length) {
       await _tts.setQueueMode(0);
-      await _speakCurrent();
+      _speakCurrent();
     } else {
       _setState(AloudState.idle);
     }
