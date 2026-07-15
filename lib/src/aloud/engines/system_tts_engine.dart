@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -229,9 +230,28 @@ class SystemTtsEngine implements AloudEngine {
     if (!_stateController.isClosed) _stateController.add(s);
   }
 
-  /// UI 倍率(1.0=正常, 0.5~5.0) → flutter_tts speechRate([0.0, 1.0])。
+  /// UI 倍率(1.0=正常, 0.5~5.0) → flutter_tts speechRate 参数。
   ///
-  /// flutter_tts 的 speechRate 语义: 0.0 最慢, 1.0 最快, 平台默认约 0.5。
-  /// 这里把 UI 倍率线性映射: 1.0 → 0.5(默认), 0.5 → 0.25(慢), 2.0 → 1.0(快)。
-  double _toSpeechRate(double rate) => (rate * 0.5).clamp(0.0, 1.0);
+  /// flutter_tts 的 speechRate 不是 0~1 统一语义, 而是各平台透传值, 需分平台换算
+  /// 才能对齐原生 legado(Android 直接 `TextToSpeech.setSpeechRate((p+5)/10)`, 即
+  /// UI 倍率 0.5..5.0):
+  ///
+  /// - **Android**: `flutter_tts` Android 插件内部执行
+  ///   `tts.setSpeechRate(rate * 2.0f)`(见 `FlutterTtsPlugin.kt:394`), 即它收到的
+  ///   参数 = Android `TextToSpeech` 值 ÷ 2。原生 legado 透传 UI 倍率(0.5..5.0),
+  ///   故这里给 flutter_tts 的值 = UI 倍率 ÷ 2(0.25..2.5), 插件 ×2 后还原成
+  ///   0.5..5.0, 与 legado 完全一致。
+  /// - **iOS**: `flutter_tts` 直接把参数赋给 `AVSpeechUtterance.rate`(0..1,
+  ///   `AVSpeechUtteranceDefaultSpeechRate ≈ 0.5`)。UI 倍率 1.0 → 0.5 正常,
+  ///   上限 clamp 1.0(`AVSpeechUtteranceMaxSpeechRate`)。
+  ///
+  /// 旧实现误用 `(rate × 0.5).clamp(0,1)` 统一映射, Android 端倍率永远 ≤ 1.0
+  /// (即拉满滑块也只 1 倍速), 与原生 5 倍速上限严重不符。
+  double _toSpeechRate(double rate) {
+    if (!kIsWeb && Platform.isIOS) {
+      return (rate * 0.5).clamp(0.0, 1.0);
+    }
+    // Android(及 Web 兜底): UI 倍率 ÷ 2 透传给 flutter_tts, 插件内部 ×2 还原。
+    return (rate / 2).clamp(0.0, 2.5);
+  }
 }

@@ -30,6 +30,7 @@ export 'src/reader/widgets/text_selection_toolbar.dart'
 export 'src/aloud/aloud_controller.dart';
 export 'src/aloud/aloud_engine.dart';
 export 'src/aloud/aloud_cursor.dart';
+export 'src/aloud/aloud_settings.dart';
 export 'src/aloud/text_slicer.dart';
 export 'src/aloud/http_tts_config.dart';
 export 'src/aloud/audio_handler.dart';

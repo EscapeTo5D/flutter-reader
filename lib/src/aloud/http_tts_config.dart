@@ -111,11 +111,15 @@ class HttpTtsConfigResolver {
 
   /// 相对倍率 → 后端整数刻度。
   ///
-  /// 对齐原生 `HttpReadAloudService.speechRate = AppConfig.speechRatePlay + 5`,
-  /// 后端通常期望 1~15 的整数刻度(对应百度 `spd` 参数等)。
-  /// 映射: speed(0.5~2.0) → (speed × 10).round()(5~20)。
-  /// 具体后端语义由模板自行处理(可在模板里写 `{{(speakSpeed+5)/10}}` 这类表达式,
-  /// 但第一版不支持 JS, 宿主应直接配好刻度)。
+  /// 对齐原生 `HttpReadAloudService.kt:91`:
+  ///   `speechRate = AppConfig.speechRatePlay + 5`
+  /// `speechRatePlay` 等于 `seek_tts_speechRate` 的 progress(0..45); UI 倍率与
+  /// progress 的关系是 `倍率 = (progress+5)/10`(progress 0→0.5, 45→5.0)。
+  /// 代入: `speechRate = progress + 5 = (倍率×10 - 5) + 5 = 倍率 × 10`。
+  /// 故直接 `倍率 × 10` 即等于原生后端整数刻度, 范围 5..50(默认 1.0→10)。
+  ///
+  /// 后端(百度 `spd` 等)通常期望 1~15 的刻度, 模板里可写 `{{(speakSpeed-5)/3}}`
+  /// 之类换算, 但第一版不支持 JS, 宿主应直接配好刻度。
   static int _speakSpeedForBackend(double speed) =>
-      (speed * 10).round().clamp(1, 20);
+      (speed * 10).round().clamp(5, 50);
 }

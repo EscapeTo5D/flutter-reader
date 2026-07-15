@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../../aloud/aloud_settings.dart';
 import '../models/book.dart';
 import '../models/bookmark.dart';
 import '../models/reading_settings.dart';
@@ -359,6 +360,45 @@ class SqfliteReaderRepository implements ReaderRepository {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+
+  // ─────────────────────────── 朗读配置 ───────────────────────────
+  //
+  // 复用 settings 表(KV: user_id PK + json + updated_at), 用专用 key `'__aloud__'`
+  // 存全局朗读配置。不加新表、不升 schema(对齐原生 legado 的全局 SharedPreferences 语义)。
+
+  @override
+  Future<AloudSettings?> getAloudSettings() async {
+    final rows = await _db.query(
+      'settings',
+      where: 'user_id = ?',
+      whereArgs: [_aloudSettingsKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final json =
+          jsonDecode(rows.first['json'] as String) as Map<String, dynamic>;
+      return AloudSettings.fromJson(json);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> saveAloudSettings(AloudSettings settings) async {
+    await _db.insert(
+      'settings',
+      {
+        'user_id': _aloudSettingsKey,
+        'json': jsonEncode(settings.toJson()),
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 朗读配置在 settings 表里的专用 key(全局, 不按用户/书隔离)。
+  static const String _aloudSettingsKey = '__aloud__';
 
   // ─────────────────────────── 书架 ───────────────────────────
 

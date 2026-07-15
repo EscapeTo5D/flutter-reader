@@ -161,6 +161,8 @@ class _ReaderPageState extends State<ReaderPage> {
       reader: _controller,
       repository: AppDatabase.repo,
     );
+    // 异步加载持久化的朗读配置(语速/引擎类型/跟随系统), 不阻塞首帧渲染。
+    _aloudController.loadSettings();
     _loadChapters();
   }
 
@@ -277,8 +279,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override
   void dispose() {
-    // 退出前强制落盘进度(防抖定时器可能还没触发)
+    // 退出前强制落盘进度与朗读配置(防抖定时器可能还没触发)
     _aloudController.flushProgress();
+    _aloudController.flushSettings();
     _aloudController.dispose();
     _controller.flushProgress();
     _controller.dispose();

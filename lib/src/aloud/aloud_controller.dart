@@ -7,6 +7,7 @@ import '../core/storage/reader_repository.dart';
 import '../core/storage/reading_progress.dart';
 import 'aloud_cursor.dart';
 import 'aloud_engine.dart';
+import 'aloud_settings.dart';
 import 'audio_handler.dart';
 import 'engines/system_tts_engine.dart';
 import 'engines/http_tts_engine.dart';
@@ -32,8 +33,14 @@ class AloudController extends ChangeNotifier {
   AloudController({
     required this.reader,
     this.repository,
+    AloudSettings? initialSettings,
     AudioHandler? audioHandler,
-  }) : _audioHandler = audioHandler ?? const NoopAudioHandler();
+  })  : _audioHandler = audioHandler ?? const NoopAudioHandler(),
+        _rate = initialSettings?.rate ?? AloudSettings.defaults.rate,
+        _engineType =
+            initialSettings?.engineType ?? AloudSettings.defaults.engineType,
+        _followSysRate = initialSettings?.followSysRate ??
+            AloudSettings.defaults.followSysRate;
 
   /// 关联的阅读控制器(翻页/取页/取预处理文本都通过它)。
   final ReadingController reader;
@@ -45,13 +52,14 @@ class AloudController extends ChangeNotifier {
 
   // ─────────── 引擎 ───────────
   AloudEngine? _engine;
-  AloudEngineType _engineType = AloudEngineType.system;
+  AloudEngineType _engineType;
   HttpTtsConfig? _httpConfig;
 
   // ─────────── 朗读状态 ───────────
   AloudState _state = AloudState.idle;
   AloudCursor? _cursor;
-  double _rate = 1.0;
+  double _rate;
+  bool _followSysRate;
 
   /// 当前章的切段结果([AloudParagraph.text] 列表)。
   List<AloudParagraph> _paragraphs = const [];
@@ -62,6 +70,7 @@ class AloudController extends ChangeNotifier {
   StreamSubscription<AloudState>? _stateSub;
   StreamSubscription<AloudProgressEvent>? _progressSub;
   Timer? _saveDebounce;
+  Timer? _settingsSaveDebounce;
   bool _disposed = false;
 
   /// 章末续读重入守卫: 防止引擎 idle 事件多次触发导致并发翻章。
@@ -74,6 +83,12 @@ class AloudController extends ChangeNotifier {
   bool get isPlaying => _state == AloudState.playing;
   bool get isPaused => _state == AloudState.paused;
   double get rate => _rate;
+  /// 跟随系统语速(对齐原生 `ttsFollowSys`, 默认 true)。
+  ///
+  /// ⚠️ 本轮仅持久化开关态, true 时的「读系统 TTS 默认语速」逻辑未实现
+  /// (留 TODO): 当前 true 时仍用 [rate] 字段值(默认 1.0)。Android 无公开 API
+  /// 读系统 TTS rate, iOS 可读 `AVSpeechUtteranceDefaultSpeechRate`——待后续。
+  bool get followSysRate => _followSysRate;
   int get aloudVersion => _aloudVersion;
   AloudEngineType get engineType => _engineType;
 
@@ -81,6 +96,7 @@ class AloudController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _saveDebounce?.cancel();
+    _settingsSaveDebounce?.cancel();
     _stateSub?.cancel();
     _progressSub?.cancel();
     _engine?.dispose();
@@ -92,6 +108,33 @@ class AloudController extends ChangeNotifier {
     if (_disposed) return;
     _state = s;
     _audioHandler.notifyState(s);
+    notifyListeners();
+  }
+
+  // ─────────── 配置加载 ────────────────────────────────────────────
+
+  /// 从仓库异步加载朗读配置(语速/引擎类型/跟随系统)并应用到内存。
+  ///
+  /// 供宿主在构造(同步注入 [initialSettings] 不可行时, 如需先 await repo)后调用,
+  /// 典型用法: `initState` 同步构造 controller, 紧接着 `await loadSettings()`。
+  /// - 未配置(repo 返回 null)→ 保持构造时的初值([AloudSettings.defaults] 或注入值)。
+  /// - 已配置 → 覆盖内存字段(**不触发持久化**, 因是读回已存数据), 通知监听器一次。
+  /// - 正在朗读时不改语速/引擎(避免中断), 仅 followSysRate 同步。
+  Future<void> loadSettings() async {
+    final repo = repository;
+    if (repo == null || _disposed) return;
+    final s = await repo.getAloudSettings();
+    if (s == null) return; // 未配置, 保持初值。
+    _engineType = s.engineType;
+    _followSysRate = s.followSysRate;
+    // 引擎实例若已创建且 type 变了, 丢弃旧实例(懒重建); 未创建则无需动。
+    if (_engine != null && _engineType != s.engineType) {
+      _engine = null;
+    }
+    // 语速: 若正在朗读, 不实时改(避免中断); 否则静默设字段。
+    if (_state != AloudState.playing) {
+      _rate = s.rate;
+    }
     notifyListeners();
   }
 
@@ -112,6 +155,8 @@ class AloudController extends ChangeNotifier {
       _httpConfig = httpConfig;
     }
     _engine = null; // 懒创建, 下次 play 时按 type 新建
+    _scheduleSettingsSave();
+    notifyListeners();
   }
 
   Future<AloudEngine> _ensureEngine() async {
@@ -227,9 +272,20 @@ class AloudController extends ChangeNotifier {
   /// 切到下一章(对齐原生 tv_next → moveToNextChapter)。
   void nextChapter() => reader.nextChapter();
 
+  /// 设置语速倍率(1.0=正常)并实时应用到引擎, 同时防抖落盘。
   Future<void> setRate(double r) async {
     _rate = r;
     await _engine?.setRate(r);
+    _scheduleSettingsSave();
+    notifyListeners();
+  }
+
+  /// 设置「跟随系统语速」开关, 防抖落盘。
+  ///
+  /// ⚠️ 本轮仅持久化开关态; true 时实际仍用 [rate] 字段(读系统 rate 逻辑留 TODO)。
+  Future<void> setFollowSysRate(bool value) async {
+    _followSysRate = value;
+    _scheduleSettingsSave();
     notifyListeners();
   }
 
@@ -339,5 +395,36 @@ class AloudController extends ChangeNotifier {
     _saveDebounce?.cancel();
     _saveDebounce = null;
     await _persistProgress();
+  }
+
+  // ─────────── 配置持久化 ──────────────────────────────────────────
+  //
+  // 朗读配置(语速/引擎类型/跟随系统)是全局的, 对齐原生 legado 的 SharedPreferences。
+  // 与进度(按 userId+bookId 隔离)不同: 配置全局存, 复用 settings 表的 KV 行
+  // (key='__aloud__')。改 setRate/selectEngine/setFollowSysRate 后防抖落盘。
+
+  /// 防抖落盘(1.5s, 与进度同节奏; 改语速/引擎/跟随系统后调)。
+  void _scheduleSettingsSave() {
+    if (repository == null) return;
+    _settingsSaveDebounce?.cancel();
+    _settingsSaveDebounce =
+        Timer(const Duration(milliseconds: 1500), _persistAloudSettings);
+  }
+
+  Future<void> _persistAloudSettings() async {
+    final repo = repository;
+    if (repo == null || _disposed) return;
+    await repo.saveAloudSettings(AloudSettings(
+      rate: _rate,
+      engineType: _engineType,
+      followSysRate: _followSysRate,
+    ));
+  }
+
+  /// 立即落盘配置(dispose 前调)。
+  Future<void> flushSettings() async {
+    _settingsSaveDebounce?.cancel();
+    _settingsSaveDebounce = null;
+    await _persistAloudSettings();
   }
 }

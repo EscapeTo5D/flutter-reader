@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../aloud/aloud_settings.dart';
 import '../models/book.dart';
 import '../models/bookmark.dart';
 import '../models/reading_settings.dart';
@@ -130,6 +131,19 @@ abstract class ReaderRepository {
 
   /// 删除预设(按 id)。
   Future<void> deleteStylePreset(String presetId);
+
+  // ─────────────────────────── 朗读配置 ───────────────────────────
+  //
+  // 朗读子系统的全局配置(语速/引擎类型/跟随系统), 对齐原生 legado 的全局
+  // SharedPreferences(`ttsSpeechRate`/`appTtsEngine`/`ttsFollowSys`)。
+  // 与阅读进度/书签不同: 朗读配置与书无关、与用户无关(全局), 复用 `settings` 表
+  // 的 KV 结构, 用专用 key `'__aloud__'` 存, 不加新表、不升 schema。
+
+  /// 读取全局朗读配置。未配置返回 null(调用方回落 [AloudSettings.defaults])。
+  Future<AloudSettings?> getAloudSettings();
+
+  /// 保存/覆盖全局朗读配置。
+  Future<void> saveAloudSettings(AloudSettings settings);
 
   // ─────────────────────────── 生命周期 ───────────────────────────
 

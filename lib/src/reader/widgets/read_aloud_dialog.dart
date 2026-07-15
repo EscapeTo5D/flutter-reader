@@ -75,8 +75,6 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
   // 显示倍率 = (progress + 5) / 10, 即 5→1.0, 15→2.0, 45→5.0。
   // AloudController.rate 是 double 倍率, UI 层做 int↔double 换算。
   late int _speechRateProgress;
-  // 跟随系统语速开关(对齐原生 cb_tts_follow_sys)。本轮 UI 占位, 逻辑留待后续。
-  bool _followSysRate = false;
   // 定时分钟数(对齐原生 seek_timer: max=180)。本轮 UI 占位, 倒计时逻辑留待后续。
   int _timerMinutes = 0;
 
@@ -352,24 +350,28 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
                   style: TextStyle(fontSize: 14, color: _textColor)),
               const SizedBox(width: 3),
               // 对齐原生 upTtsSpeechRateText: ((progress + 5) / 10f).toString()。
-              Text(
-                ((_speechRateProgress + 5) / 10).toString(),
-                style: const TextStyle(fontSize: 14, color: _textColor),
-              ),
+              // ⚠️ 跟随系统开启时不显示数值(对齐原生 upTtsSpeechRateEnabled 隐藏 value)。
+              if (!widget.controller.followSysRate)
+                Text(
+                  ((_speechRateProgress + 5) / 10).toString(),
+                  style: const TextStyle(fontSize: 14, color: _textColor),
+                ),
               const Spacer(),
               // 跟随系统: 文字 + 开关紧贴成一组(对齐 SwitchCompat 的 text 内嵌)。
+              // 开关态存 controller(持久化), 默认 true(对齐原生 ttsFollowSys)。
               GestureDetector(
-                onTap: () => setState(() => _followSysRate = !_followSysRate),
+                onTap: () => widget.controller
+                    .setFollowSysRate(!widget.controller.followSysRate),
                 child: Text('跟随系统',
                     style: TextStyle(
                         fontSize: 14,
-                        color: _followSysRate
+                        color: widget.controller.followSysRate
                             ? Theme.of(context).colorScheme.primary
                             : _textColor)),
               ),
               Switch(
-                value: _followSysRate,
-                onChanged: (v) => setState(() => _followSysRate = v),
+                value: widget.controller.followSysRate,
+                onChanged: (v) => widget.controller.setFollowSysRate(v),
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             ],
@@ -383,7 +385,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
               _iconButton(
                 LegadoIcons.reduce(color: _textColor),
                 '语速减',
-                _followSysRate
+                widget.controller.followSysRate
                     ? null
                     : () {
                         if (_speechRateProgress > 0) {
@@ -413,11 +415,11 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
                     max: 45,
                     // 不设 divisions: 对齐原生 ThemeSeekBar(AppCompatSeekBar)
                     // 连续 track, 避免分段刻度颗粒。progress 内部 round 成整数。
-                    onChanged: _followSysRate
+                    onChanged: widget.controller.followSysRate
                         ? null
                         : (v) => setState(
                             () => _speechRateProgress = v.round()),
-                    onChangeEnd: _followSysRate
+                    onChangeEnd: widget.controller.followSysRate
                         ? null
                         : (v) => _applySpeechRate(v.round()),
                   ),
@@ -426,7 +428,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
               _iconButton(
                 LegadoIcons.add(color: _textColor),
                 '语速加',
-                _followSysRate
+                widget.controller.followSysRate
                     ? null
                     : () {
                         if (_speechRateProgress < 45) {

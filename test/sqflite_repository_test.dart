@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:flutter_reader/src/aloud/aloud_engine.dart';
+import 'package:flutter_reader/src/aloud/aloud_settings.dart';
 import 'package:flutter_reader/src/core/models/book.dart';
 import 'package:flutter_reader/src/core/models/bookmark.dart';
 import 'package:flutter_reader/src/core/models/reading_settings.dart';
@@ -348,6 +350,70 @@ void main() {
     // 删除
     await repo.deleteStylePreset('pd');
     expect(await repo.getStylePresets('u1'), isEmpty);
+    await repo.close();
+  });
+
+  // ─────────────────────────── 朗读配置 ───────────────────────────
+  //
+  // 复用 settings 表(KV), key='__aloud__', 全局(不按用户/书隔离)。
+
+  test('saveAloudSettings/getAloudSettings 往返一致', () async {
+    final repo = await newRepo();
+    expect(await repo.getAloudSettings(), isNull); // 未配置返回 null
+
+    const s = AloudSettings(
+      rate: 2.0,
+      engineType: AloudEngineType.http,
+      followSysRate: false,
+    );
+    await repo.saveAloudSettings(s);
+    final restored = await repo.getAloudSettings();
+    expect(restored, isNotNull);
+    expect(restored!.rate, 2.0);
+    expect(restored.engineType, AloudEngineType.http);
+    expect(restored.followSysRate, isFalse);
+    await repo.close();
+  });
+
+  test('saveAloudSettings upsert 覆盖(全局单行)', () async {
+    final repo = await newRepo();
+    await repo.saveAloudSettings(
+        const AloudSettings(rate: 1.5, followSysRate: true));
+    await repo.saveAloudSettings(
+        const AloudSettings(rate: 3.0, followSysRate: false));
+
+    final restored = await repo.getAloudSettings();
+    expect(restored, isNotNull);
+    expect(restored!.rate, 3.0); // 后写覆盖
+    expect(restored.followSysRate, isFalse);
+    await repo.close();
+  });
+
+  test('默认值往返一致(对齐原生 legado ttsFollowSys 默认 true)', () async {
+    final repo = await newRepo();
+    await repo.saveAloudSettings(AloudSettings.defaults);
+    final restored = await repo.getAloudSettings();
+    expect(restored, isNotNull);
+    expect(restored!.rate, 1.0);
+    expect(restored.engineType, AloudEngineType.system);
+    expect(restored.followSysRate, isTrue); // 关键: 默认 true
+    await repo.close();
+  });
+
+  test('朗读配置不污染阅读设置(独立 KV 行)', () async {
+    final repo = await newRepo();
+    // 存朗读配置
+    await repo.saveAloudSettings(
+        const AloudSettings(rate: 2.0, followSysRate: false));
+    // 存阅读设置(全局)
+    await repo.saveSettings(ReadingSettings(), userId: null);
+
+    // 两边互不干扰
+    final aloud = await repo.getAloudSettings();
+    expect(aloud, isNotNull);
+    expect(aloud!.rate, 2.0);
+    final reading = await repo.getSettings(userId: null);
+    expect(reading, isNotNull);
     await repo.close();
   });
 }
