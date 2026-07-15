@@ -404,15 +404,29 @@ class AloudController extends ChangeNotifier {
 
   /// 从 reader 当前页起始段重新朗读, 保持原播放/暂停态。
   ///
-  /// 对齐原生 `curPageChanged → readAloud(!pause)`: start() 无参版本从
-  /// `reader.charOffsetForCurrentPage()`(当前页首段)起读。暂停态时 start 后再 pause,
-  /// 对齐原生「保持 pause 字段」语义。
+  /// 对齐原生 `curPageChanged → readAloud(!pause)`: 从用户翻到的新页起始段重读。
+  ///
+  /// ⚠️ **必须先停引擎 + 快照位置 + 全程挂 suspend**: 若不停引擎, 旧朗读的进度
+  /// 回调(_onEngineProgress → _maybeFlipPage)会在 start() 的 await 期间把页翻回
+  /// 旧 cursor 所在页(竞争), 导致重读仍落在旧页 → 用户感知「朗读没变化」。
+  /// 全程挂 _suspendReaderListener 防止 start → engine.play 触发的进度回调又翻页。
   Future<void> _restartAloudFromCurrentPage() async {
     if (_disposed) return;
     final wasPaused = isPaused;
-    await start(); // 无参 = 从 reader 当前页起始段(章/页已是用户翻到的新位置)
-    if (!_disposed && wasPaused) {
-      await pause(); // 恢复暂停态(对齐原生保持 pause)
+    // 快照用户翻到的新位置(此时 reader 已是 commitTurn 后的新页)。
+    final ch = reader.currentChapterIndex;
+    final off = reader.charOffsetForCurrentPage();
+    // 停引擎: 截断旧朗读的进度回调流, 防止 _maybeFlipPage 在 await 期间翻回旧页。
+    await _engine?.stop();
+    // 全程挂 suspend: start → engine.play 触发的首批进度回调不应触发翻页竞争。
+    _suspendReaderListener = true;
+    try {
+      await start(chapterIndex: ch, charOffset: off);
+      if (!_disposed && wasPaused) {
+        await pause(); // 恢复暂停态(对齐原生保持 pause)
+      }
+    } finally {
+      _suspendReaderListener = false;
     }
   }
 
