@@ -80,6 +80,16 @@ class AloudController extends ChangeNotifier {
   /// 章末续读重入守卫: 防止引擎 idle 事件多次触发导致并发翻章。
   bool _advancing = false;
 
+  /// 起始段的「已显示在上一页的前缀」字符数(跨页段落场景)。
+  ///
+  /// 对齐原生 `paragraphStartPos = page.chapterPosition - paragraphs[nowSpeak].chapterPosition`:
+  /// 页首落在跨页段落中间时, 本段上一页部分已读过, 故喂给引擎的起始段文本是
+  /// `text.substring(_startPrefix)`(只读剩余部分), 引擎回报的段内偏移是相对截断后
+  /// 文本的, 映射回章偏移需补回 [_startPrefix]。仅 [_startParagraphIndex] 这一段
+  /// 有非零值, 其余段均为 0。每次 [_loadChapterAndPlay] 重算。
+  int _startParagraphIndex = 0;
+  int _startPrefix = 0;
+
   /// 防环标志: 朗读自己改 reader 页码(_maybeFlipPage/_advanceToNextChapter)时
   /// 置 true, 让 [_onReaderUpdate] 跳过(避免朗读自动翻页又触发重读成环)。
   /// ChangeNotifier.notifyListeners 是同步的, 故标志在同步调用窗口内有效。
@@ -241,7 +251,13 @@ class AloudController extends ChangeNotifier {
   ///
   /// [chapterIndex] 是调用方快照的章索引, 内部全程用此值, **不再读
   /// `reader.currentChapterIndex`** —— 避免 await 期间被并发改动(TOCTOU)。
-  /// [charOffset] 指定起始段定位(段首偏移 >= charOffset); null 时从段 0 起。
+  ///
+  /// [charOffset] 指定朗读起点(页首字符偏移)。定位规则对齐原生
+  /// `BaseReadAloudService.newReadAloud`(`BaseReadAloudService.kt:232-275`):
+  /// 找包含 [charOffset] 的段(即 `charOffsetInChapter <= charOffset` 的最后一段),
+  /// 若 [charOffset] 落在段中(跨页段落的续行) → 喂引擎的该段文本是 `substring`
+  /// 掉已显示在上一页的前缀, 引擎从**页首第一个字**起读, 而非从段首重读、亦非
+  /// 跳到下一段。前缀长度记录到 [_startPrefix] 供进度回填。
   Future<void> _loadChapterAndPlay(int chapterIndex, {int? charOffset}) async {
     final content = await reader.chapterProcessedContent(chapterIndex);
     if (content == null || content.isEmpty) {
@@ -254,29 +270,46 @@ class AloudController extends ChangeNotifier {
       return;
     }
 
-    // 定位起始段: 用 charOffset 找第一个 charOffsetInChapter >= charOffset 的段。
+    // 定位起始段: 找包含 charOffset 的段(原生 paragraphStartPos 逻辑)。
+    // 即「charOffsetInChapter <= charOffset」的最后一段; 若 charOffset 超末段首,
+    // 也落在末段(用其 charOffsetInChapter)。这样跨页段落的续行不会跳段。
     var startIdx = 0;
+    var prefix = 0;
     if (charOffset != null) {
       for (var i = 0; i < _paragraphs.length; i++) {
-        if (_paragraphs[i].charOffsetInChapter >= charOffset) {
+        final pOff = _paragraphs[i].charOffsetInChapter;
+        if (pOff <= charOffset) {
           startIdx = i;
-          break;
+          prefix = charOffset - pOff;
+          if (prefix > _paragraphs[i].text.length) {
+            prefix = _paragraphs[i].text.length;
+          }
+        } else {
+          break; // 段首已越过 charOffset, 后续更远
         }
-        startIdx = i; // 越往后越接近, 兜底取最后一个
       }
     }
 
+    // 喂引擎的段落列表: 起始段截掉已显示前缀(跨页段落只读剩余部分, 对齐原生
+    // `contentList[nowSpeak].substring(paragraphStartPos)`), 其余段不变。
+    final texts = _paragraphs.map((p) => p.text).toList();
+    if (prefix > 0 && startIdx < texts.length) {
+      texts[startIdx] = texts[startIdx].substring(prefix);
+    }
+    _startParagraphIndex = startIdx;
+    _startPrefix = prefix;
+
+    // cursor 指向页首字符(charOffset), 段内偏移 = prefix(已读前缀不算)。
     _cursor = AloudCursor(
       chapterIndex: chapterIndex,
-      chapterCharOffset: _paragraphs[startIdx].charOffsetInChapter,
+      chapterCharOffset: charOffset ?? _paragraphs[startIdx].charOffsetInChapter,
       paragraphIndex: startIdx,
-      charOffsetInParagraph: 0,
+      charOffsetInParagraph: prefix,
     );
     _bumpVersion();
 
     final engine = _engine;
     if (engine != null) {
-      final texts = _paragraphs.map((p) => p.text).toList();
       await engine.play(paragraphs: texts, startIndex: startIdx, speed: _rate);
     }
   }
@@ -346,11 +379,18 @@ class AloudController extends ChangeNotifier {
     if (_disposed) return;
     if (e.paragraphIndex >= _paragraphs.length) return;
     final para = _paragraphs[e.paragraphIndex];
+    // 引擎报告的段内偏移是相对「喂给引擎的(可能已截掉前缀)文本」的。
+    // 起始段的实际段内偏移需补回 [_startPrefix](已读前缀), 才与 [AloudParagraph]
+    // 原文偏移同源; 非起始段 _startPrefix 不适用, 故按段下标判断。
+    final rawOff = e.charEndInParagraph;
+    final inPara = (e.paragraphIndex == _startParagraphIndex && _startPrefix > 0)
+        ? rawOff + _startPrefix
+        : rawOff;
     _cursor = AloudCursor(
       chapterIndex: reader.currentChapterIndex,
-      chapterCharOffset: para.charOffsetInChapter + e.charEndInParagraph,
+      chapterCharOffset: para.charOffsetInChapter + inPara,
       paragraphIndex: e.paragraphIndex,
-      charOffsetInParagraph: e.charEndInParagraph,
+      charOffsetInParagraph: inPara,
     );
     _audioHandler.notifyProgress(e);
     _maybeFlipPage();
