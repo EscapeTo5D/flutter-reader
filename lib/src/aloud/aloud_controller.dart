@@ -40,7 +40,11 @@ class AloudController extends ChangeNotifier {
         _engineType =
             initialSettings?.engineType ?? AloudSettings.defaults.engineType,
         _followSysRate = initialSettings?.followSysRate ??
-            AloudSettings.defaults.followSysRate;
+            AloudSettings.defaults.followSysRate {
+    // 监听 reader 的页/章变化: 朗读运行中用户手动翻页/翻章 → 跟随到新页重读。
+    // 对齐原生 legado `ReadBook.curPageChanged()` 统一收口。防环见 [_onReaderUpdate]。
+    reader.addListener(_onReaderUpdate);
+  }
 
   /// 关联的阅读控制器(翻页/取页/取预处理文本都通过它)。
   final ReadingController reader;
@@ -75,6 +79,11 @@ class AloudController extends ChangeNotifier {
 
   /// 章末续读重入守卫: 防止引擎 idle 事件多次触发导致并发翻章。
   bool _advancing = false;
+
+  /// 防环标志: 朗读自己改 reader 页码(_maybeFlipPage/_advanceToNextChapter)时
+  /// 置 true, 让 [_onReaderUpdate] 跳过(避免朗读自动翻页又触发重读成环)。
+  /// ChangeNotifier.notifyListeners 是同步的, 故标志在同步调用窗口内有效。
+  bool _suspendReaderListener = false;
 
   // ─────────── 对外 getters ───────────
 
@@ -116,6 +125,7 @@ class AloudController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    reader.removeListener(_onReaderUpdate);
     _saveDebounce?.cancel();
     _settingsSaveDebounce?.cancel();
     _stateSub?.cancel();
@@ -354,6 +364,58 @@ class AloudController extends ChangeNotifier {
     _scheduleProgressSave();
   }
 
+  // ─────────── 翻页跟随朗读(反向联动: 翻页 → 重读) ──────────────────
+  //
+  // 对齐原生 legado `ReadBook.curPageChanged()`(`ReadBook.kt:473-487`): 用户翻页/
+  // 翻章后, 若 TTS 运行中, 朗读跟随到新页起始段重新朗读, 保持原播放/暂停态。
+  // 原生 ReadView 的触摸/点击完全不感知朗读状态, 所有响应集中在 curPageChanged。
+  // Flutter 端等价: reader 的 notify 是所有翻页/翻章的统一下游出口, 监听它即可。
+
+  /// reader 页/章变化回调(挂在 reader.addListener)。
+  ///
+  /// 仅在朗读运行中(playing/paused)响应; 检测 reader 当前页/章是否偏离了 cursor
+  /// 所在位置 → 偏离则用户主动翻走了, 从新页起始段重读。
+  ///
+  /// **防环**: 朗读自己的 [_maybeFlipPage](自动翻页)/[_advanceToNextChapter](章末
+  /// 续读)也会改 reader 页码并 notify, 此时 [_suspendReaderListener]=true, 直接
+  /// return 不重读。区分依据: 朗读自动翻页后 cursor 所在页 == reader 当前页
+  /// (因为是按 cursor 翻的); 用户手动翻页则 reader 页 ≠ cursor 页。
+  void _onReaderUpdate() {
+    if (_disposed || _suspendReaderListener) return;
+    // 只在朗读运行中(playing/paused)才响应; idle/stopped 不干预用户翻页。
+    if (!isPlaying && !isPaused) return;
+    final c = _cursor;
+    if (c == null) return;
+    final readerCh = reader.currentChapterIndex;
+    if (readerCh != c.chapterIndex) {
+      // 章变了 → 用户翻章, 重读到新章当前页起始段。
+      _restartAloudFromCurrentPage();
+    } else {
+      // 章没变 → 章内翻页。cursor 落在哪一页?
+      final cursorPage = reader.pageIndexForCharOffset(c.chapterCharOffset);
+      if (cursorPage != reader.currentPageIndex) {
+        // reader 页 ≠ cursor 页 → 用户翻走了, 重读。
+        _restartAloudFromCurrentPage();
+      }
+      // cursorPage == currentPageIndex → 是 _maybeFlipPage 朗读自己触发的翻页
+      // (按 cursor 翻的, 翻完页码一致), 忽略。防环的第二道保险。
+    }
+  }
+
+  /// 从 reader 当前页起始段重新朗读, 保持原播放/暂停态。
+  ///
+  /// 对齐原生 `curPageChanged → readAloud(!pause)`: start() 无参版本从
+  /// `reader.charOffsetForCurrentPage()`(当前页首段)起读。暂停态时 start 后再 pause,
+  /// 对齐原生「保持 pause 字段」语义。
+  Future<void> _restartAloudFromCurrentPage() async {
+    if (_disposed) return;
+    final wasPaused = isPaused;
+    await start(); // 无参 = 从 reader 当前页起始段(章/页已是用户翻到的新位置)
+    if (!_disposed && wasPaused) {
+      await pause(); // 恢复暂停态(对齐原生保持 pause)
+    }
+  }
+
   /// 翻页联动: 当前朗读位置越过下一页边界 → 自动翻到朗读所在页。
   ///
   /// 对齐原生 legado `readAloudNumber + charOffset > getReadLength(pageIndex+1)`
@@ -373,7 +435,12 @@ class AloudController extends ChangeNotifier {
     if (targetPage != curPage && targetPage >= 0 && targetPage < pages.length) {
       // 章/页同源(_onEngineProgress 设 cursor.chapterIndex = reader.currentChapterIndex),
       // 故只翻页不翻章。setCurrentPageIndex 内部带 notify + 防抖落盘。
+      // ⚠️ 防环: 这是朗读自己触发的翻页, 挂 suspend 标志让 _onReaderUpdate 跳过,
+      // 否则会误判为「用户翻页」→ 触发 _restartAloudFromCurrentPage → 朗读从头重读。
+      // notifyListeners 同步触发 listener, 故标志在调用窗口内有效, 调完即复位。
+      _suspendReaderListener = true;
       reader.setCurrentPageIndex(targetPage);
+      _suspendReaderListener = false;
     }
   }
 
@@ -396,7 +463,12 @@ class AloudController extends ChangeNotifier {
     try {
       // 快照目标章索引(C2 修复): 全程用 targetChapter, 不再读 reader.currentChapterIndex。
       final targetChapter = reader.currentChapterIndex + 1;
+      // ⚠️ 防环: 章末续读是朗读自己触发的翻章, 挂 suspend 标志让 _onReaderUpdate
+      // 跳过(nextChapter 的 notify 否则会触发 _restartAloudFromCurrentPage)。
+      // 紧接的 _loadChapterAndPlay 会重新设 cursor 到新章, 故此处只需挡住 notify 回调。
+      _suspendReaderListener = true;
       reader.nextChapter();
+      _suspendReaderListener = false;
       await _loadChapterAndPlay(targetChapter);
     } finally {
       _advancing = false;
