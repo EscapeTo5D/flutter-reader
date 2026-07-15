@@ -15,6 +15,7 @@ import '../page_animations/scroll_mode_handler.dart';
 import 'page_view.dart' as pv;
 import 'tip_layout.dart';
 import 'read_menu.dart';
+import 'read_aloud_dialog.dart';
 import 'search_menu.dart';
 import '../../aloud/aloud_controller.dart';
 
@@ -152,6 +153,14 @@ class _ReaderViewState extends State<ReaderView>
   /// (目录/书签/设置弹窗)由其自身负责, reader 此刻不可见, 无需重排。
   bool _isCurrentRoute = true;
   Animation<double>? _secondaryAnimation;
+
+  /// 朗读引擎是否处于运行态(playing / paused)。
+  /// 对齐原生 `BaseReadAloudService.isRun`(play/pause 都为 true, stopped/idle 为 false)。
+  /// 用于点击「菜单区」时分支: 运行中直接弹朗读控制面板而非主菜单。
+  bool get _isAloudRunning {
+    final a = widget.aloudController;
+    return a != null && (a.isPlaying || a.isPaused);
+  }
 
   @override
   void initState() {
@@ -1134,6 +1143,14 @@ class _ReaderViewState extends State<ReaderView>
 
     final size = MediaQuery.of(context).size;
     final action = controller.getClickAction(details.localPosition, size);
+    // 朗读运行中点击「菜单区」: 直接弹朗读控制面板(对齐原生 ReadBookActivity.kt:1124-1130
+    // showActionMenu: BaseReadAloudService.isRun -> showReadAloudDialog)。
+    // isRun 在 play/pause 两种态都为 true, 故朗读期间点中心都是弹控制面板而非主菜单。
+    if (action == ClickAction.menu && _isAloudRunning) {
+      showReadAloudDialog(context, controller: widget.aloudController!);
+      _tapDownPosition = null;
+      return;
+    }
     // 点击翻页改走动画路径(对齐原生 ReadView.kt:444-445)。
     if (action == ClickAction.nextPage) {
       _turnByAnim(_PageDirection.next);

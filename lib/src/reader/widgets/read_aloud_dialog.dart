@@ -22,6 +22,11 @@ void showReadAloudDialog(
   required AloudController controller,
   List<HttpTtsConfig> httpConfigs = const [],
 }) {
+  // ⚠️ 必须从调用方 context 取 Navigator: SmartDialog 的 builder 闭包里 widget 树挂在
+  // SmartDialog 自己的 Overlay 上, 不在 MaterialApp 的 Navigator 下, dialog 内部
+  // Navigator.of(context) 会抛 "context does not include a Navigator"。
+  // 调用方(ReaderView)的 context 在 MaterialApp.Navigator 子树里, 故这里抓出来透传。
+  final appNavigator = Navigator.of(context, rootNavigator: true);
   SmartDialog.show(
     alignment: Alignment.bottomCenter,
     // 对齐原生 ReadAloudDialog.onStart: dimAmount=0.0f, 背景不暗化。
@@ -30,6 +35,7 @@ void showReadAloudDialog(
     builder: (_) => _ReadAloudDialog(
       controller: controller,
       httpConfigs: httpConfigs,
+      appNavigator: appNavigator,
     ),
   );
 }
@@ -50,10 +56,14 @@ Widget _bottomSheetAnimation(
 class _ReadAloudDialog extends StatefulWidget {
   final AloudController controller;
   final List<HttpTtsConfig> httpConfigs;
+  /// 宿主 Navigator(用于目录页跳转)。SmartDialog Overlay 不在 MaterialApp
+  /// Navigator 子树下, dialog 内部无法用自身 context 取到, 须由调用方注入。
+  final NavigatorState appNavigator;
 
   const _ReadAloudDialog({
     required this.controller,
     required this.httpConfigs,
+    required this.appNavigator,
   });
 
   @override
@@ -517,10 +527,14 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
   void _openChapterList(AloudController c) {
     final book = c.reader.book;
     if (book == null) return;
-    // 延迟到下一帧, 让 SmartDialog 先 dismiss, 避免 overlay 冲突。
+    // ⚠️ 不能用 dialog 自身 context 取 Navigator: SmartDialog 把本 widget 挂在
+    // SmartDialog 自己的 Overlay 上, 不在 MaterialApp 的 Navigator 子树下,
+    // Navigator.of(context) 会抛 "context does not include a Navigator"。
+    // 用注入的 widget.appNavigator(调用方 ReaderView 的 context 抓的)。
+    // 延迟到下一帧, 让 SmartDialog 先完成 dismiss 卸载, 避免 overlay 冲突。
+    final nav = widget.appNavigator;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).push(
+      nav.push(
         MaterialPageRoute(
           builder: (_) => ChapterListPage(controller: c.reader),
         ),
