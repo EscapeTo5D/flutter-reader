@@ -13,8 +13,8 @@ abstract class BaseColumn {
 
   BaseColumn({required this.start, required this.end});
 
-  /// 绘制该列
-  void draw(Canvas canvas, TextStyle style, double lineBase);
+  /// 绘制该列。[accentColor] 非空时用于朗读/搜索命中列的前景色覆盖。
+  void draw(Canvas canvas, TextStyle style, double lineBase, {Color? accentColor});
 
   /// 触摸检测：点击坐标 x 是否落在该列范围内
   bool isTouch(double x) => x >= start && x <= end;
@@ -52,7 +52,7 @@ class TextColumn extends BaseColumn {
   });
 
   @override
-  void draw(Canvas canvas, TextStyle style, double lineBase) {
+  void draw(Canvas canvas, TextStyle style, double lineBase, {Color? accentColor}) {
     // 绘制选中背景
     if (selected) {
       final bgPaint = Paint()
@@ -75,20 +75,15 @@ class TextColumn extends BaseColumn {
       );
     }
 
-    // 绘制朗读高亮背景(对齐原生 aloudSpan, 用柔和的橙色背景)
-    if (isAloud) {
-      final bgPaint = Paint()
-        ..color = Colors.orange.withValues(alpha: 0.25)
-        ..style = PaintingStyle.fill;
-      canvas.drawRect(
-        Rect.fromLTRB(start, 0, end, lineBase + style.fontSize! * 0.3),
-        bgPaint,
-      );
-    }
+    // 朗读高亮: 对齐原生 legado `TextColumn.draw` —— 当前朗读段落用强调色作
+    // **前景文字色**(textAccentColor, 默认红 #E53935), 不画背景。与"手动选词"
+    // (selectedPaint 背景高亮)区分开。(搜索结果 isSearchResult 是既有独立功能,
+    // 仍用黄色背景, 不走这里。)
+    final fgColor = isAloud ? accentColor ?? style.color : style.color;
 
-    // 绘制文字
+    // 绘制文字(朗读段用强调色, 否则普通文字色)
     final painter = TextPainter(
-      text: TextSpan(text: charData, style: style),
+      text: TextSpan(text: charData, style: style.copyWith(color: fgColor)),
       textDirection: TextDirection.ltr,
     );
     painter.layout();
@@ -117,7 +112,7 @@ class ImageColumn extends BaseColumn {
   });
 
   @override
-  void draw(Canvas canvas, TextStyle style, double lineBase) {
+  void draw(Canvas canvas, TextStyle style, double lineBase, {Color? accentColor}) {
     // TODO: 实现图片绘制
   }
 }

@@ -152,6 +152,7 @@ Map<String, dynamic> encodeReadingSettings(ReadingSettings s) {
     'letterSpacing': s.letterSpacing,
     'backgroundColor': _colorToJson(s.backgroundColor),
     'textColor': _colorToJson(s.textColor),
+    'textAccentColor': _colorToJson(s.textAccentColor),
     'tipColor': _colorToJson(s.tipColor),
     'tipDividerColor': s.tipDividerColor == null ? null : _colorToJson(s.tipDividerColor!),
     'fontFamily': _fontToJson(s.fontFamily),
@@ -195,6 +196,7 @@ ReadingSettings decodeReadingSettings(Map<String, dynamic> json) {
     letterSpacing: _asDouble(json['letterSpacing'], d.letterSpacing),
     backgroundColor: _colorFromJson(_asInt(json['backgroundColor'], d.backgroundColor.toARGB32())),
     textColor: _colorFromJson(_asInt(json['textColor'], d.textColor.toARGB32())),
+    textAccentColor: _colorFromJson(_asInt(json['textAccentColor'], d.textAccentColor.toARGB32())),
     tipColor: _colorFromJson(_asInt(json['tipColor'], d.tipColor.toARGB32())),
     tipDividerColor: json['tipDividerColor'] == null
         ? null

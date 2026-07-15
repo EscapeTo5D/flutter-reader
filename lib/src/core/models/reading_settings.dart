@@ -179,6 +179,9 @@ class ReadingSettings {
   double letterSpacing;
   Color backgroundColor;
   Color textColor;
+  /// 强调色: 朗读当前段落/搜索结果命中文字的前景色, 对齐原生
+  /// `ReadBookConfig.textAccentColor`(白天默认 `#E53935`)。
+  Color textAccentColor;
   Color tipColor;
   /// 页眉/页脚分隔线颜色, 对齐原生 ReadTipConfig.tipDividerColor。
   /// 原生值 -1=跟随背景, 0=跟随文字, >0=自定义 ARGB; Flutter 用 Color 表达,
@@ -226,6 +229,7 @@ class ReadingSettings {
     this.letterSpacing = 0.0,
     this.backgroundColor = const Color(0xFFC0EDC6),
     this.textColor = const Color(0xFF0B0B0B),
+    this.textAccentColor = const Color(0xFFE53935),
     this.tipColor = const Color(0xFF999999),
     this.tipDividerColor,
     this.fontFamily,
@@ -274,6 +278,7 @@ class ReadingSettings {
     double? letterSpacing,
     Color? backgroundColor,
     Color? textColor,
+    Color? textAccentColor,
     Color? tipColor,
     String? fontFamily,
     String? backgroundImage,
@@ -309,6 +314,7 @@ class ReadingSettings {
       letterSpacing: letterSpacing ?? this.letterSpacing,
       backgroundColor: backgroundColor ?? this.backgroundColor,
       textColor: textColor ?? this.textColor,
+      textAccentColor: textAccentColor ?? this.textAccentColor,
       tipColor: tipColor ?? this.tipColor,
       tipDividerColor: tipDividerColor ?? this.tipDividerColor,
       fontFamily: fontFamily ?? this.fontFamily,

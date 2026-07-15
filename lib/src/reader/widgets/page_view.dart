@@ -382,6 +382,7 @@ class PageView extends StatelessWidget {
           painter: _TextLinePainter(
             line: line,
             style: style,
+            accentColor: settings.textAccentColor,
             aloudVersion: aloudVersion,
           ),
         ),
@@ -431,19 +432,15 @@ class PageView extends StatelessWidget {
 
   /// 标记当前朗读段在本行的字符区间。
   ///
-  /// 朗读光标 [AloudCursor] 的 [chapterCharOffset] 是章内绝对偏移,
-  /// [charOffsetInParagraph] 是段内已读偏移。本行的字符区间是
+  /// 对齐原生 legado `TextPage.upPageAloudSpan` —— 高亮**整个当前段落**(段首
+  /// 到段尾), 非仅已读部分。段落范围取 [AloudController.currentParagraphRange]
+  /// (start=段首, end=下一段首/末段尾)。本行的字符区间是
   /// [line.chapterPosition, line.chapterPosition + line.text.length)。
-  ///
-  /// 高亮规则: 高亮 [segStart, chapterCharOffset), 即段首到当前朗读位置
-  /// (已读部分)。与原生 `upPageAloudSpan` 高亮整段的差异是已知简化 —— 段尾
-  /// 无法从 cursor 直接得(需查下一段偏移), 已读部分高亮更直观地反映进度。
   void _markAloud(TextLine line, AloudController controller) {
-    final cursor = controller.cursor;
-    if (cursor == null) return;
-    // 朗读段在章内的绝对范围 [segStart, segEnd): 段首 → 当前已读位置。
-    final segStart = cursor.chapterCharOffset - cursor.charOffsetInParagraph;
-    final segEnd = cursor.chapterCharOffset;
+    final range = controller.currentParagraphRange;
+    if (range == null) return;
+    final segStart = range.start;
+    final segEnd = range.end;
     final lineStart = line.chapterPosition;
     final lineEnd = lineStart + line.text.length;
     // 区间不相交 → 跳过。
@@ -481,6 +478,9 @@ class _TextLinePainter extends CustomPainter {
   final TextLine line;
   final TextStyle style;
 
+  /// 强调色: 朗读当前段落/搜索命中文字的前景色(对齐原生 textAccentColor)。
+  final Color? accentColor;
+
   /// 朗读高亮版本号。朗读进度推进时自增, 驱动 [shouldRepaint] 重绘当前段高亮。
   ///
   /// 必要性: [TextLine] 是不可变 const 对象, `old.line != line` 比对象引用。
@@ -491,6 +491,7 @@ class _TextLinePainter extends CustomPainter {
   _TextLinePainter({
     required this.line,
     required this.style,
+    this.accentColor,
     this.aloudVersion = 0,
   });
 
@@ -500,7 +501,7 @@ class _TextLinePainter extends CustomPainter {
     if (line.columns.isEmpty) return;
 
     for (final column in line.columns) {
-      column.draw(canvas, style, line.lineBase);
+      column.draw(canvas, style, line.lineBase, accentColor: accentColor);
     }
   }
 
@@ -508,6 +509,7 @@ class _TextLinePainter extends CustomPainter {
   bool shouldRepaint(_TextLinePainter oldDelegate) {
     return oldDelegate.line != line ||
         oldDelegate.style != style ||
+        oldDelegate.accentColor != accentColor ||
         oldDelegate.aloudVersion != aloudVersion;
   }
 }

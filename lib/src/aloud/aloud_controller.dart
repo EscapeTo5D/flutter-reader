@@ -80,6 +80,27 @@ class AloudController extends ChangeNotifier {
 
   AloudState get state => _state;
   AloudCursor? get cursor => _cursor;
+
+  /// 当前朗读段落在章内的**绝对范围 [start, end)**(字符偏移)。
+  ///
+  /// 用于朗读高亮: 对齐原生 `upPageAloudSpan` 高亮**整段**(非仅已读部分)。
+  /// start = 段首(cursor.chapterCharOffset - charOffsetInParagraph),
+  /// end = 下一段首或末段尾(取下一段 charOffsetInChapter, 末段取一个超大值兜底)。
+  /// 无 cursor 或段落越界时返回 null。
+  ({int start, int end})? get currentParagraphRange {
+    final c = _cursor;
+    if (c == null) return null;
+    final start = c.chapterCharOffset - c.charOffsetInParagraph;
+    var end = start;
+    if (c.paragraphIndex + 1 < _paragraphs.length) {
+      end = _paragraphs[c.paragraphIndex + 1].charOffsetInChapter;
+    } else {
+      // 末段: 段首 + 段文本长度(段尾, 含不到下一章)。
+      end = start + _paragraphs[c.paragraphIndex].text.length;
+    }
+    return (start: start, end: end);
+  }
+
   bool get isPlaying => _state == AloudState.playing;
   bool get isPaused => _state == AloudState.paused;
   double get rate => _rate;
@@ -327,10 +348,14 @@ class AloudController extends ChangeNotifier {
     _scheduleProgressSave();
   }
 
-  /// 翻页联动: 当前朗读位置越过下一页边界 → 静默翻页。
+  /// 翻页联动: 当前朗读位置越过下一页边界 → 自动翻到朗读所在页。
   ///
-  /// 对齐原生 legado `readAloudNumber + charOffset > getReadLength(pageIndex+1)`。
-  /// 用 [ReadingController.setCurrentPageSilent] 静默翻(无动画, 不 notify 整树)。
+  /// 对齐原生 legado `readAloudNumber + charOffset > getReadLength(pageIndex+1)`
+  /// → 翻页(无动画, 直接换页内容)。用 [ReadingController.setCurrentPageIndex]
+  /// **带 notify**(非 silent), 因为分页模式(slide/cover/sim/none)的页面内容
+  /// 切换靠 controller notify 触发 reader_view rebuild; silent 只给 scroll 模式
+  /// 逐像素滚动用(它有自己的 handler 局部重绘), 朗读走分页内容路径必须 notify,
+  /// 否则页面内容不变 → 看不到自动翻页(曾用 silent 导致不翻的 bug)。
   void _maybeFlipPage() {
     final c = _cursor;
     if (c == null) return;
@@ -340,7 +365,9 @@ class AloudController extends ChangeNotifier {
     // 当前朗读偏移落在哪一页。
     final targetPage = reader.pageIndexForCharOffset(c.chapterCharOffset);
     if (targetPage != curPage && targetPage >= 0 && targetPage < pages.length) {
-      reader.setCurrentPageSilent(c.chapterIndex, targetPage);
+      // 章/页同源(_onEngineProgress 设 cursor.chapterIndex = reader.currentChapterIndex),
+      // 故只翻页不翻章。setCurrentPageIndex 内部带 notify + 防抖落盘。
+      reader.setCurrentPageIndex(targetPage);
     }
   }
 
