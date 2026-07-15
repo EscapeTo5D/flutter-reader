@@ -122,13 +122,16 @@ void main() {
     expect(slices[1].charOffsetInChapter, 4);
   });
 
-  test('缩进字符计入偏移(与 chapterPosition 同源)', () {
+  test('缩进字符计入段首偏移; 切段 text 剥缩进(与 page_engine body 同源)', () {
     // 模拟 ContentProcessor 输出: 缩进 \u3000\u3000 + 正文
     final joined = '\u3000\u3000缩进正文';
     final slices = TextSlicer.slice(joined);
     expect(slices.length, 1);
-    expect(slices[0].charOffsetInChapter, 0); // 段首含缩进
-    expect(slices[0].text, '\u3000\u3000缩进正文'); // 含缩进原样保留
+    expect(slices[0].charOffsetInChapter, 0); // 段首含缩进起点(与 chapterPosition 段首一致)
+    // ⚠️ text 剥掉源缩进, 与 page_engine._wrapText 的 body 同源:
+    // 保证续行场景 charOffset - paraStart 算出的 prefix 直接是 body 偏移,
+    // 不再多读缩进字符(曾因此「翻页后朗读多一两个字」)。
+    expect(slices[0].text, '缩进正文');
 
     final pages = engine.paginate(
       content: joined,
@@ -140,7 +143,7 @@ void main() {
     expect(line.chapterPosition, slices[0].charOffsetInChapter);
   });
 
-  test('切段文本可 trim 后喂 TTS(缩进不影响发音)', () {
+  test('切段文本剥缩进后直接喂 TTS(无需 trim)', () {
     final joined = '\u3000\u3000你好世界';
     final slices = TextSlicer.slice(joined);
     final speakText = slices[0].text.trim();
