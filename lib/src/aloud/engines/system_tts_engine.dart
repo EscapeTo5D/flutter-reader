@@ -56,6 +56,18 @@ class SystemTtsEngine implements AloudEngine {
   bool _disposed = false;
   bool _initialized = false;
 
+  /// 底层 TextToSpeech 是否处于「未被 setSpeechRate 污染」状态。
+  ///
+  /// ⚠️ Android `TextToSpeech.setSpeechRate` 是**持久覆盖**语义——调过一次后,
+  /// 「不再调用 setSpeechRate」**不会**让引擎回到系统默认, 沿用上次值。故单纯
+  /// 跳过 setSpeechRate(旧实现的 bug)无法让跟随系统生效。
+  ///
+  /// 对齐原生 legado `upSpeechRate`(ttsFlowSys=true 分支): `clearTTS() + initTts()`
+  /// 重建 TextToSpeech 实例, 全新实例从未被 setSpeechRate → 自然用系统默认 rate。
+  /// flutter_tts 无 dispose/shutdown API, 唯一重建路径是 `setEngine`(见
+  /// [_ensureEngineCleanForFollowSys])。重建后置回 true。
+  bool _engineRateClean = true;
+
   /// 标记当前段是否正在播(避免 completion 与手动 stop 混淆)。
   bool _speaking = false;
 
@@ -95,9 +107,37 @@ class SystemTtsEngine implements AloudEngine {
     if (!_followSysRate) {
       try {
         await _tts.setSpeechRate(_toSpeechRate(_speed));
+        _engineRateClean = false; // 已污染
       } catch (e) {
         debugPrint('[SystemTts] setSpeechRate 异常(忽略): $e');
       }
+    }
+  }
+
+  /// 跟随系统语速前确保底层 TextToSpeech「干净」(未被 setSpeechRate 污染)。
+  ///
+  /// ⚠️ Android `TextToSpeech.setSpeechRate` 是持久覆盖: 调过自定义值后, 引擎不再
+  /// 自动回到系统默认 rate, 沿用上次值。故跟随系统时, 若引擎已被污染, 必须重建它。
+  ///
+  /// 对齐原生 legado `upSpeechRate`(ttsFlowSys=true 分支的 `clearTTS()+initTts()`)。
+  /// flutter_tts 无 dispose/shutdown API, 唯一重建底层实例的 Dart 路径是 setEngine:
+  /// 插件内 `tts = TextToSpeech(ctx, listener, engine)` 新建实例 + init 后自动重绑
+  /// UtteranceProgressListener(成员, 不随重建失效) + init 期方法调用走 pending 队列
+  /// 不丢。故重建对调用方完全透明。
+  ///
+  /// 重建开销: 约 50~200ms 引擎 re-init。仅在「跟随系统 + 引擎已污染」时触发一次,
+  /// 后续跟随系统不再调 setSpeechRate, _engineRateClean 保持 true, 不重复重建。
+  Future<void> _ensureEngineCleanForFollowSys() async {
+    if (_followSysRate && !_engineRateClean) {
+      try {
+        final engine = await _tts.getDefaultEngine;
+        if (engine is String && engine.isNotEmpty) {
+          await _tts.setEngine(engine);
+        }
+      } catch (e) {
+        debugPrint('[SystemTts] 重建引擎失败(忽略, 可能未完全回到系统默认): $e');
+      }
+      _engineRateClean = true; // 无论成败都标记, 避免反复重建
     }
   }
 
@@ -116,6 +156,11 @@ class SystemTtsEngine implements AloudEngine {
     // 跟随系统时不调 setSpeechRate, 让引擎用系统 TTS 设置(对齐原生 ttsFlowSys)。
     if (!followSysRate) {
       await _tts.setSpeechRate(_toSpeechRate(speed));
+      _engineRateClean = false; // 已污染
+    } else {
+      // ⚠️ 若引擎此前被 setSpeechRate 污染过, 单纯跳过无法回到系统默认(Android
+      // TextToSpeech.setSpeechRate 是持久覆盖)。需重建引擎(对齐原生 clearTTS+initTts)。
+      await _ensureEngineCleanForFollowSys();
     }
     _setState(AloudState.playing);
     _enqueueAll(); // 一次塞完整章(首段 FLUSH, 后续 ADD)
@@ -249,11 +294,15 @@ class SystemTtsEngine implements AloudEngine {
     // 跟随系统时不调 setSpeechRate(让引擎用系统 TTS 设置); 否则按新速率设置。
     if (!followSysRate) {
       await _tts.setSpeechRate(_toSpeechRate(rate));
+      _engineRateClean = false; // 已污染
+    } else {
+      // 若引擎已被污染, 重建以回到系统默认 rate(对齐原生 clearTTS+initTts)。
+      await _ensureEngineCleanForFollowSys();
     }
-    // 对齐原生 legado upTtsSpeechRate(ReadAloudDialog.kt:213-219): setSpeechRate
-    // 只对入队后的新 utterance 生效, 队列里已排队的段(本引擎 play/_enqueueAll 一次性
-    // QUEUE_ADD 整章)沿用旧速率 → 必须 stop 清队列 + 重新入队(从当前段段首重新开始)。
-    // 跟随系统时同样要重排(让之前 setSpeechRate 的副作用清除, 回到系统默认速率)。
+    // 对齐原生 legado upTtsSpeechRate(ReadAloudDialog.kt:213-219): rate 变更后必须
+    // stop 清队列 + 重新入队。自定义速率时 setSpeechRate 只对入队后的新 utterance 生效,
+    // 队列里已排队的段(本引擎 _enqueueAll 一次性 QUEUE_ADD 整章)沿用旧速率; 跟随系统时
+    // 重建后的新引擎是空队列, 同样需要重排队。故两种情况都要 stop + _enqueueAll。
     //
     // 合并 stop + _enqueueAll 成一个原子操作(不像 pause+resume 会中间发 paused 态
     // notify 导致 UI 抖动)。非 playing 态(paused/idle)只设字段, 下次 play/resume 生效。
