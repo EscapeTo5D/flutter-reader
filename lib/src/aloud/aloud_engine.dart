@@ -68,11 +68,17 @@ abstract class AloudEngine {
   // ─────────── 播放控制 ───────────
 
   /// 播放。[paragraphs] 已切段并过滤纯标点段; 从 [startIndex] 段开始。
-  /// [speed] 是相对倍率(1.0 = 正常速度)。
+  ///
+  /// [speed] 是相对倍率(1.0 = 正常速度)。[followSysRate]=true 时忽略 [speed]:
+  /// - 系统 TTS: **不调 setSpeechRate**, 让引擎用系统设置 `TTS_DEFAULT_RATE`
+  ///   (对齐原生 legado `ttsFlowSys=true` 的语义)。⚠️ 不能用"传 1.0 给引擎"偷懒 ——
+  ///   setSpeechRate(1.0) 会强制覆盖用户的系统设置。
+  /// - HTTP TTS: 用默认档位 1.0(后端合成无"系统设置"概念)。
   Future<void> play({
     required List<String> paragraphs,
     required int startIndex,
     required double speed,
+    bool followSysRate = false,
   });
 
   /// 暂停。系统 TTS = stop + 标记段首; HTTP TTS = 原生 pause。
@@ -91,7 +97,10 @@ abstract class AloudEngine {
   ///   stop+重新入队, HTTP 后端合成重下载, HTTP 播放器变速)。否则已排队的 utterance
   ///   沿用旧速率, 改速无效。
   /// - **paused/idle 态**: 只更新内部字段, 下次 play/resume 自然用新速率。
-  Future<void> setRate(double rate);
+  ///
+  /// [followSysRate]=true 时忽略 [rate]: 系统 TTS 不调 setSpeechRate(跟随系统设置),
+  /// HTTP TTS 用默认档位 1.0。
+  Future<void> setRate(double rate, {bool followSysRate = false});
 
   /// 跳到指定段(上下段按钮用)。会中断当前段。
   Future<void> skipToParagraph(int index);

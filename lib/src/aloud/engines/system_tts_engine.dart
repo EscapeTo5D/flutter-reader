@@ -49,6 +49,10 @@ class SystemTtsEngine implements AloudEngine {
   List<String> _paragraphs = const [];
   int _currentIndex = 0;
   double _speed = 1.0;
+  /// 跟随系统语速(对齐原生 `ttsFlowSys`): true 时**绝不调 setSpeechRate**, 让
+  /// Android TextToSpeech 用系统设置 `Settings.Secure.TTS_DEFAULT_RATE`(它构造时
+  /// 读这个值作为基线)。⚠️ 不能用 setSpeechRate(1.0) 偷懒, 会覆盖用户的系统设置。
+  bool _followSysRate = false;
   bool _disposed = false;
   bool _initialized = false;
 
@@ -87,11 +91,13 @@ class SystemTtsEngine implements AloudEngine {
     _tts.setCompletionHandler(_onSpeakComplete);
     _tts.setProgressHandler(_onSpeakProgress);
     _tts.setErrorHandler(_onSpeakError);
-    // 不设 locale(对齐 legado, 用引擎默认 = 系统语言)。只设语速。
-    try {
-      await _tts.setSpeechRate(_toSpeechRate(_speed));
-    } catch (e) {
-      debugPrint('[SystemTts] setSpeechRate 异常(忽略): $e');
+    // 不设 locale(对齐 legado, 用引擎默认 = 系统语言)。只设语速(跟随系统时跳过)。
+    if (!_followSysRate) {
+      try {
+        await _tts.setSpeechRate(_toSpeechRate(_speed));
+      } catch (e) {
+        debugPrint('[SystemTts] setSpeechRate 异常(忽略): $e');
+      }
     }
   }
 
@@ -100,12 +106,17 @@ class SystemTtsEngine implements AloudEngine {
     required List<String> paragraphs,
     required int startIndex,
     required double speed,
+    bool followSysRate = false,
   }) async {
     await _ensureInit();
     _paragraphs = paragraphs;
     _currentIndex = startIndex.clamp(0, paragraphs.length);
     _speed = speed;
-    await _tts.setSpeechRate(_toSpeechRate(speed));
+    _followSysRate = followSysRate;
+    // 跟随系统时不调 setSpeechRate, 让引擎用系统 TTS 设置(对齐原生 ttsFlowSys)。
+    if (!followSysRate) {
+      await _tts.setSpeechRate(_toSpeechRate(speed));
+    }
     _setState(AloudState.playing);
     _enqueueAll(); // 一次塞完整章(首段 FLUSH, 后续 ADD)
   }
@@ -232,24 +243,27 @@ class SystemTtsEngine implements AloudEngine {
   }
 
   @override
-  Future<void> setRate(double rate) async {
+  Future<void> setRate(double rate, {bool followSysRate = false}) async {
     _speed = rate;
+    _followSysRate = followSysRate;
+    // 跟随系统时不调 setSpeechRate(让引擎用系统 TTS 设置); 否则按新速率设置。
+    if (!followSysRate) {
+      await _tts.setSpeechRate(_toSpeechRate(rate));
+    }
     // 对齐原生 legado upTtsSpeechRate(ReadAloudDialog.kt:213-219): setSpeechRate
     // 只对入队后的新 utterance 生效, 队列里已排队的段(本引擎 play/_enqueueAll 一次性
-    // QUEUE_ADD 整章)沿用旧速率 → 必须 stop 清队列 + 重新入队(从当前段段首用新速率重读)。
+    // QUEUE_ADD 整章)沿用旧速率 → 必须 stop 清队列 + 重新入队(从当前段段首重新开始)。
+    // 跟随系统时同样要重排(让之前 setSpeechRate 的副作用清除, 回到系统默认速率)。
     //
     // 合并 stop + _enqueueAll 成一个原子操作(不像 pause+resume 会中间发 paused 态
-    // notify 导致 UI 抖动): 变速是用户主动改设置, 从当前段段首重读是可接受语义
-    // (原生 paragraphStartPos 在 nextParagraph 里清 0, 也是从段首)。非 playing 态
-    // (paused/idle)只设字段, 下次 play/resume 时自然用新速率。
-    await _tts.setSpeechRate(_toSpeechRate(rate));
+    // notify 导致 UI 抖动)。非 playing 态(paused/idle)只设字段, 下次 play/resume 生效。
     if (_state != AloudState.playing) return;
     _speaking = false;
     _queueGen++; // 作废进行中的 _enqueueAll 排队链(对齐 pause/stop 做法)
     await _tts.stop();
     if (_disposed) return;
     _speaking = true;
-    _enqueueAll(); // 从 _currentIndex 重新入队, 首段 FLUSH(新速率) + 后续 ADD
+    _enqueueAll(); // 从 _currentIndex 重新入队, 首段 FLUSH(新速率/系统默认) + 后续 ADD
   }
 
   @override

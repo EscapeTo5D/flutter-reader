@@ -78,9 +78,12 @@ class HttpTtsEngine implements AloudEngine {
     required List<String> paragraphs,
     required int startIndex,
     required double speed,
+    bool followSysRate = false,
   }) async {
     _paragraphs = paragraphs;
-    _speed = speed;
+    // 跟随系统时用默认档位 1.0(对齐原生 speechRatePlay = defaultSpeechRate,
+    // progress=5 → 倍率 1.0)。HTTP 合成是后端控制, 无"系统设置"概念。
+    _speed = followSysRate ? 1.0 : speed;
     _currentIndex = startIndex.clamp(0, paragraphs.length);
     if (_currentIndex >= paragraphs.length) {
       _setState(AloudState.idle);
@@ -265,8 +268,10 @@ class HttpTtsEngine implements AloudEngine {
   }
 
   @override
-  Future<void> setRate(double rate) async {
-    _speed = rate;
+  Future<void> setRate(double rate, {bool followSysRate = false}) async {
+    // 跟随系统时用默认档位 1.0(对齐原生 speechRatePlay = defaultSpeechRate)。
+    final effective = followSysRate ? 1.0 : rate;
+    _speed = effective;
     // 暂停态只改字段, 不重 play(否则 play 会把状态从 paused 推回 playing,
     // 破坏暂停语义; 后端合成模式 resume 时自然用新速率重新下载)。
     if (_state == AloudState.paused) return;
@@ -277,11 +282,12 @@ class HttpTtsEngine implements AloudEngine {
       await play(
         paragraphs: _paragraphs,
         startIndex: _currentIndex,
-        speed: rate,
+        speed: effective,
+        followSysRate: followSysRate,
       );
     } else {
       // 播放器实时变速(just_audio 原生支持, 队列内音频也立即变速)。
-      await _player.setSpeed(rate);
+      await _player.setSpeed(effective);
     }
   }
 

@@ -137,9 +137,9 @@ class AloudController extends ChangeNotifier {
   double get rate => _rate;
   /// 跟随系统语速(对齐原生 `ttsFollowSys`, 默认 true)。
   ///
-  /// ⚠️ 本轮仅持久化开关态, true 时的「读系统 TTS 默认语速」逻辑未实现
-  /// (留 TODO): 当前 true 时仍用 [rate] 字段值(默认 1.0)。Android 无公开 API
-  /// 读系统 TTS rate, iOS 可读 `AVSpeechUtteranceDefaultSpeechRate`——待后续。
+  /// 已实装: true 时系统 TTS 跳过 setSpeechRate 跟随系统设置
+  /// (`Settings.Secure.TTS_DEFAULT_RATE`), HTTP TTS 用默认档位 1.0。
+  /// 详见 [setFollowSysRate]。
   bool get followSysRate => _followSysRate;
   int get aloudVersion => _aloudVersion;
   AloudEngineType get engineType => _engineType;
@@ -196,7 +196,7 @@ class AloudController extends ChangeNotifier {
     // 用 _rate(已按上方规则更新, playing 时保持原值), 非引擎初值。
     final engine = _engine;
     if (engine != null && _state != AloudState.playing) {
-      await engine.setRate(_rate);
+      await engine.setRate(_rate, followSysRate: _followSysRate);
     }
     notifyListeners();
   }
@@ -322,7 +322,8 @@ class AloudController extends ChangeNotifier {
 
     final engine = _engine;
     if (engine != null) {
-      await engine.play(paragraphs: texts, startIndex: startIdx, speed: _rate);
+      await engine.play(paragraphs: texts, startIndex: startIdx, speed: _rate,
+          followSysRate: _followSysRate);
     }
   }
 
@@ -361,16 +362,25 @@ class AloudController extends ChangeNotifier {
   /// 设置语速倍率(1.0=正常)并实时应用到引擎, 同时防抖落盘。
   Future<void> setRate(double r) async {
     _rate = r;
-    await _engine?.setRate(r);
+    await _engine?.setRate(r, followSysRate: _followSysRate);
     _scheduleSettingsSave();
     notifyListeners();
   }
 
-  /// 设置「跟随系统语速」开关, 防抖落盘。
+  /// 设置「跟随系统语速」开关, 防抖落盘。正在播放时强制重排让语速切换生效。
   ///
-  /// ⚠️ 本轮仅持久化开关态; true 时实际仍用 [rate] 字段(读系统 rate 逻辑留 TODO)。
+  /// 已实装(对齐原生 legado `ttsFlowSys`):
+  /// - 系统 TTS: 跳过 setSpeechRate, 让引擎用系统设置 `TTS_DEFAULT_RATE`(引擎构造时
+  ///   读该值作为基线, 故不调 setSpeechRate 即跟随用户的系统 TTS 速率)。
+  /// - HTTP TTS: 用默认档位 1.0(后端合成无"系统设置"概念, 取默认)。
   Future<void> setFollowSysRate(bool value) async {
+    if (_followSysRate == value) return;
     _followSysRate = value;
+    // 正在播放时强制重排: 系统 TTS setRate 内部会 stop+重新入队让速率切换生效;
+    // HTTP 后端合成会重 play 重下载。rate 传 1.0 仅在 followSysRate=true 时被引擎使用。
+    if (_engine != null && _state == AloudState.playing) {
+      await _engine!.setRate(_rate, followSysRate: value);
+    }
     _scheduleSettingsSave();
     notifyListeners();
   }

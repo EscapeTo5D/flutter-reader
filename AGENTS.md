@@ -727,7 +727,7 @@ class _RippleButtonState extends State<_RippleButton> {
 - **Repository**：`getAloudSettings()`（未配置返回 null → 调用方回落 `AloudSettings.defaults`）/`saveAloudSettings()`（upsert）。`sqflite_reader_repository.dart` 落库到 `settings(user_id PK, json, updated_at)`，`_aloudSettingsKey = '__aloud__'`。
 - **`AloudController`**：构造可注入 `initialSettings`（同步）或构造后 `await loadSettings()`（异步，repo 返回 null 时保持初值，读回不触发持久化）；`setRate`/`setFollowSysRate`/`selectEngine` 改后 `_scheduleSettingsSave`（1.5s 防抖，同进度节奏）；`flushSettings()` dispose 前调。正在朗读时 `loadSettings` 不实时改语速（避免中断），仅同步 followSysRate；engineType 变了则丢弃旧引擎实例（懒重建）。
 - **`read_aloud_dialog` 跟随系统开关**：由原先的本地 `_followSysRate` 占位改为读 `controller.followSysRate`，开关写 `controller.setFollowSysRate`；跟随时隐藏语速数值（对齐原生 `upTtsSpeechRateEnabled` 隐藏 value）+ 禁用语速滑块/± 按钮。
-- ⚠️ **`followSysRate=true` 时实际仍用 `rate` 字段（读系统 TTS rate 逻辑留 TODO）**：Android 无公开 API 读系统 TTS rate，iOS 可读 `AVSpeechUtteranceDefaultSpeechRate`，留待后续。本轮仅持久化开关态。
+- **`followSysRate=true` 已实装（2026-07-16）**：对齐原生 legado `ttsFlowSys`——系统 TTS **不调 `setSpeechRate`**，让 Android `TextToSpeech` 用系统设置 `Settings.Secure.TTS_DEFAULT_RATE`（引擎构造时读该值作基线，故不调即跟随用户的系统 TTS 速率）。HTTP TTS 用默认档位 1.0（后端合成无"系统设置"概念，取原生 `speechRatePlay = defaultSpeechRate`）。⚠️ 不能用 `setSpeechRate(1.0)` 偷懒——会强制覆盖用户的系统设置。实装：`AloudEngine.play/setRate` 加可选 `followSysRate` 参数（默认 false 向后兼容）；`SystemTtsEngine` 据此跳过 setSpeechRate；`AloudController.setFollowSysRate` 切换时若 playing 则调 `engine.setRate` 触发重排（让速率切换生效）。
 
 ### ⚠️ 系统 TTS 语速换算分平台（2026-07-15 修复）
 旧实现 `(rate × 0.5).clamp(0,1)` 统一映射，**Android 端倍率永远 ≤ 1.0**（拉满滑块也只 1 倍速），与原生 legado 5 倍速上限严重不符。根因：`flutter_tts` 的 `speechRate` 不是 0~1 统一语义，而是各平台透传值，需分平台换算：
