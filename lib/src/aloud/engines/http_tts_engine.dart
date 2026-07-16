@@ -267,6 +267,9 @@ class HttpTtsEngine implements AloudEngine {
   @override
   Future<void> setRate(double rate) async {
     _speed = rate;
+    // 暂停态只改字段, 不重 play(否则 play 会把状态从 paused 推回 playing,
+    // 破坏暂停语义; 后端合成模式 resume 时自然用新速率重新下载)。
+    if (_state == AloudState.paused) return;
     if (_config.speedFromBackend) {
       // 后端合成倍速: 改倍速 = 重 play 当前段(缓存 key 含 speed, 会重下载)。
       final cur = _currentIndex + (_player.currentIndex ?? 0);
@@ -277,7 +280,7 @@ class HttpTtsEngine implements AloudEngine {
         speed: rate,
       );
     } else {
-      // 播放器实时变速。
+      // 播放器实时变速(just_audio 原生支持, 队列内音频也立即变速)。
       await _player.setSpeed(rate);
     }
   }

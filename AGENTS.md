@@ -737,6 +737,23 @@ class _RippleButtonState extends State<_RippleButton> {
 ### ⚠️ HttpTTS 后端刻度 clamp（2026-07-15 修复）
 `HttpTtsConfigResolver._speakSpeedForBackend` 旧 clamp `(1,20)` 不符原生。对齐 `HttpReadAloudService.kt:91`：`speechRate = AppConfig.speechRatePlay + 5`，`speechRatePlay` = seekbar progress（0..45），与 UI 倍率关系 `倍率 = (progress+5)/10`。代入 `speechRate = progress + 5 = (倍率×10 − 5) + 5 = 倍率 × 10`，范围 5..50（默认 1.0→10）。改 `(speed × 10).round().clamp(5, 50)`。
 
+### ⚠️ 倍速实时改 = stop + 重新入队（2026-07-16 修复，系统 TTS）
+
+**症状**：朗读弹窗拖语速滑块松手后，朗读不变速。
+
+**根因**：`SystemTtsEngine` 用 QUEUE_ADD 预排队（见 commit `3e6e4b0`），整章段落一次性入队。Android `TextToSpeech.setSpeechRate` **只对入队之后新 speak 的 utterance 生效**，已在队列里的 utterance 沿用入队时的速率 → 旧 `setRate` 只调 `setSpeechRate` 等于没改。
+
+**对齐原生**（`TTSReadAloudService.kt:158-168` + `ReadAloudDialog.kt:213-219` 的 `upTtsSpeechRate()`）：松手时三连 —— `setSpeechRate` + `pause(stop)` + `resume(play)`，stop 清队列打断当前段，play 从当前段（`nowSpeak`）用新速率重新入队。原生 `onStopTrackingTouch` 才触发，拖动中只改显示文本（`onProgressChanged → upTtsSpeechRateText`）。
+
+**修复**（`system_tts_engine.dart` 的 `setRate`）：playing 态下 `setSpeechRate` + `_queueGen++` + `_tts.stop()` + `_enqueueAll()`（从 `_currentIndex` 重新入队，首段 FLUSH 新速率 + 后续 ADD）。**不走 `_setState`**（保持 playing 态，状态没变只是引擎内部换队列），**不拆成 pause+resume 两步**（避免中间 `paused` 态 notify 导致 UI 抖动）。`_currentIndex` 不变 → 从当前段段首重读（原生 `paragraphStartPos` 在 `nextParagraph` 里清 0，也是段首）。paused/idle 态只设字段，下次 play/resume 自然用新速率。
+
+**HTTP 引擎**（`http_tts_engine.dart`）：paused 态守卫（只改 `_speed` 字段不重 play，否则 play 会把状态从 paused 推回 playing 破坏暂停态）；非后端模式 `just_audio.setSpeed` 实时变速（队列内音频也立即变）；后端合成模式重 play（缓存 key 含 speed 会重下）。
+
+**UI**：`read_aloud_dialog.dart` 语速 Slider 已用 `onChangeEnd`（松手）→ `_applySpeechRate` → `controller.setRate`，`onChanged`（拖动中）只更新本地 `_speechRateProgress` 显示，对齐原生"拖动不改引擎"。无需改动。
+
+**教训**：QUEUE_ADD 预排队（为段衔接流畅）与"倍速实时改"是一对张力 —— 入队时的速率被冻结进队列，改 setSpeechRate 无法追溯影响已入队的段。原生靠 stop+重排解决，Flutter 同理。改 `SystemTtsEngine` 时牢记：**任何影响已入队 utterance 属性的改动（速率/locale/pitch）都必须 stop+重新入队才生效**。
+
+
 ### 切段偏移对齐（⚠️ 关键正确性，单测 `text_slicer_test.dart` 锁定）
 - `TextSlicer.slice(processedContent)` 输入必须是 `ReadingController.chapterProcessedContent(chIdx)` 的返回值（= `ContentProcessor.getContent(...).textList.join('\n')`，**与排版引擎输入同源**）。
 - 切段**不剥缩进**（`chapterPosition` 含缩进偏移），每段偏移 = 累加 `raw.length + 1`（含 `\n`）。`TextSlicer` 入口做 `\r\n`/`\r` → `\n` 规范化兜底（书源正文可能含 `\r`）。

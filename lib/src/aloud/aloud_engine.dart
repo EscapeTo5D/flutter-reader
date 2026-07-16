@@ -84,7 +84,13 @@ abstract class AloudEngine {
   /// 停止(引擎级, 不清控制器坐标)。
   Future<void> stop();
 
-  /// 调倍速。系统 TTS 实时改 `setSpeechRate`; HTTP TTS 视 url 模板决定重下载或 `setSpeed`。
+  /// 调倍速。
+  ///
+  /// 语义(对齐原生 legado `upTtsSpeechRate`):
+  /// - **playing 态**: 必须打断当前朗读并从当前段段首用新速率重新开始(系统 TTS
+  ///   stop+重新入队, HTTP 后端合成重下载, HTTP 播放器变速)。否则已排队的 utterance
+  ///   沿用旧速率, 改速无效。
+  /// - **paused/idle 态**: 只更新内部字段, 下次 play/resume 自然用新速率。
   Future<void> setRate(double rate);
 
   /// 跳到指定段(上下段按钮用)。会中断当前段。

@@ -234,8 +234,22 @@ class SystemTtsEngine implements AloudEngine {
   @override
   Future<void> setRate(double rate) async {
     _speed = rate;
-    // 系统 TTS 倍速实时改(对齐原生 setSpeechRate), 无需重下载。
+    // 对齐原生 legado upTtsSpeechRate(ReadAloudDialog.kt:213-219): setSpeechRate
+    // 只对入队后的新 utterance 生效, 队列里已排队的段(本引擎 play/_enqueueAll 一次性
+    // QUEUE_ADD 整章)沿用旧速率 → 必须 stop 清队列 + 重新入队(从当前段段首用新速率重读)。
+    //
+    // 合并 stop + _enqueueAll 成一个原子操作(不像 pause+resume 会中间发 paused 态
+    // notify 导致 UI 抖动): 变速是用户主动改设置, 从当前段段首重读是可接受语义
+    // (原生 paragraphStartPos 在 nextParagraph 里清 0, 也是从段首)。非 playing 态
+    // (paused/idle)只设字段, 下次 play/resume 时自然用新速率。
     await _tts.setSpeechRate(_toSpeechRate(rate));
+    if (_state != AloudState.playing) return;
+    _speaking = false;
+    _queueGen++; // 作废进行中的 _enqueueAll 排队链(对齐 pause/stop 做法)
+    await _tts.stop();
+    if (_disposed) return;
+    _speaking = true;
+    _enqueueAll(); // 从 _currentIndex 重新入队, 首段 FLUSH(新速率) + 后续 ADD
   }
 
   @override
