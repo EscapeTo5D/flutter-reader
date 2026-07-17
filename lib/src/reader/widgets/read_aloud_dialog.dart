@@ -9,14 +9,13 @@ import 'legado_icons.dart';
 /// 显示朗读控制弹窗(对齐原生 legado `ReadAloudDialog`)。
 ///
 /// 原生 `dialog_read_aloud.xml` 的弹窗: 从底部弹出、`dimAmount=0`(背景不暗化)、
-/// 无圆角直角贴屏底、背景 `md_grey_200`(#E0E0E0)。4 个区块:
+/// 无圆角直角贴屏底、背景 `md_grey_200`(#E0E0E0)。3 个区块:
 /// ① 播放控制(上一章/上一段/播放/停止/下一段/下一章)
-/// ② 定时滑块(本轮 UI 占位, 倒计时逻辑留待 audio_service 第二版)
-/// ③ 语速(滑块 max45 + 加减按钮 + 跟随系统开关)
-/// ④ 底部功能栏(目录/主菜单/后台/设置)
+/// ② 语速(滑块 max45 + 加减按钮 + 跟随系统开关)
+/// ③ 底部功能栏(目录/主菜单/设置)
 ///
-/// 第一版不含定时停止、后台朗读(需 Foreground Service)、通知栏(MediaSession),
-/// 故「定时」仅 UI 占位、「后台」置灰禁用。
+/// 不含定时停止、后台朗读(需 Foreground Service)、通知栏(MediaSession)——这些
+/// 依赖 audio_service 的能力暂不实现(`AudioHandler` 抽象已预留扩展点)。
 void showReadAloudDialog(
   BuildContext context, {
   required AloudController controller,
@@ -75,8 +74,6 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
   // 显示倍率 = (progress + 5) / 10, 即 5→1.0, 15→2.0, 45→5.0。
   // AloudController.rate 是 double 倍率, UI 层做 int↔double 换算。
   late int _speechRateProgress;
-  // 定时分钟数(对齐原生 seek_timer: max=180)。本轮 UI 占位, 倒计时逻辑留待后续。
-  int _timerMinutes = 0;
 
   // 主文字色(对齐原生 primaryText)。弹窗背景是 #E0E0E0(浅灰), 文字用深色。
   static const Color _textColor = Color(0xFF333333);
@@ -119,7 +116,6 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _buildPlayControlRow(c),
-          _buildTimerRow(),
           _buildSpeechRateSection(),
           _buildBottomActionBar(c),
         ],
@@ -223,113 +219,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
     );
   }
 
-  // ──────────────────────── 区块 ② 定时行 ────────────────────────
-  //
-  // 对齐原生: [定时图标30×30][SeekBar weight1 max180][分钟文字]
-  // padding 6。本轮 UI 占位: 倒计时逻辑依赖 Foreground Service, 留待第二版。
-  Widget _buildTimerRow() {
-    final disabled = _timerMinutes == 0;
-    return Padding(
-      padding: const EdgeInsets.all(6),
-      child: Row(
-        children: [
-          InkWell(
-            // 定时图标点击: 保存当前 progress(对齐原生 iv_timer → AppConfig.ttsTimer)。
-            // 本轮仅刷新本地状态, 倒计时逻辑未接。
-            onTap: () => _showTimerPicker(),
-            borderRadius: BorderRadius.circular(16),
-            child: SizedBox(
-              width: 32,
-              height: 32,
-              child: Center(child: LegadoIcons.timer(color: _textColor)),
-            ),
-          ),
-          Expanded(
-            child: SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 2,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-                activeTrackColor: Theme.of(context).colorScheme.primary,
-                inactiveTrackColor: _textColor.withValues(alpha: 0.3),
-                thumbColor: Theme.of(context).colorScheme.primary,
-              ),
-              child: Slider(
-                value: _timerMinutes.toDouble(),
-                min: 0,
-                max: 180,
-                // 不设 divisions: 对齐原生 ThemeSeekBar(AppCompatSeekBar)连续 track。
-                onChanged: (v) => setState(() => _timerMinutes = v.round()),
-                // TODO(第二版): 接入倒计时停止逻辑(需 audio_service 后台保活)。
-              ),
-            ),
-          ),
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () => _showTimerPicker(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  // 对齐原生 timer_m: "%d 分钟"。0 = 不定时。
-                  disabled ? '不定时' : '$_timerMinutes 分钟',
-                  style: TextStyle(color: _textColor),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 定时分钟选择器(对齐原生 tv_timer → selector)。
-  /// 预设档位 [0,5,10,15,30,60,90,180] 分钟(对齐原生 ReadAloudDialog.kt:135)。
-  void _showTimerPicker() {
-    const presets = [0, 5, 10, 15, 30, 60, 90, 180];
-    SmartDialog.show(
-      alignment: Alignment.center,
-      maskColor: Colors.black.withValues(alpha: 0.5),
-      builder: (_) => Container(
-        constraints: const BoxConstraints(maxWidth: 320),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(3),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 8, 24, 12),
-              child: Text(
-                '定时停止',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-              ),
-            ),
-            for (final m in presets)
-              InkWell(
-                onTap: () {
-                  SmartDialog.dismiss();
-                  setState(() => _timerMinutes = m);
-                  // TODO(第二版): 启动倒计时 → 到点 controller.stop()。
-                },
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-                  child: Text(
-                    m == 0 ? '不定时' : '$m 分钟',
-                    style: const TextStyle(fontSize: 15),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ──────────────────────── 区块 ③ 语速行 ────────────────────────
+  // ──────────────────────── 区块 ② 语速行 ────────────────────────
   //
   // 对齐原生: 垂直容器含两子行。
   // 子行 A(padding8): [朗读语速14sp][数值14sp][弹性空][跟随系统 Switch+label]
@@ -443,13 +333,12 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
     );
   }
 
-  // ──────────────────────── 区块 ④ 底部功能栏 ────────────────────────
+  // ──────────────────────── 区块 ③ 底部功能栏 ────────────────────────
   //
-  // 对齐原生: marginTop8, 4 按钮×60dp + 3 个 weight2 空隙。
-  // [目录][主菜单][后台][设置], 每个垂直: 图标(maxH20) + 文字(12sp marginTop3 paddingBottom7)。
+  // 对齐原生: marginTop8, 3 按钮×60dp + 4 个 weight2 空隙(两端 + 项间)。
+  // [目录][主菜单][设置], 每个垂直: 图标(maxH20) + 文字(12sp marginTop3 paddingBottom7)。
   //   目录 → 打开目录页(通过 reader)
   //   主菜单 → dismiss 露出下层 ReadMenu
-  //   后台 → 置灰禁用(无 Foreground Service, 关界面 = 朗读停)
   //   设置 → 暂只做引擎切换子弹窗(原生是 ReadAloudConfigDialog 高级配置)
   Widget _buildBottomActionBar(AloudController c) {
     return Container(
@@ -476,12 +365,6 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
               SmartDialog.dismiss();
               c.reader.toggleMenu();
             },
-          ),
-          const Spacer(flex: 2),
-          _buildActionItem(
-            LegadoIcons.visibilityOff(size: 20, color: Colors.black26),
-            '后台',
-            null, // 置灰禁用: 需 Foreground Service 保活, 第二版接 audio_service。
           ),
           const Spacer(flex: 2),
           _buildActionItem(
