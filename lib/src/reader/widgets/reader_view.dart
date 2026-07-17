@@ -639,14 +639,18 @@ class _ReaderViewState extends State<ReaderView>
 
     if (pages.isEmpty) {
       // pages 为空时的占位渲染:
-      // - 章节加载/排版中(controller.chapterLoading)→ 显示与正文背景一致的空白
-      //   占位(不闪现未排版原文)。对齐 legado 排版未完成时不显示正文。
-      // - 已就绪但章节无内容 → 轻提示。
+      // - 尚未加载完成(转场延迟排版期间、首次进入、正在加载/排版中) → 显示与正文
+      //   背景一致的空白占位 + 转圈(不闪现未排版原文)。对齐 legado 排版未完成时
+      //   不显示正文。
+      // - 已加载完确实无内容(currentChapterLoaded && pages 仍空) → 轻提示。
       //
-      // 旧实现这里直接 Text(currentChapter.content) 会闪现整章未排版原文, 是卡顿
-      // 的可见症状之一(详见 AGENTS.md 根因)。改为占位后, 排版期间 UI 干净。
+      // 关键: 这里用 currentChapterLoaded(而非仅 chapterLoading)判断。旧逻辑只看
+      // chapterLoading, 但转场动画期间 `_routeReady` 延迟排版, pages 暂空且
+      // `_loadingChapters` 还空 → chapterLoading=false → 误显示「本章暂无内容」闪一下,
+      // 等动画结束开始排版才切回 loading。currentChapterLoaded 在正文真正取回排版完才置真,
+      // 覆盖了「加载未开始」这一中间态, 消除闪现。
       final bg = controller.settings.backgroundColor;
-      if (controller.chapterLoading) {
+      if (!controller.currentChapterLoaded) {
         return ColoredBox(
           color: bg,
           child: Center(

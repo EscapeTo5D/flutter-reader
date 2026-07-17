@@ -105,6 +105,17 @@ class ReadingController extends ChangeNotifier {
   /// 当前正在后台加载/排版的章节索引集合(用于驱动 [chapterLoading])。
   final Set<int> _loadingChapters = {};
 
+  /// 已成功加载/排版过的章节索引集合(用于驱动 [currentChapterLoaded])。
+  ///
+  /// 与 [_loadingChapters] 的区别: 后者只表达「正在加载」, 加载完即移除; 本集合
+  /// 表达「已加载过」, 一旦某章正文取回并排版完就加入, 不因排版结束而移除——
+  /// 用来区分「尚未开始加载」(转场延迟排版期间、首次进入) 与「加载完确实为空」,
+  /// 前者应显示 loading, 后者才显示「本章暂无内容」。
+  /// 换书([loadBook])或清缓存时整体清空(新书会话重置)。
+  /// 不受 [_invalidateAdjacentCacheIfNeeded] 影响(改字号清缓存时不清本集合),
+  /// 避免改字号重排瞬间误判回「未加载」闪现「本章暂无内容」。
+  final Set<int> _loadedChapters = {};
+
   /// 正在进行中的「加载+排版」Future 去重表(章索引 → 进行中的 Future)。
   ///
   /// 防止同一章被并发排版多次: 当 prefetchAdjacent / _rePaginate / restoreProgress
@@ -119,6 +130,16 @@ class ReadingController extends ChangeNotifier {
   /// 而非闪现原文。对齐 legado 排版未完成时不显示正文。
   bool get chapterLoading =>
       _loadingChapters.contains(_currentChapterIndex) && _pages.isEmpty;
+
+  /// 当前章正文是否已完成过一次加载(取回 + 排版, 无论结果是否为空)。
+  ///
+  /// 用于 UI 占位区分两种「pages 为空」:
+  /// - `!currentChapterLoaded`: 尚未开始加载(转场延迟排版期间、首次进入),
+  ///   应显示 loading, 而非「本章暂无内容」——否则会在 reader 挂载后、排版启动前
+  ///   闪现一下「本章暂无内容」(根因: `_routeReady` 延迟排版使 pages 暂空且
+  ///   `_loadingChapters` 仍空 → 旧逻辑误判为无内容)。
+  /// - `currentChapterLoaded && pages 空`: 加载完确实无内容, 才显示「本章暂无内容」。
+  bool get currentChapterLoaded => _loadedChapters.contains(_currentChapterIndex);
 
   // ─────────────────────────── 持久化 ───────────────────────────
   /// 持久化仓库(null = 纯内存模式, 退化为不落盘, 兼容旧用法)。
@@ -248,6 +269,8 @@ class ReadingController extends ChangeNotifier {
     _currentChapterIndex =
         initialChapterIndex ?? book.currentChapterIndex;
     _currentPageIndex = 0;
+    // 新书会话: 清空上一本的「已加载章」标记, 避免残留导致新书的章被误判为已加载。
+    _loadedChapters.clear();
     _rePaginate();
     notifyListeners();
     if (_repository == null || _userId == null) return;
@@ -1108,7 +1131,11 @@ class ReadingController extends ChangeNotifier {
     final future = _doLoadAndPaginate(chapterIndex);
     _paginateInFlight[chapterIndex] = future;
     try {
-      return await future;
+      final pages = await future;
+      // 标记该章正文已取回并排版完(无论 pages 是否为空)。供 [currentChapterLoaded]
+      // 区分「尚未加载」与「加载完为空」, 避免转场延迟排版期间闪现「本章暂无内容」。
+      if (!_disposed) _loadedChapters.add(chapterIndex);
+      return pages;
     } finally {
       _paginateInFlight.remove(chapterIndex);
     }
