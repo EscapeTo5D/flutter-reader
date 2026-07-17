@@ -64,10 +64,12 @@ class TextColumn extends BaseColumn {
       );
     }
 
-    // 绘制搜索结果高亮背景
+    // 绘制搜索结果高亮背景。
+    // 对齐原生搜索结果高亮: 用 accent 色(默认红 #E53935)半透明背景,
+    // accentColor 缺省时回落黄色(向后兼容)。
     if (isSearchResult) {
       final bgPaint = Paint()
-        ..color = Colors.yellow.withValues(alpha: 0.5)
+        ..color = (accentColor ?? Colors.yellow).withValues(alpha: 0.35)
         ..style = PaintingStyle.fill;
       canvas.drawRect(
         Rect.fromLTRB(start, 0, end, lineBase + style.fontSize! * 0.3),

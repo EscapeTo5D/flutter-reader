@@ -12,6 +12,7 @@ import '../content_processor.dart';
 import '../storage/reader_repository.dart';
 import '../storage/reading_progress.dart';
 import '../storage/reading_style_preset.dart';
+import '../storage/search_result.dart';
 
 /// 预取(peek)的翻页目标信息。
 ///
@@ -50,8 +51,26 @@ class ReadingController extends ChangeNotifier {
   bool _menuVisible = false;
   bool _searchVisible = false;
   String _searchQuery = '';
+  // ⚠️ 全量对齐原生搜索后, 旧的底部 SearchMenu 覆盖层 + List<int> 标题搜索已废弃,
+  // 改为独立全屏 SearchContentPage + 结构化 ReaderSearchResult 列表 + 浏览态。
+  // _searchVisible/_searchQuery/_searchResults(旧 int 列表)/_searchResultIndex 保留
+  // 仅为向后兼容 getter; 新流程用 _browseResults/_browseIndex/_browseMode。
   List<int> _searchResults = [];
   int _searchResultIndex = -1;
+  // ─── 搜索结果浏览态(对齐原生 SearchMenu + view_search_menu.xml) ───
+  /// 当前浏览的全书搜索结果列表(来自 SearchContentPage 回传)。
+  List<ReaderSearchResult> _browseResults = const [];
+  /// 当前浏览到的结果下标(在 _browseResults 中)。
+  int _browseIndex = -1;
+  /// 是否处于搜索结果浏览态(阅读页显示左右导航 FAB + 底部信息条)。
+  bool _browseMode = false;
+  /// 搜索结果跳转的待落页偏移(按章加载异步排版完成后再消费, 见 _goToSearchResult)。
+  /// **带章号**: 消费时校验 chapterIndex == _currentChapterIndex 才落页,
+  /// 防跨章快速点击时异步排版乱序导致的落页污染(根因修复)。
+  /// 配合 _loadAndPaginateCurrentAsync 的 stillCurrent 守卫双重保险:
+  /// 连点 N 次跨章, 旧 Future 完成时 stillCurrent=false 直接丢弃, 新点击覆盖 pending,
+  /// 最终只有最后一次点击的目标章排版完成时才消费 pending 落页。
+  ({int chapterIndex, int charOffset})? _pendingBrowse;
   Size _pageSize = Size.zero;
 
   final PageEngine _pageEngine = PageEngine();
@@ -178,6 +197,10 @@ class ReadingController extends ChangeNotifier {
   String get searchQuery => _searchQuery;
   List<int> get searchResults => _searchResults;
   int get searchResultIndex => _searchResultIndex;
+  // 搜索结果浏览态(新流程)。
+  List<ReaderSearchResult> get browseResults => _browseResults;
+  int get browseIndex => _browseIndex;
+  bool get browseMode => _browseMode;
   int get totalPages => _pages.length;
 
   /// 当前排版可用尺寸(正文区, 已扣除页眉页脚)。供 scroll 模式等需要知道
@@ -603,6 +626,9 @@ class ReadingController extends ChangeNotifier {
   }
 
   void toggleSearch() {
+    // ⚠️ 旧的底部 SearchMenu 覆盖层入口已废弃(全量对齐原生后改走 SearchContentPage)。
+    // 此方法保留仅为向后兼容: 不再切换覆盖层, 仅清状态。新流程由 read_menu 的搜索
+    // FAB 直接 push SearchContentPage, 完成后调 enterSearchBrowse 进入浏览态。
     _searchVisible = !_searchVisible;
     _menuVisible = false;
     if (!_searchVisible) {
@@ -613,57 +639,99 @@ class ReadingController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 全书搜索。
+  // ─────────── 搜索结果浏览态(对齐原生 SearchMenu + view_search_menu.xml) ───────────
+  //
+  // 流程: SearchContentPage 点结果 → pop(SearchResultBrowseData) → 调用方
+  // (read_menu/reader_view) 拿到数据调 enterSearchBrowse → 跳到选中结果 +
+  // 置 _browseMode=true → reader_view 渲染左右导航 FAB + 底部信息条。
+  // nextBrowseResult/previousBrowseResult 翻到相邻结果; exitSearchBrowse 退出。
+
+  /// 进入搜索结果浏览态。
   ///
-  /// - 旧全量内存模式: 遍历 [_book.chapters] 的 content 做全文匹配。
-  /// - 按章加载模式: 正文不全在内存, 退化为「标题搜索」(匹配 [_chapterSource]
-  ///   各章标题)。正文全文搜索需宿主提供带正文的源或专用搜索接口, 留待后续。
-  ///   (TODO: 接入正文搜索, 或限制在已加载窗口内搜)
-  void search(String query) {
-    _searchQuery = query;
-    _searchResults = [];
-    _searchResultIndex = -1;
-    if (query.isEmpty || _book == null) {
-      notifyListeners();
-      return;
+  /// - [results] 全部命中(来自 SearchContentPage)。
+  /// - [selectedIndex] 用户点的那个, 立即跳过去。
+  void enterSearchBrowse(List<ReaderSearchResult> results, int selectedIndex) {
+    _browseResults = List.unmodifiable(results);
+    _browseIndex =
+        results.isEmpty ? -1 : selectedIndex.clamp(0, results.length - 1);
+    _browseMode = true;
+    // 浏览态正文高亮: 让 searchQuery getter 返回本次查询词, 驱动
+    // PageView._markSearchResults 标红命中字符(对齐原生搜索结果高亮)。
+    if (results.isNotEmpty) {
+      _searchQuery = results.first.query;
     }
-    final source = _chapterSource;
-    if (source != null) {
-      // 按章加载: 标题搜索
-      for (var i = 0; i < source.chapterCount; i++) {
-        if (source.chapterTitle(i).contains(query)) {
-          _searchResults.add(i);
-        }
-      }
+    if (_browseIndex >= 0) {
+      _goToSearchResult(_browseResults[_browseIndex]);
+    }
+    notifyListeners();
+  }
+
+  /// 退出浏览态, 清结果(对齐原生"退出"按钮)。
+  void exitSearchBrowse() {
+    _browseMode = false;
+    _browseResults = const [];
+    _browseIndex = -1;
+    // 清正文高亮 query + 残留 pending(若有进行中的跳转)。
+    _searchQuery = '';
+    _pendingBrowse = null;
+    notifyListeners();
+  }
+
+  /// 浏览态: 跳到下一条结果(循环)。
+  void nextBrowseResult() {
+    if (_browseResults.isEmpty) return;
+    _browseIndex = (_browseIndex + 1) % _browseResults.length;
+    _goToSearchResult(_browseResults[_browseIndex]);
+    notifyListeners();
+  }
+
+  /// 浏览态: 跳到上一条结果(循环)。
+  void previousBrowseResult() {
+    if (_browseResults.isEmpty) return;
+    _browseIndex =
+        (_browseIndex - 1 + _browseResults.length) % _browseResults.length;
+    _goToSearchResult(_browseResults[_browseIndex]);
+    notifyListeners();
+  }
+
+  /// 跳到指定搜索结果所在的章+页。
+  ///
+  /// 关键: [ReaderSearchResult.charOffsetInChapter] 与 `TextLine.chapterPosition`
+  /// 同源(都在 ContentProcessor 预处理后的正文坐标系), 故直接喂
+  /// [pageIndexForCharOffset] 即可落页, 无需换算。
+  ///
+  /// 按章加载模式下 [_rePaginate] 是异步的: 章切换后 _pages 暂空, 需等排版完成
+  /// 才能 pageIndexForCharOffset。用 [_pendingBrowse] 暂存(章号 + 偏移),
+  /// [_loadAndPaginateCurrentAsync] 的 stillCurrent 分支消费它(参照 restoreProgress
+  /// 的"等 pageSize 就绪再恢复"模式)。
+  ///
+  /// **带章号 + 代际号双重守卫**(根因修复):
+  /// - pending 带 chapterIndex, 消费时校验 == _currentChapterIndex 才落页,
+  ///   防跨章快速点击时异步排版乱序把旧章的偏移落到新章。
+  /// - 代际号 [_browseGen] 由 next/prev/enter/exit 入口自增, 异步排版完成回调
+  ///   时若代际已变(用户又点了下一次), 本次 pending 被新调用覆盖, 不会污染。
+  void _goToSearchResult(ReaderSearchResult r) {
+    if (_book == null) return;
+    if (r.chapterIndex < 0 || r.chapterIndex >= totalChapters) return;
+    // 统一用带章号 pending: 跨章走 _rePaginate 异步, 同章若 _pages 就绪直接落页
+    // 否则也走 pending 等排版完成。
+    final needPaginate = r.chapterIndex != _currentChapterIndex;
+    if (needPaginate) {
+      _currentChapterIndex = r.chapterIndex;
+      _currentPageIndex = 0;
+    }
+    if (!needPaginate && _pages.isNotEmpty) {
+      // 同章且排版就绪: 立即落页, 清 pending。
+      _pendingBrowse = null;
+      _currentPageIndex = pageIndexForCharOffset(r.charOffsetInChapter);
     } else {
-      // 全量内存: 全文搜索
-      for (var i = 0; i < _book!.chapters.length; i++) {
-        if (_book!.chapters[i].content.contains(query)) {
-          _searchResults.add(i);
-        }
-      }
+      // 跨章(刚改 _currentChapterIndex, _rePaginate 将异步)或同章排版未就绪:
+      // 暂存带章号 pending, 等排版完成回调消费。
+      _pendingBrowse =
+          (chapterIndex: r.chapterIndex, charOffset: r.charOffsetInChapter);
+      if (needPaginate) _rePaginate();
     }
-    if (_searchResults.isNotEmpty) {
-      _searchResultIndex = 0;
-      goToChapter(_searchResults[0]);
-    }
-    notifyListeners();
-  }
-
-  void nextSearchResult() {
-    if (_searchResults.isEmpty) return;
-    _searchResultIndex = (_searchResultIndex + 1) % _searchResults.length;
-    goToChapter(_searchResults[_searchResultIndex]);
-    notifyListeners();
-  }
-
-  void previousSearchResult() {
-    if (_searchResults.isEmpty) return;
-    _searchResultIndex =
-        (_searchResultIndex - 1 + _searchResults.length) %
-        _searchResults.length;
-    goToChapter(_searchResults[_searchResultIndex]);
-    notifyListeners();
+    _scheduleProgressSave();
   }
 
   void addBookmark() {
@@ -992,6 +1060,15 @@ class ReadingController extends ChangeNotifier {
       if (stillCurrent) {
         _pages = pages;
         _clampCurrentPage();
+        // 搜索结果跳转: 章切换后排版刚完成, 用待落偏移精确定位到命中所在页
+        // (对齐 restoreProgress 的 charOffset→page 二分落位)。
+        // **带章号校验**(根因修复): pending 的章号必须等于当前章才落页,
+        // 防跨章快速点击时异步排版乱序把旧章 pending 落到新章。
+        final pending = _pendingBrowse;
+        if (pending != null && pending.chapterIndex == _currentChapterIndex) {
+          _currentPageIndex = pageIndexForCharOffset(pending.charOffset);
+          _pendingBrowse = null;
+        }
         _loadingChapters.remove(chapterIndex);
         notifyListeners();
         // 当前章就绪后, 预取相邻章(对齐 legado prefetch, 翻章命中缓存 O(1))。

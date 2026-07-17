@@ -16,7 +16,7 @@ import 'page_view.dart' as pv;
 import 'tip_layout.dart';
 import 'read_menu.dart';
 import 'read_aloud_dialog.dart';
-import 'search_menu.dart';
+import 'legado_icons.dart';
 import '../../aloud/aloud_controller.dart';
 
 part 'reader_view_scroll.dart';
@@ -466,17 +466,114 @@ class _ReaderViewState extends State<ReaderView>
                   ),
                 ),
               ],
-              if (widget.controller.searchVisible)
+              // 搜索结果浏览态浮层(对齐原生 view_search_menu.xml):
+              // 左右导航 mini FAB + 底部信息条(结果数/主菜单/退出)。
+              // 进入条件: controller.browseMode(由 enterSearchBrowse 置位)。
+              if (widget.controller.browseMode) ...[
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  left: 16,
+                  child: _buildBrowseNavFab(
+                    icon: LegadoIcons.skipPrevious(size: 22, color: Colors.black54),
+                    onTap: () => widget.controller.previousBrowseResult(),
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 16,
+                  child: _buildBrowseNavFab(
+                    icon: LegadoIcons.skipNext(size: 22, color: Colors.black54),
+                    onTap: () => widget.controller.nextBrowseResult(),
+                  ),
+                ),
                 Positioned(
                   bottom: 0,
                   left: 0,
                   right: 0,
-                  child: SearchMenu(controller: widget.controller),
+                  child: _buildBrowseBottomBar(widget.controller),
                 ),
+              ],
             ],
           ),
         );
       },
+      ),
+    );
+  }
+
+  // ─────────── 搜索结果浏览态浮层(对齐原生 view_search_menu.xml) ───────────
+
+  /// 浏览态左右导航 mini FAB: 垂直居中悬浮, 灰底圆形(对齐原生 fabLeft/fabRight)。
+  Widget _buildBrowseNavFab({required Widget icon, required VoidCallback onTap}) {
+    return Center(
+      child: FloatingActionButton.small(
+        heroTag: 'browse_nav_${identityHashCode(icon)}',
+        onPressed: onTap,
+        backgroundColor: const Color(0xFFE0E0E0),
+        elevation: 2,
+        shape: const CircleBorder(),
+        child: icon,
+      ),
+    );
+  }
+
+  /// 浏览态底部信息条: 当前结果/总数 + 主菜单 + 退出(对齐原生 ll_search_results /
+  /// ll_main_menu / ll_search_exit)。
+  Widget _buildBrowseBottomBar(ReadingController c) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return Container(
+      color: Colors.white,
+      padding: EdgeInsets.only(bottom: bottomPadding),
+      child: Row(
+        children: [
+          const Spacer(flex: 2),
+          _buildBrowseActionItem(
+            '${c.browseIndex + 1}/${c.browseResults.length}',
+            () {},
+            isLabel: true,
+          ),
+          const Spacer(flex: 2),
+          _buildBrowseActionItem(
+            '主菜单',
+            () => c.toggleMenu(),
+          ),
+          const Spacer(flex: 2),
+          _buildBrowseActionItem(
+            '退出',
+            () => c.exitSearchBrowse(),
+          ),
+          const Spacer(flex: 2),
+        ],
+      ),
+    );
+  }
+
+  /// 浏览态底部单项(文字按钮, 对齐原生 TextView 风格)。
+  Widget _buildBrowseActionItem(
+    String label,
+    VoidCallback onTap, {
+    bool isLabel = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 60,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isLabel ? Colors.black87 : Colors.black54,
+                fontWeight: isLabel ? FontWeight.w500 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

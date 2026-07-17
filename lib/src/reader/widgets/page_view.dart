@@ -357,7 +357,10 @@ class PageView extends StatelessWidget {
     final isTitle = line.isTitle;
     final style = _lineStyle(isTitle);
 
-    // 搜索高亮: 标记匹配的 Column
+    // 搜索高亮: 标记匹配的 Column。
+    // 每次构建先清后标(isSearchResult 是 mutable 字段, 上次构建/上次浏览态的
+    // 标记会残留——exitSearchBrowse 后 searchQuery 变空, 不清会一直高亮)。
+    _resetSearchMarks(line);
     if (searchQuery != null && searchQuery!.isNotEmpty) {
       _markSearchResults(line, searchQuery!);
     }
@@ -420,6 +423,14 @@ class PageView extends StatelessWidget {
         }
       }
       start = index + query.length;
+    }
+  }
+
+  /// 清除本行所有 Column 的搜索高亮标记(每次构建先清, 避免 exitSearchBrowse
+  /// 后 searchQuery 变空时上次标记残留)。
+  void _resetSearchMarks(TextLine line) {
+    for (final col in line.columns) {
+      if (col is TextColumn) col.isSearchResult = false;
     }
   }
 

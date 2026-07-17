@@ -13,6 +13,7 @@ export 'src/core/storage/cached_chapter_source.dart';
 export 'src/core/storage/reader_user.dart';
 export 'src/core/storage/reading_progress.dart';
 export 'src/core/storage/sqflite_reader_repository.dart';
+export 'src/core/storage/search_result.dart';
 export 'src/reader/entities/text_page.dart';
 export 'src/reader/entities/column.dart';
 export 'src/reader/engine/page_engine.dart';
@@ -22,7 +23,7 @@ export 'src/reader/widgets/read_menu.dart';
 export 'src/reader/widgets/page_view.dart';
 export 'src/reader/widgets/chapter_list_page.dart';
 export 'src/reader/widgets/legado_icons.dart';
-export 'src/reader/widgets/search_menu.dart';
+export 'src/reader/widgets/search_content_page.dart';
 export 'src/reader/widgets/text_selection_toolbar.dart'
     show ReaderTextSelectionToolbar;
 

@@ -4,10 +4,12 @@ import '../../aloud/aloud_controller.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import '../../core/storage/reading_style_preset.dart';
+import '../../core/storage/search_result.dart';
 import 'chapter_list_page.dart';
 import 'detail_seek_bar.dart';
 import 'legado_icons.dart';
 import 'read_aloud_dialog.dart';
+import 'search_content_page.dart';
 
 class ReadMenu extends StatefulWidget {
   final ReadingController controller;
@@ -128,8 +130,11 @@ class _ReadMenuState extends State<ReadMenu> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           _buildFab(LegadoIcons.search(), '搜索', () {
+            // 对齐原生 ReadMenu.kt:543-548 fabSearch.setOnClickListener:
+            // runMenuOut(收菜单) → openSearchActivity(跳独立全屏搜索页)。
+            // 点结果 pop 回带 SearchResultBrowseData → enterSearchBrowse 进入浏览态。
             widget.controller.hideMenu();
-            widget.controller.toggleSearch();
+            _openSearchPage(context);
           }),
           _buildFab(LegadoIcons.autoPage(), '自动', () {}),
           _buildFab(LegadoIcons.findReplace(), '替换', () {}),
@@ -315,6 +320,21 @@ class _ReadMenuState extends State<ReadMenu> {
         builder: (ctx) => ChapterListPage(controller: widget.controller),
       ),
     );
+  }
+
+  /// 打开书内全文搜索页(对齐原生 openSearchActivity → SearchContentActivity)。
+  ///
+  /// 点结果 pop 回带 [SearchResultBrowseData], 调 [ReadingController.enterSearchBrowse]
+  /// 进入搜索结果浏览态(阅读页左右导航 FAB + 底部信息条)。
+  Future<void> _openSearchPage(BuildContext context) async {
+    final data = await Navigator.of(context).push<SearchResultBrowseData>(
+      MaterialPageRoute(
+        builder: (ctx) => SearchContentPage(controller: widget.controller),
+      ),
+    );
+    if (data != null && data.results.isNotEmpty) {
+      widget.controller.enterSearchBrowse(data.results, data.selectedIndex);
+    }
   }
 
   void _showStyleDialog(BuildContext context) {
