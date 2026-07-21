@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/content_processor.dart';
 import '../../core/controller/reading_controller.dart';
+import '../../core/models/reading_settings.dart';
 import '../../core/storage/search_result.dart';
 import 'legado_icons.dart';
 
@@ -273,27 +274,28 @@ class _SearchContentPageState extends State<SearchContentPage> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _SearchPagePalette.of(widget.controller.settings);
     // 转场动画期间只渲染轻量 Scaffold, 避免首帧 layout 卡死转场。
     if (!_bodyMounted) {
       return Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: palette.surface,
         appBar: AppBar(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
+          backgroundColor: palette.surface,
+          foregroundColor: palette.onSurface,
           elevation: 0,
           leading: IconButton(
-            icon: LegadoIcons.arrowBack(color: Colors.black87),
+            icon: LegadoIcons.arrowBack(color: palette.onSurface),
             onPressed: () => Navigator.of(context).maybePop(),
           ),
-          title: const Text('搜索'),
+          title: Text('搜索', style: TextStyle(color: palette.onSurface)),
         ),
         body: const SizedBox.shrink(),
       );
     }
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: _buildSearchAppBar(),
-      body: _buildBody(),
+      backgroundColor: palette.surface,
+      appBar: _buildSearchAppBar(palette),
+      body: _buildBody(palette),
       // 右下角"停止搜索"mini FAB(对齐原生 fb_stop, 搜索中显示)。
       floatingActionButton: _searching
           ? FloatingActionButton.small(
@@ -306,10 +308,10 @@ class _SearchContentPageState extends State<SearchContentPage> {
                   _searchDone = true;
                 });
               },
-              backgroundColor: const Color(0xFFE0E0E0),
-              foregroundColor: Colors.black54,
+              backgroundColor: palette.fabBackground,
+              foregroundColor: palette.onSurfaceMedium,
               elevation: 2,
-              child: LegadoIcons.stop(size: 20, color: Colors.black54),
+              child: LegadoIcons.stop(size: 20, color: palette.onSurfaceMedium),
             )
           : null,
     );
@@ -320,13 +322,13 @@ class _SearchContentPageState extends State<SearchContentPage> {
   /// 原生 SearchView: 30dp 高、`bg_searchview`(35dp 胶囊圆角 + #10000000 6% 灰背景
   /// + 0.5dp 同色描边)、14sp 字号、hint="搜索"、submit 按钮(magnifier)在右侧。
   /// `contentInsetRight=24dp` 是 Toolbar 的右侧内缩, 这里用 title 的 right padding 等价。
-  PreferredSizeWidget _buildSearchAppBar() {
+  PreferredSizeWidget _buildSearchAppBar(_SearchPagePalette palette) {
     return AppBar(
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.black87,
+      backgroundColor: palette.surface,
+      foregroundColor: palette.onSurface,
       elevation: 0,
       leading: IconButton(
-        icon: LegadoIcons.arrowBack(color: Colors.black87),
+        icon: LegadoIcons.arrowBack(color: palette.onSurface),
         onPressed: () => Navigator.of(context).maybePop(),
       ),
       titleSpacing: 0,
@@ -337,15 +339,15 @@ class _SearchContentPageState extends State<SearchContentPage> {
           controller: _editController,
           focusNode: _focus,
           // 对齐原生 SearchView textView.setTextSize(14f)。
-          style: const TextStyle(color: Colors.black87, fontSize: 14),
+          style: TextStyle(color: palette.onSurface, fontSize: 14),
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
             // 对齐原生 SearchView defaultQueryHint = "搜索"。
             hintText: '搜索',
-            hintStyle: const TextStyle(color: Colors.black38, fontSize: 14),
+            hintStyle: TextStyle(color: palette.onSurfaceDisabled, fontSize: 14),
             filled: true,
-            // 对齐原生 bg_searchview.xml 的 @color/transparent10 = #10000000(6% 黑)。
-            fillColor: const Color(0x10000000),
+            // 搜索框背景: 白天用 6% 黑(#10000000), 夜晚态反相 6% 白。
+            fillColor: palette.searchFieldFill,
             isDense: true,
             // 对齐原生 SearchView 30dp 高: 14sp 文字垂直居中 + 紧凑 padding。
             contentPadding:
@@ -365,7 +367,7 @@ class _SearchContentPageState extends State<SearchContentPage> {
             ),
             // 对齐原生 SearchView isSubmitButtonEnabled = true: 右侧 submit 按钮。
             suffixIcon: IconButton(
-              icon: LegadoIcons.search(size: 20, color: Colors.black54),
+              icon: LegadoIcons.search(size: 20, color: palette.onSurfaceMedium),
               onPressed: () => _startSearch(_editController.text),
             ),
           ),
@@ -375,7 +377,7 @@ class _SearchContentPageState extends State<SearchContentPage> {
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(_SearchPagePalette palette) {
     return Column(
       children: [
         // 进度条(搜索中显示, 对齐原生 RefreshProgressBar)。
@@ -385,11 +387,11 @@ class _SearchContentPageState extends State<SearchContentPage> {
                 ? (_searchedChapters / _totalChapters).clamp(0.0, 1.0)
                 : null,
             minHeight: 2,
-            backgroundColor: Colors.grey.shade200,
+            backgroundColor: palette.progressTrack,
           ),
-        Expanded(child: _buildResultList()),
+        Expanded(child: _buildResultList(palette)),
         // 底部信息栏(对齐原生 ll_search_base_info: 36dp + 结果数 + 回顶/回底箭头)。
-        _buildBottomInfoBar(),
+        _buildBottomInfoBar(palette),
       ],
     );
   }
@@ -398,10 +400,10 @@ class _SearchContentPageState extends State<SearchContentPage> {
   ///
   /// 原生: 高 36dp, 左侧 `tv_current_search_info`(结果数, 12sp), 右侧两个箭头
   /// ImageView(回顶 `ic_arrow_drop_up` / 回底 `ic_arrow_drop_down`)。
-  Widget _buildBottomInfoBar() {
+  Widget _buildBottomInfoBar(_SearchPagePalette palette) {
     return Container(
       height: 36,
-      color: Colors.white,
+      color: palette.surface,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       child: Row(
         children: [
@@ -415,19 +417,19 @@ class _SearchContentPageState extends State<SearchContentPage> {
                       : '搜索结果: ${_results.length}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.black87, fontSize: 12),
+              style: TextStyle(color: palette.onSurface, fontSize: 12),
             ),
           ),
           // 回顶箭头(对齐原生 iv_search_content_top)。
           if (_results.isNotEmpty)
             _buildArrowButton(
-              LegadoIcons.arrowDropUp(size: 24, color: Colors.black87),
+              LegadoIcons.arrowDropUp(size: 24, color: palette.onSurface),
               () => _scrollController.jumpTo(0),
             ),
           // 回底箭头(对齐原生 iv_search_content_bottom)。
           if (_results.isNotEmpty)
             _buildArrowButton(
-              LegadoIcons.arrowDropDown(size: 24, color: Colors.black87),
+              LegadoIcons.arrowDropDown(size: 24, color: palette.onSurface),
               () => _scrollController
                   .jumpTo(_scrollController.position.maxScrollExtent),
             ),
@@ -448,16 +450,16 @@ class _SearchContentPageState extends State<SearchContentPage> {
     );
   }
 
-  Widget _buildResultList() {
+  Widget _buildResultList(_SearchPagePalette palette) {
     if (_results.isEmpty) {
       // 空态。
       if (_searching) {
-        return const Center(
+        return Center(
           child: Padding(
-            padding: EdgeInsets.all(24),
+            padding: const EdgeInsets.all(24),
             child: Text(
               '搜索中...',
-              style: TextStyle(color: Colors.black38),
+              style: TextStyle(color: palette.onSurfaceDisabled),
             ),
           ),
         );
@@ -469,22 +471,23 @@ class _SearchContentPageState extends State<SearchContentPage> {
             child: Text(
               '未找到 "$_query"\n(仅搜索已缓存章节)',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.black38),
+              style: TextStyle(color: palette.onSurfaceDisabled),
             ),
           ),
         );
       }
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
           child: Text(
             '输入关键词搜索全书内容',
-            style: TextStyle(color: Colors.black38),
+            style: TextStyle(color: palette.onSurfaceDisabled),
           ),
         ),
       );
     }
-    final accentColor = widget.controller.settings.textAccentColor;
+    // accent 色用 effective*: 夜晚态切到 night accent(#FE4D55), 白天用 day accent。
+    final accentColor = widget.controller.settings.effectiveTextAccentColor;
     final currentChapter = widget.controller.currentChapterIndex;
     // 对齐原生 item: padding 12dp, 高度 wrap_content(无 itemExtent)。
     // 当前章加粗规则: 对齐原生 isFakeBoldText —— 整个 item(章节名 + 片段)加粗,
@@ -517,7 +520,7 @@ class _SearchContentPageState extends State<SearchContentPage> {
                 ),
                 const SizedBox(height: 4),
                 // 第二行: 上下文片段(关键词高亮 accent 色, 其余深灰)。
-                _buildSnippet(r, accentColor, baseWeight),
+                _buildSnippet(r, accentColor, baseWeight, palette),
               ],
             ),
           ),
@@ -528,7 +531,12 @@ class _SearchContentPageState extends State<SearchContentPage> {
 
   /// 上下文片段渲染: 关键词用 accent 色, 其余用 textColor(对齐原生 getHtmlCompat)。
   /// [baseWeight] 透传当前章加粗规则(对齐原生 isFakeBoldText 整 item 加粗)。
-  Widget _buildSnippet(ReaderSearchResult r, Color accentColor, FontWeight baseWeight) {
+  Widget _buildSnippet(
+    ReaderSearchResult r,
+    Color accentColor,
+    FontWeight baseWeight,
+    _SearchPagePalette palette,
+  ) {
     final text = r.snippet;
     final qStart = r.queryIndexInSnippet;
     final qEnd = qStart + r.query.length;
@@ -541,14 +549,22 @@ class _SearchContentPageState extends State<SearchContentPage> {
         text,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 13, color: const Color(0xFF666666), fontWeight: baseWeight),
+        style: TextStyle(
+          fontSize: 13,
+          color: palette.snippetText,
+          fontWeight: baseWeight,
+        ),
       );
     }
     return RichText(
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
       text: TextSpan(
-        style: TextStyle(fontSize: 13, color: const Color(0xFF666666), fontWeight: baseWeight),
+        style: TextStyle(
+          fontSize: 13,
+          color: palette.snippetText,
+          fontWeight: baseWeight,
+        ),
         children: [
           TextSpan(text: text.substring(0, qStart)),
           TextSpan(
@@ -561,4 +577,56 @@ class _SearchContentPageState extends State<SearchContentPage> {
       ),
     );
   }
+}
+
+/// 搜索结果页色板(对齐 legado 夜间 Activity 主题)。
+///
+/// 独立路由(Scaffold 自带背景), 与阅读正文的 settings.bg/text 色组解耦:
+/// 白天走 Material 浅色(白底深灰字); 夜晚态走深色。
+/// 仅 [ReadingSettings.isNightTheme] 驱动切换, 在 build 入口一次性算出。
+class _SearchPagePalette {
+  final Color surface;          // Scaffold/AppBar/底部栏背景
+  final Color fabBackground;    // 停止搜索 FAB 背景
+  final Color onSurface;        // 主文字(返回箭头/标题/搜索框文字/底部信息)
+  final Color onSurfaceMedium;  // 次文字(搜索按钮图标/FAB 图标)
+  final Color onSurfaceDisabled;// 弱文字(hint/空态)
+  final Color snippetText;      // 结果片段上下文文字(深灰, 比主文字略弱)
+  final Color searchFieldFill;  // 搜索框填充(白天 6% 黑, 夜晚 6% 白)
+  final Color progressTrack;    // 进度条底色
+
+  const _SearchPagePalette._({
+    required this.surface,
+    required this.fabBackground,
+    required this.onSurface,
+    required this.onSurfaceMedium,
+    required this.onSurfaceDisabled,
+    required this.snippetText,
+    required this.searchFieldFill,
+    required this.progressTrack,
+  });
+
+  static const _SearchPagePalette _light = _SearchPagePalette._(
+    surface: Colors.white,
+    fabBackground: Color(0xFFE0E0E0),
+    onSurface: Colors.black87,
+    onSurfaceMedium: Colors.black54,
+    onSurfaceDisabled: Colors.black38,
+    snippetText: Color(0xFF666666),
+    searchFieldFill: Color(0x10000000), // bg_searchview.xml transparent10
+    progressTrack: Color(0xFFE0E0E0),
+  );
+
+  static const _SearchPagePalette _dark = _SearchPagePalette._(
+    surface: Color(0xFF1F1F1F),
+    fabBackground: Color(0xFF3A3A3A),
+    onSurface: Color(0xFFE0E0E0),
+    onSurfaceMedium: Color(0xFFAAAAAA),
+    onSurfaceDisabled: Color(0xFF666666),
+    snippetText: Color(0xFF999999),
+    searchFieldFill: Color(0x10FFFFFF), // 反相: 夜晚态用 6% 白
+    progressTrack: Color(0xFF3A3A3A),
+  );
+
+  static _SearchPagePalette of(ReadingSettings settings) =>
+      settings.isNightTheme ? _dark : _light;
 }

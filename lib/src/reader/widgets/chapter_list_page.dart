@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/controller/reading_controller.dart';
+import '../../core/models/reading_settings.dart';
 import 'legado_icons.dart';
 
 class ChapterListPage extends StatefulWidget {
@@ -102,18 +103,26 @@ class _ChapterListPageState extends State<ChapterListPage>
   Widget build(BuildContext context) {
     // 首次进入时主体未挂载: 只渲染轻量 Scaffold, 让转场动画不被首帧 layout 卡死;
     // 转场动画结束后 _onRouteAnimation 触发 setState(_bodyMounted=true) 挂载完整主体。
+    //
+    // 夜晚主题: 独立路由, 进入时一次性读 controller.settings.isNightTheme 算色板。
+    // 阅读中切夜晚后重新进入本页会重建(对齐原生 Activity 自带主题)。
+    final palette = _ChapterListPalette.of(widget.controller.settings);
     return Scaffold(
+      backgroundColor: palette.surface,
       appBar: AppBar(
+        backgroundColor: palette.surface,
+        foregroundColor: palette.onSurface,
+        elevation: 0,
         leading: IconButton(
-          icon: LegadoIcons.arrowBack(size: 24, color: Colors.black87),
+          icon: LegadoIcons.arrowBack(size: 24, color: palette.onSurface),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: _bodyMounted ? _buildTitle() : const SizedBox.shrink(),
+        title: _bodyMounted ? _buildTitle(palette) : const SizedBox.shrink(),
         actions: _bodyMounted
             ? [
                 if (!_searchMode)
                   IconButton(
-                    icon: LegadoIcons.search(size: 24, color: Colors.black87),
+                    icon: LegadoIcons.search(size: 24, color: palette.onSurface),
                     tooltip: '搜索',
                     onPressed: () {
                       // 仅在目录 tab 启用搜索, 不在目录则先切过去。
@@ -130,8 +139,15 @@ class _ChapterListPageState extends State<ChapterListPage>
           ? TabBarView(
               controller: _tabController,
               children: [
-                _ChapterListView(controller: widget.controller, query: _chapterQuery),
-                _BookmarkListView(controller: widget.controller),
+                _ChapterListView(
+                  controller: widget.controller,
+                  query: _chapterQuery,
+                  palette: palette,
+                ),
+                _BookmarkListView(
+                  controller: widget.controller,
+                  palette: palette,
+                ),
               ],
             )
           : const SizedBox.shrink(),
@@ -146,7 +162,7 @@ class _ChapterListPageState extends State<ChapterListPage>
   // Visibility(maintainState/Size/Animation: true) 保留 RenderObject 与已算好
   // 的 layout, 故 EditableText 的首次 layout 在主体挂载时(转场后, 用户已见页面)
   // 完成, 点搜索时无 ~120ms 首次 layout 开销。
-  Widget _buildTitle() {
+  Widget _buildTitle(_ChapterListPalette palette) {
     final accent = Theme.of(context).colorScheme.primary;
     return Stack(
       children: [
@@ -158,8 +174,8 @@ class _ChapterListPageState extends State<ChapterListPage>
           child: TabBar(
             controller: _tabController,
             // 对齐原生 TabLayout: 居中, indicator 仅随 label 宽度(非整宽), 强调色下划线。
-            labelColor: Colors.black87,
-            unselectedLabelColor: Colors.black54,
+            labelColor: palette.onSurface,
+            unselectedLabelColor: palette.onSurfaceMedium,
             indicatorColor: accent,
             indicatorSize: TabBarIndicatorSize.label,
             tabAlignment: TabAlignment.center,
@@ -178,16 +194,16 @@ class _ChapterListPageState extends State<ChapterListPage>
           child: TextField(
             controller: _searchEdit,
             focusNode: _searchFocus,
-            style: const TextStyle(fontSize: 16, color: Colors.black87),
+            style: TextStyle(fontSize: 16, color: palette.onSurface),
             decoration: InputDecoration(
               isDense: true,
               border: InputBorder.none,
               hintText: '搜索章节标题',
-              hintStyle: const TextStyle(color: Colors.black38, fontSize: 16),
+              hintStyle: TextStyle(color: palette.onSurfaceDisabled, fontSize: 16),
               suffixIcon: _chapterQuery.isEmpty
                   ? null
                   : IconButton(
-                      icon: LegadoIcons.close(size: 20, color: Colors.black54),
+                      icon: LegadoIcons.close(size: 20, color: palette.onSurfaceMedium),
                       onPressed: _exitSearch,
                     ),
             ),
@@ -204,7 +220,12 @@ class _ChapterListView extends StatefulWidget {
   /// 标题搜索关键词(非空时仅显示标题含该子串的章, 对齐原生 BookChapterDao.search
   /// 的 `title LIKE '%key%'`)。null/空 = 全部章。
   final String query;
-  const _ChapterListView({required this.controller, this.query = ''});
+  final _ChapterListPalette palette;
+  const _ChapterListView({
+    required this.controller,
+    this.query = '',
+    required this.palette,
+  });
 
   @override
   State<_ChapterListView> createState() => _ChapterListViewState();
@@ -290,6 +311,7 @@ class _ChapterListViewState extends State<_ChapterListView> {
   Widget build(BuildContext context) {
     final book = widget.controller.book;
     if (book == null) return const SizedBox();
+    final palette = widget.palette;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     // 标题/总数统一走 controller(按章加载模式下取自 chapterSource, 否则 book.chapters),
     // 避免 book.chapters 在按章加载模式下为空导致目录页空白。
@@ -306,7 +328,7 @@ class _ChapterListViewState extends State<_ChapterListView> {
                     padding: const EdgeInsets.only(bottom: 32),
                     child: Text(
                       q.isEmpty ? '暂无章节' : '未搜到章节',
-                      style: const TextStyle(color: Colors.black54, fontSize: 14),
+                      style: TextStyle(color: palette.onSurfaceMedium, fontSize: 14),
                     ),
                   ),
                 )
@@ -329,10 +351,10 @@ class _ChapterListViewState extends State<_ChapterListView> {
                         decoration: BoxDecoration(
                           border: i == _filteredIndices.length - 1
                               ? null
-                              : const Border(
+                              : Border(
                                   bottom: BorderSide(
                                     width: 1,
-                                    color: Color(0x8FE0E0E0), // bg_divider_line
+                                    color: palette.divider,
                                   ),
                                 ),
                         ),
@@ -349,14 +371,14 @@ class _ChapterListViewState extends State<_ChapterListView> {
                                     fontSize: 14,
                                     color: isCurrent
                                         ? Theme.of(context).colorScheme.primary
-                                        : const Color(0xDE000000), // primaryText
+                                        : palette.onSurface,
                                   ),
                                 ),
                               ),
                               if (isCurrent)
                                 LegadoIcons.check(
                                   size: 18,
-                                  color: const Color(0x8A000000), // secondaryText
+                                  color: palette.onSurfaceMedium,
                                 ),
                             ],
                           ),
@@ -368,6 +390,7 @@ class _ChapterListViewState extends State<_ChapterListView> {
         ),
         _buildBottomInfoBar(
           context,
+          palette: palette,
           currentTitle: currentTitle,
           currentIndex: _currentIndex,
           total: total,
@@ -383,7 +406,11 @@ class _ChapterListViewState extends State<_ChapterListView> {
 
 class _BookmarkListView extends StatefulWidget {
   final ReadingController controller;
-  const _BookmarkListView({required this.controller});
+  final _ChapterListPalette palette;
+  const _BookmarkListView({
+    required this.controller,
+    required this.palette,
+  });
 
   @override
   State<_BookmarkListView> createState() => _BookmarkListViewState();
@@ -408,12 +435,16 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
   Widget build(BuildContext context) {
     final book = widget.controller.book;
     if (book == null) return const SizedBox();
+    final palette = widget.palette;
     final bookmarks = widget.controller.bookmarks;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     if (bookmarks.isEmpty) {
-      return const Center(
-        child: Text('暂无书签', style: TextStyle(color: Colors.black54, fontSize: 14)),
+      return Center(
+        child: Text(
+          '暂无书签',
+          style: TextStyle(color: palette.onSurfaceMedium, fontSize: 14),
+        ),
       );
     }
 
@@ -426,7 +457,7 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
             separatorBuilder: (context, index) => Container(
               margin: const EdgeInsets.symmetric(horizontal: 12),
               height: 1,
-              color: const Color(0x8FE0E0E0), // bg_divider_line
+              color: palette.divider,
             ),
             itemBuilder: (ctx, i) {
               final bm = bookmarks[i];
@@ -448,7 +479,7 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
                         chapterName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14, color: Color(0xDE000000)),
+                        style: TextStyle(fontSize: 14, color: palette.onSurface),
                       ),
                       if (bm.content.isNotEmpty) ...[
                         const SizedBox(height: 4),
@@ -456,7 +487,10 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
                           bm.content,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, color: Color(0x8A000000)),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: palette.onSurfaceMedium,
+                          ),
                         ),
                       ],
                     ],
@@ -474,6 +508,7 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
 
 Widget _buildBottomInfoBar(
   BuildContext context, {
+  required _ChapterListPalette palette,
   required String currentTitle,
   required int currentIndex,
   required int total,
@@ -486,10 +521,10 @@ Widget _buildBottomInfoBar(
   // bg=bottomBackground(md_grey_50 #FAFAFA) elevation=5dp 水平 padding=10dp,
   // tv_current_chapter_info 高 36dp textSize=12sp ellipsize=middle,
   // iv_chapter_top/bottom 36×36 ic_arrow_drop_up/down tint=primaryText.
-  const primaryText = Color(0xDE000000);
+  // 夜晚态背景与 surface 同色(对齐原生夜间 bottomBackground 跟随主题)。
   return Container(
     decoration: BoxDecoration(
-      color: const Color(0xFFFAFAFA), // md_grey_50 / bottomBackground
+      color: palette.bottomBar,
       boxShadow: [
         BoxShadow(
           color: Colors.black.withValues(alpha: 0.08),
@@ -514,7 +549,7 @@ Widget _buildBottomInfoBar(
                   maxLines: 1,
                   // ellipsize=middle 对齐: 保留首尾显示中间省略。
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: primaryText),
+                  style: TextStyle(fontSize: 12, color: palette.onSurface),
                 ),
               ),
             ),
@@ -527,7 +562,7 @@ Widget _buildBottomInfoBar(
               borderRadius: BorderRadius.circular(18),
               child: Padding(
                 padding: const EdgeInsets.all(6),
-                child: LegadoIcons.arrowDropUp(size: 24, color: primaryText),
+                child: LegadoIcons.arrowDropUp(size: 24, color: palette.onSurface),
               ),
             ),
           ),
@@ -539,7 +574,7 @@ Widget _buildBottomInfoBar(
               borderRadius: BorderRadius.circular(18),
               child: Padding(
                 padding: const EdgeInsets.all(6),
-                child: LegadoIcons.arrowDropDown(size: 24, color: primaryText),
+                child: LegadoIcons.arrowDropDown(size: 24, color: palette.onSurface),
               ),
             ),
           ),
@@ -547,4 +582,48 @@ Widget _buildBottomInfoBar(
       ),
     ),
   );
+}
+
+/// 目录页色板(对齐 legado 夜间 Activity 主题)。
+///
+/// 目录页是独立路由(Scaffold 自带背景), 与阅读正文的 settings.bg/text 色组解耦:
+/// 白天走 Material 浅色(白底黑字); 夜晚态走深色(对齐原生夜间 Activity 主题)。
+/// 仅 [ReadingSettings.isNightTheme] 驱动切换, 在 build 入口一次性算出。
+class _ChapterListPalette {
+  final Color surface;          // Scaffold/AppBar 背景
+  final Color bottomBar;        // 底部信息栏背景(白天用 #FAFAFA, 夜晚同 surface)
+  final Color onSurface;        // 主文字(标题/章节名/箭头)
+  final Color onSurfaceMedium;  // 次文字(书签内容/搜索框清除图标)
+  final Color onSurfaceDisabled;// 弱文字(hint)
+  final Color divider;          // 行分隔线
+
+  const _ChapterListPalette._({
+    required this.surface,
+    required this.bottomBar,
+    required this.onSurface,
+    required this.onSurfaceMedium,
+    required this.onSurfaceDisabled,
+    required this.divider,
+  });
+
+  static const _ChapterListPalette _light = _ChapterListPalette._(
+    surface: Colors.white,
+    bottomBar: Color(0xFFFAFAFA),
+    onSurface: Color(0xDE000000),
+    onSurfaceMedium: Color(0x8A000000),
+    onSurfaceDisabled: Colors.black38,
+    divider: Color(0x8FE0E0E0),
+  );
+
+  static const _ChapterListPalette _dark = _ChapterListPalette._(
+    surface: Color(0xFF1F1F1F),
+    bottomBar: Color(0xFF2A2A2A),
+    onSurface: Color(0xFFE0E0E0),
+    onSurfaceMedium: Color(0xFFAAAAAA),
+    onSurfaceDisabled: Color(0xFF666666),
+    divider: Color(0xFF555555),
+  );
+
+  static _ChapterListPalette of(ReadingSettings settings) =>
+      settings.isNightTheme ? _dark : _light;
 }

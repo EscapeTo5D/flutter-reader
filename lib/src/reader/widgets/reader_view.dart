@@ -664,7 +664,8 @@ class _ReaderViewState extends State<ReaderView>
       // `_loadingChapters` 还空 → chapterLoading=false → 误显示「本章暂无内容」闪一下,
       // 等动画结束开始排版才切回 loading。currentChapterLoaded 在正文真正取回排版完才置真,
       // 覆盖了「加载未开始」这一中间态, 消除闪现。
-      final bg = controller.settings.backgroundColor;
+      // 切夜晚态时背景也要切到 night 色组(effective*), 否则 loading 占位仍是白天绿。
+      final bg = controller.settings.effectiveBackgroundColor;
       if (!controller.currentChapterLoaded) {
         return ColoredBox(
           color: bg,
@@ -675,7 +676,7 @@ class _ReaderViewState extends State<ReaderView>
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation(
-                  controller.settings.textColor.withValues(alpha: 0.4),
+                  controller.settings.effectiveTextColor.withValues(alpha: 0.4),
                 ),
               ),
             ),
@@ -689,7 +690,7 @@ class _ReaderViewState extends State<ReaderView>
             '本章暂无内容',
             style: TextStyle(
               fontSize: controller.settings.fontSize,
-              color: controller.settings.textColor.withValues(alpha: 0.5),
+              color: controller.settings.effectiveTextColor.withValues(alpha: 0.5),
             ),
           ),
         ),
@@ -833,7 +834,10 @@ class _ReaderViewState extends State<ReaderView>
                 isNext: isNext,
                 touch: _simTouch,
                 corner: _simCorner ?? const SimCorner(cornerX: 0, cornerY: 0, isRtOrLb: false),
-                bgColor: controller.settings.backgroundColor,
+                // bgColor 用于铺翻起页背面底色(对齐原生 canvas.drawColor(bgMeanColor))。
+                // 夜晚态必须用 effective* 切到 night 色, 否则背面仍是白天绿 #C0EDC6,
+                // 导致拖拽翻起页时露出绿色。
+                bgColor: controller.settings.effectiveBackgroundColor,
                 viewSize: Size(width, height),
                 devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
               ),

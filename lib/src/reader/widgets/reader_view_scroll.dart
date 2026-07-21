@@ -59,7 +59,7 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
     // 返回纯背景占位, 不参与手势/渲染内容。
     final h = _scrollHandler;
     if (h == null) {
-      return ColoredBox(color: settings.backgroundColor, child: SizedBox());
+      return ColoredBox(color: settings.effectiveBackgroundColor, child: SizedBox());
     }
 
     // ⚠️ loading 收敛(修复"切模式闪 loading"): 仅当 curPages 真为空(章节首次加载)
@@ -67,7 +67,7 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
     // 不闪转圈。对齐原生切模式「直接切、无 loading」。
     if (h.curPages.isEmpty) {
       return ColoredBox(
-        color: settings.backgroundColor,
+        color: settings.effectiveBackgroundColor,
         child: Center(
           child: SizedBox(
             width: 24,
@@ -75,7 +75,7 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
             child: CircularProgressIndicator(
               strokeWidth: 2,
               valueColor: AlwaysStoppedAnimation(
-                settings.textColor.withValues(alpha: 0.4),
+                settings.effectiveTextColor.withValues(alpha: 0.4),
               ),
             ),
           ),
@@ -98,7 +98,7 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
         final ch = hh.contentHeight;
         // contentHeight==0(切模式瞬间) → 纯背景色, 同帧 PostFrame updatePageHeight 后立即正常。
         if (curPage == null || ch <= 0) {
-          return ColoredBox(color: settings.backgroundColor, child: SizedBox());
+          return ColoredBox(color: settings.effectiveBackgroundColor, child: SizedBox());
         }
 
         // 渲染模型 cur / next / nextPlus(对齐原生 ContentTextView.drawPage,
@@ -248,7 +248,7 @@ mixin _ScrollMixin on State<ReaderView>, TickerProvider {
                   fit: BoxFit.cover,
                 ),
               )
-            : BoxDecoration(color: settings.backgroundColor);
+            : BoxDecoration(color: settings.effectiveBackgroundColor);
         return DecoratedBox(
           decoration: bgDecoration,
           child: SafeArea(

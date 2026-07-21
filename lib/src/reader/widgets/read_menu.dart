@@ -404,9 +404,7 @@ class _ReadMenuState extends State<ReadMenu> {
     final book = widget.controller.book;
     if (book == null) return;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (ctx) => ChapterListPage(controller: widget.controller),
-      ),
+      _slideFromRightRoute(ChapterListPage(controller: widget.controller)),
     );
   }
 
@@ -416,9 +414,7 @@ class _ReadMenuState extends State<ReadMenu> {
   /// 进入搜索结果浏览态(阅读页左右导航 FAB + 底部信息条)。
   Future<void> _openSearchPage(BuildContext context) async {
     final data = await Navigator.of(context).push<SearchResultBrowseData>(
-      MaterialPageRoute(
-        builder: (ctx) => SearchContentPage(controller: widget.controller),
-      ),
+      _slideFromRightRoute(SearchContentPage(controller: widget.controller)),
     );
     if (data != null && data.results.isNotEmpty) {
       widget.controller.enterSearchBrowse(data.results, data.selectedIndex);
@@ -2207,4 +2203,37 @@ class _ColorSwatchPicker extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 从右侧滑入的页面路由(对齐 legado 原生 Activity 转场)。
+///
+/// 原生 legado 启动 [TocActivity] / [SearchContentActivity] 走标准
+/// `ActivityResultContract` → Android 系统 Activity 转场(windowAnimationStyle
+/// 默认右进左出)。Flutter 默认 `MaterialPageRoute` 在 Android 上是
+/// `FadeUpwardsPageTransitionsBuilder`(下→上推入 + 淡入), 与原生不符。本 helper
+/// 用 [PageRouteBuilder] + SlideTransition 复刻原生右进左出。
+///
+/// ⚠️ 只让目标页(child)从右滑入, 不对旧页面做视差平移。原生系统的视差是两个独立
+/// Activity 窗口各自的 windowAnimation, 而 Flutter 单 Navigator 栈里若把 secondary
+/// animation 套在 child 外层做平移, 旧页面会被推出屏外留下空白块(child 跟着被
+/// 平移)。只用主 animation 让新页面滑入, 视觉等价原生、无残留空白。
+///
+/// 配合 chapter_list_page / search_content_page 内的 `_bodyMounted` 延迟挂载:
+/// 转场动画期间(route.animation !completed)主体不挂载, 动画结束才挂载完整 UI,
+/// 避免首帧 layout 卡死转场。
+PageRouteBuilder<T> _slideFromRightRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      // 目标页从右(Offset(1,0))滑入到原位(Offset.zero)。
+      final tween = Tween(
+        begin: const Offset(1.0, 0.0),
+        end: Offset.zero,
+      ).chain(CurveTween(curve: Curves.easeInOut));
+      return SlideTransition(position: animation.drive(tween), child: child);
+    },
+    // 与 MaterialPageRoute 同 300ms, 对齐原生 Activity 转场时长。
+    transitionDuration: const Duration(milliseconds: 300),
+    reverseTransitionDuration: const Duration(milliseconds: 300),
+  );
 }
