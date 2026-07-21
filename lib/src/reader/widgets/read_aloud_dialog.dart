@@ -5,6 +5,7 @@ import '../../aloud/aloud_controller.dart';
 import '../../aloud/http_tts_config.dart';
 import 'chapter_list_page.dart';
 import 'legado_icons.dart';
+import 'read_menu.dart' show MenuPalette;
 
 /// 显示朗读控制弹窗(对齐原生 legado `ReadAloudDialog`)。
 ///
@@ -75,8 +76,10 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
   // AloudController.rate 是 double 倍率, UI 层做 int↔double 换算。
   late int _speechRateProgress;
 
-  // 主文字色(对齐原生 primaryText)。弹窗背景是 #E0E0E0(浅灰), 文字用深色。
-  static const Color _textColor = Color(0xFF333333);
+  // 控制面板配色: 朗读弹窗随 isNightTheme 切深/浅色(对齐原生主题系统)。
+  MenuPalette get _palette =>
+      MenuPalette.of(widget.controller.reader.settings);
+  Color get _textColor => _palette.onSurface;
 
   @override
   void initState() {
@@ -108,9 +111,8 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     return Container(
       // 对齐原生 ReadAloudDialog.onFragmentCreated: 运行时根背景被覆盖为
-      // bottomBackground(主题色), 日间默认通常白色。包内无主题系统, 取白色;
-      // 与 _StyleDialog(#FAFAFA) 略有差异但更贴 legado 日间朗读面板观感。
-      color: Colors.white,
+      // bottomBackground(主题色), 日间默认通常白色。包内走 palette(夜晚切 #1F1F1F)。
+      color: _palette.surface,
       padding: EdgeInsets.fromLTRB(16, 6, 16, 6 + bottomPadding),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -192,7 +194,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
             text,
             style: TextStyle(
               fontSize: 14,
-              color: onPressed != null ? _textColor : Colors.black26,
+              color: onPressed != null ? _textColor : _palette.onSurfaceDisabled,
             ),
           ),
         ),
@@ -236,7 +238,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
           padding: const EdgeInsets.all(8),
           child: Row(
             children: [
-              const Text('朗读语速',
+              Text('朗读语速',
                   style: TextStyle(fontSize: 14, color: _textColor)),
               const SizedBox(width: 3),
               // 对齐原生 upTtsSpeechRateText: ((progress + 5) / 10f).toString()。
@@ -244,7 +246,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
               if (!widget.controller.followSysRate)
                 Text(
                   ((_speechRateProgress + 5) / 10).toString(),
-                  style: const TextStyle(fontSize: 14, color: _textColor),
+                  style: TextStyle(fontSize: 14, color: _textColor),
                 ),
               const Spacer(),
               // 跟随系统: 文字 + 开关紧贴成一组(对齐 SwitchCompat 的 text 内嵌)。
@@ -398,7 +400,7 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
                 label,
                 style: TextStyle(
                   fontSize: 12,
-                  color: disabled ? Colors.black26 : _textColor,
+                  color: disabled ? _palette.onSurfaceDisabled : _textColor,
                 ),
               ),
             ],
@@ -437,18 +439,21 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
         constraints: const BoxConstraints(maxWidth: 320),
         padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _palette.dialogBackground,
           borderRadius: BorderRadius.circular(3),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 8, 24, 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
               child: Text(
                 '朗读引擎',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: _palette.onSurface),
               ),
             ),
             InkWell(
@@ -460,9 +465,10 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
                 padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
                 child: Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                         child: Text('系统 TTS',
-                            style: TextStyle(fontSize: 15))),
+                            style: TextStyle(
+                                fontSize: 15, color: _palette.onSurface))),
                     if (c.engineType == AloudEngineType.system)
                       Icon(Icons.check,
                           size: 18,
@@ -491,8 +497,8 @@ class _ReadAloudDialogState extends State<_ReadAloudDialog> {
                         style: TextStyle(
                           fontSize: 15,
                           color: widget.httpConfigs.isEmpty
-                              ? Colors.black38
-                              : Colors.black87,
+                              ? _palette.onSurfaceDisabled
+                              : _palette.onSurface,
                         ),
                       ),
                     ),

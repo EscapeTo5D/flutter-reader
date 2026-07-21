@@ -11,6 +11,72 @@ import 'legado_icons.dart';
 import 'read_aloud_dialog.dart';
 import 'search_content_page.dart';
 
+/// 控制面板(ReadMenu 顶底栏 + 各 SmartDialog 子弹窗)的「生效」配色。
+///
+/// 原生 legado 控制面板走 Material 主题系统(`?attr/colorBackground` /
+/// `?android:attr/textColorPrimary` 等), 切 day/night 时主题自动切。
+/// Flutter 端本包无主题系统, 故集中定义一组「按 isNightTheme 取值」的颜色,
+/// 各处用 [MenuPalette.of] 获取, 避免散落 `Colors.white`/`black87` 硬编码。
+///
+/// 取值参照 Material Design 深色主题标准值:
+/// - 白天 surface `#FFFFFF` / surfaceVariant `#E0E0E0`(FAB 背景)/ 弹窗 `#FAFAFA` /
+///   主字 `black87`(#DD000000) / 次字 `black54` / 弱字 `black26`-`black38`。
+/// - 夜晚 surface `#1F1F1F` / surfaceVariant `#2A2A2A` / 弹窗 `#2A2A2A` /
+///   主字 `#E0E0E0` / 次字 `#AAAAAA` / 弱字 `#666666`。
+class MenuPalette {
+  final Color surface;          // 顶栏/底栏容器背景
+  final Color dialogBackground; // 子弹窗背景
+  final Color fabBackground;    // FAB 背景(原生 md_grey_200)
+  final Color onSurface;        // 主文字色(标题、图标主色)
+  final Color onSurfaceMedium;  // 次文字色(副标题、章节)
+  final Color onSurfaceDisabled;// 弱文字色(禁用态)
+  final Color divider;          // 边框/分隔线
+  final Color trackActive;      // 进度条已选区/开关激活色
+  final Color trackInactive;    // 进度条未选区/开关未激活色
+
+  const MenuPalette._({
+    required this.surface,
+    required this.dialogBackground,
+    required this.fabBackground,
+    required this.onSurface,
+    required this.onSurfaceMedium,
+    required this.onSurfaceDisabled,
+    required this.divider,
+    required this.trackActive,
+    required this.trackInactive,
+  });
+
+  /// 白天色板(默认, 对齐 legado 亮色主题)。
+  static const MenuPalette light = MenuPalette._(
+    surface: Colors.white,
+    dialogBackground: Color(0xFFFAFAFA),
+    fabBackground: Color(0xFFE0E0E0),
+    onSurface: Colors.black87,
+    onSurfaceMedium: Colors.black54,
+    onSurfaceDisabled: Colors.black38,
+    divider: Color(0xFFBDBDBD), // grey.shade400
+    trackActive: Colors.black54,
+    trackInactive: Colors.black26,
+  );
+
+  /// 夜晚色板(对齐 Material 深色主题)。
+  static const MenuPalette dark = MenuPalette._(
+    surface: Color(0xFF1F1F1F),
+    dialogBackground: Color(0xFF2A2A2A),
+    fabBackground: Color(0xFF3A3A3A),
+    onSurface: Color(0xFFE0E0E0),
+    onSurfaceMedium: Color(0xFFAAAAAA),
+    onSurfaceDisabled: Color(0xFF666666),
+    divider: Color(0xFF555555),
+    trackActive: Color(0xFFAAAAAA),
+    trackInactive: Color(0xFF555555),
+  );
+
+  /// 按 [ReadingSettings.isNightTheme] 取对应色板。
+  static MenuPalette of(ReadingSettings settings) =>
+      settings.isNightTheme ? MenuPalette.dark : MenuPalette.light;
+}
+
 class ReadMenu extends StatefulWidget {
   final ReadingController controller;
 
@@ -39,6 +105,8 @@ class ReadMenu extends StatefulWidget {
 class _ReadMenuState extends State<ReadMenu> {
   // 对齐 reader_view._menuAnimDuration, 两处必须一致。
   static const Duration _animDuration = Duration(milliseconds: 220);
+
+  MenuPalette get _palette => MenuPalette.of(widget.controller.settings);
 
   @override
   Widget build(BuildContext context) {
@@ -80,16 +148,17 @@ class _ReadMenuState extends State<ReadMenu> {
     final book = widget.controller.book;
     final chapter = widget.controller.currentChapter;
     final statusBarHeight = MediaQuery.of(context).padding.top;
+    final p = _palette;
 
     return Container(
       padding: EdgeInsets.only(top: statusBarHeight),
-      color: Colors.white,
+      color: p.surface,
       child: SizedBox(
         height: 56,
         child: Row(
           children: [
             IconButton(
-              icon: LegadoIcons.arrowBack(size: 24, color: Colors.black87),
+              icon: LegadoIcons.arrowBack(size: 24, color: p.onSurface),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
             Expanded(
@@ -99,20 +168,20 @@ class _ReadMenuState extends State<ReadMenu> {
                 children: [
                   Text(
                     book?.title ?? '',
-                    style: const TextStyle(color: Colors.black87, fontSize: 16),
+                    style: TextStyle(color: p.onSurface, fontSize: 16),
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (chapter != null)
                     Text(
                       chapter.title,
-                      style: const TextStyle(color: Colors.black54, fontSize: 12),
+                      style: TextStyle(color: p.onSurfaceMedium, fontSize: 12),
                       overflow: TextOverflow.ellipsis,
                     ),
                 ],
               ),
             ),
             IconButton(
-              icon: LegadoIcons.bookmark(size: 24, color: Colors.black87),
+              icon: LegadoIcons.bookmark(size: 24, color: p.onSurface),
               onPressed: () => widget.controller.addBookmark(),
             ),
           ],
@@ -129,22 +198,23 @@ class _ReadMenuState extends State<ReadMenu> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildFab(LegadoIcons.search(), '搜索', () {
+          _buildFab(LegadoIcons.search(color: _palette.onSurface), '搜索', () {
             // 对齐原生 ReadMenu.kt:543-548 fabSearch.setOnClickListener:
             // runMenuOut(收菜单) → openSearchActivity(跳独立全屏搜索页)。
             // 点结果 pop 回带 SearchResultBrowseData → enterSearchBrowse 进入浏览态。
             widget.controller.hideMenu();
             _openSearchPage(context);
           }),
-          _buildFab(LegadoIcons.autoPage(), '自动', () {}),
-          _buildFab(LegadoIcons.findReplace(), '替换', () {}),
+          _buildFab(LegadoIcons.autoPage(color: _palette.onSurface), '自动', () {}),
+          _buildFab(LegadoIcons.findReplace(color: _palette.onSurface), '替换', () {}),
           // 对齐原生 ReadMenu.kt:560-564 fabNightTheme:
           // 切 AppConfig.isNightTheme + ThemeConfig.applyDayNight。
           // upBrightnessState 按 isNightTheme 切图标/文案(brightness/夜间 ↔ daytime/白天)。
           Builder(builder: (_) {
             final isNight = widget.controller.settings.isNightTheme;
             return _buildFab(
-              isNight ? LegadoIcons.daytime() : LegadoIcons.brightness(),
+              (isNight ? LegadoIcons.daytime : LegadoIcons.brightness)(
+                  color: _palette.onSurface),
               isNight ? '白天' : '夜间',
               () => widget.controller.toggleNightTheme(),
             );
@@ -157,12 +227,16 @@ class _ReadMenuState extends State<ReadMenu> {
   Widget _buildFab(Widget icon, String tooltip, VoidCallback onPressed) {
     // 对齐原生 FloatingActionButton fabSize="mini":
     // - shape CircleBorder (M3 默认是圆角矩形, 需显式指定才为圆形)
-    // - backgroundColor md_grey_200(#E0E0E0) = 原生 background_menu
+    // - backgroundColor 白天 md_grey_200(#E0E0E0) = 原生 background_menu;
+    //   夜晚态随 palette 切到深灰。图标色用 IconTheme 注入, 但 LegadoIcons 是
+    //   CustomPaint 不读 IconTheme —— 故各 caller 已用 LegadoIcons.xxx(color:)
+    //   显式传色。这里 foregroundColor 仅作为 IconTheme 默认值兜底。
+    final p = _palette;
     return FloatingActionButton.small(
       heroTag: tooltip,
       onPressed: onPressed,
-      backgroundColor: const Color(0xFFE0E0E0),
-      foregroundColor: Colors.black54,
+      backgroundColor: p.fabBackground,
+      foregroundColor: p.onSurface,
       elevation: 2,
       tooltip: tooltip,
       shape: const CircleBorder(),
@@ -174,7 +248,7 @@ class _ReadMenuState extends State<ReadMenu> {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     return Container(
-      color: Colors.white,
+      color: _palette.surface,
       padding: EdgeInsets.only(bottom: bottomPadding),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -188,6 +262,7 @@ class _ReadMenuState extends State<ReadMenu> {
 
   Widget _buildChapterSeekBar() {
     final totalPages = widget.controller.totalPages;
+    final p = _palette;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
       child: Row(
@@ -199,17 +274,18 @@ class _ReadMenuState extends State<ReadMenu> {
             child: SizedBox(
               height: 25,
               child: SliderTheme(
-                data: const SliderThemeData(
+                data: SliderThemeData(
                   trackHeight: 2,
                   thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6),
                   overlayShape: RoundSliderOverlayShape(overlayRadius: 12),
+                  activeTrackColor: p.trackActive,
+                  inactiveTrackColor: p.trackInactive,
+                  thumbColor: p.trackActive,
                 ),
                 child: Slider(
                   value: totalPages > 1 ? widget.controller.currentPageIndex.toDouble() : 0,
                   min: 0,
                   max: totalPages > 1 ? (totalPages - 1).toDouble() : 1,
-                  activeColor: Colors.black54,
-                  inactiveColor: Colors.black26,
                   onChanged: (v) => widget.controller.goToPage(v.toInt()),
                 ),
               ),
@@ -222,6 +298,7 @@ class _ReadMenuState extends State<ReadMenu> {
   }
 
   Widget _buildChapterTextButton(String text, VoidCallback? onPressed) {
+    final p = _palette;
     return InkWell(
       onTap: onPressed,
       borderRadius: BorderRadius.circular(4),
@@ -230,7 +307,7 @@ class _ReadMenuState extends State<ReadMenu> {
         child: Text(
           text,
           style: TextStyle(
-            color: onPressed != null ? Colors.black87 : Colors.black38,
+            color: onPressed != null ? p.onSurface : p.onSurfaceDisabled,
             fontSize: 14,
           ),
         ),
@@ -242,10 +319,11 @@ class _ReadMenuState extends State<ReadMenu> {
     final aloud = widget.aloudController;
     // 朗读按钮颜色: 注入了 AloudController 才用正常色 + 可点击; 否则灰显且不响应。
     final aloudEnabled = aloud != null;
+    final p = _palette;
     return Row(
       children: [
         const Spacer(flex: 1),
-        _buildBottomIcon(LegadoIcons.toc(), '目录', () {
+        _buildBottomIcon(LegadoIcons.toc(color: p.onSurface), '目录', () {
           widget.controller.hideMenu();
           _showChapterDrawer(context);
         }),
@@ -256,7 +334,7 @@ class _ReadMenuState extends State<ReadMenu> {
         // 长按 = 弹朗读控制面板(对应原生 showReadAloudDialog)。
         _buildBottomIcon(
           LegadoIcons.readAloud(
-            color: aloudEnabled ? const Color(0xFF595757) : Colors.black26,
+            color: aloudEnabled ? p.onSurface : p.onSurfaceDisabled,
           ),
           '朗读',
           aloudEnabled
@@ -272,7 +350,7 @@ class _ReadMenuState extends State<ReadMenu> {
                   }
                 }
               : null,
-          iconColor: aloudEnabled ? Colors.black54 : Colors.black26,
+          iconColor: aloudEnabled ? p.onSurfaceMedium : p.onSurfaceDisabled,
           onLongPress: aloudEnabled
               ? () {
                   widget.controller.hideMenu();
@@ -281,12 +359,12 @@ class _ReadMenuState extends State<ReadMenu> {
               : null,
         ),
         const Spacer(flex: 2),
-        _buildBottomIcon(LegadoIcons.interfaceSetting(), '界面', () {
+        _buildBottomIcon(LegadoIcons.interfaceSetting(color: p.onSurface), '界面', () {
           widget.controller.hideMenu();
           _showStyleDialog(context);
         }),
         const Spacer(flex: 2),
-        _buildBottomIcon(LegadoIcons.settings(), '设置', () {
+        _buildBottomIcon(LegadoIcons.settings(color: p.onSurface), '设置', () {
           widget.controller.hideMenu();
           _showMoreSettings(context);
         }),
@@ -301,7 +379,7 @@ class _ReadMenuState extends State<ReadMenu> {
   /// [iconColor] 仅影响标签文字色(图标颜色由 icon widget 自身携带, 见 LegadoIcons)。
   Widget _buildBottomIcon(Widget icon, String label, VoidCallback? onTap,
       {Color? iconColor, VoidCallback? onLongPress}) {
-    final color = iconColor ?? Colors.black54;
+    final color = iconColor ?? _palette.onSurfaceMedium;
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -398,6 +476,7 @@ void _showOptionList(
   required String title,
   required List<String> items,
   required ValueChanged<int> onSelected,
+  required MenuPalette palette,
 }) {
   SmartDialog.show(
     alignment: Alignment.center,
@@ -407,8 +486,8 @@ void _showOptionList(
       constraints: const BoxConstraints(maxWidth: 320),
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
-        // 对齐原生 filletBackground: 3dp 圆角 + 主题背景色(此处用白)。
-        color: Colors.white,
+        // 对齐原生 filletBackground: 3dp 圆角 + 主题背景色。
+        color: palette.dialogBackground,
         borderRadius: BorderRadius.circular(3),
       ),
       child: Column(
@@ -419,7 +498,11 @@ void _showOptionList(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 12),
             child: Text(
               title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: palette.onSurface,
+              ),
             ),
           ),
           for (int i = 0; i < items.length; i++)
@@ -431,7 +514,10 @@ void _showOptionList(
               child: Padding(
                 // 对齐 AlertDialog item 默认 padding 24/12。
                 padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-                child: Text(items[i], style: const TextStyle(fontSize: 15)),
+                child: Text(
+                  items[i],
+                  style: TextStyle(fontSize: 15, color: palette.onSurface),
+                ),
               ),
             ),
         ],
@@ -449,6 +535,7 @@ class _StyleDialog extends StatefulWidget {
 }
 
 class _StyleDialogState extends State<_StyleDialog> {
+  MenuPalette get _palette => MenuPalette.of(widget.controller.settings);
   late int _fontSizeProgress;
   late int _letterSpacingProgress;
   late int _lineHeightProgress;
@@ -576,9 +663,9 @@ class _StyleDialogState extends State<_StyleDialog> {
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     // 对齐原生 ReadStyleDialog: 无圆角(顶部直角), 背景=md_grey_50(#FAFAFA)。
-    // 原生运行时会被主题 bottomBackground 覆盖, 本包无主题系统故取静态值。
+    // 原生运行时会被主题 bottomBackground 覆盖, 本包走 palette(夜晚切 #2A2A2A)。
     return Container(
-      color: const Color(0xFFFAFAFA),
+      color: _palette.dialogBackground,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -600,11 +687,11 @@ class _StyleDialogState extends State<_StyleDialog> {
     // Space(weight=1) 等宽撑开间隙。IntrinsicHeight 让所有按钮等高(stretch)。
     final buttons = <Widget>[
       _buildStrokeButton(_buildWeightSpans(), _showWeightPicker),
-      _buildStrokeButton(const Text('字体', style: _strokeButtonStyle), () {}),
-      _buildStrokeButton(const Text('缩进', style: _strokeButtonStyle), _showIndentPicker),
+      _buildStrokeButton(Text('字体', style: _strokeButtonStyle), () {}),
+      _buildStrokeButton(Text('缩进', style: _strokeButtonStyle), _showIndentPicker),
       _buildStrokeButton(_buildChineseSpans(), _showChinesePicker),
-      _buildStrokeButton(const Text('边距', style: _strokeButtonStyle), _showPaddingConfig),
-      _buildStrokeButton(const Text('信息', style: _strokeButtonStyle), _showTipConfig),
+      _buildStrokeButton(Text('边距', style: _strokeButtonStyle), _showPaddingConfig),
+      _buildStrokeButton(Text('信息', style: _strokeButtonStyle), _showTipConfig),
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -622,7 +709,9 @@ class _StyleDialogState extends State<_StyleDialog> {
     );
   }
 
-  static const _strokeButtonStyle = TextStyle(fontSize: 14, color: Colors.black87);
+  // 描边按钮文字色随 palette(对齐原生 textColorPrimary)。
+  TextStyle get _strokeButtonStyle =>
+      TextStyle(fontSize: 14, color: _palette.onSurface);
 
   /// StrokeTextView 风格按钮: 描边圆角 3dp, padding 6/4/6/4dp(对齐原生)。
   Widget _buildStrokeButton(Widget child, VoidCallback onTap) {
@@ -631,7 +720,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       style: OutlinedButton.styleFrom(
         // 对齐原生 StrokeTextView: paddingLeft/Right=6dp, Top/Bottom=4dp, radius=3dp。
         padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-        side: BorderSide(color: Colors.grey.shade300),
+        side: BorderSide(color: _palette.divider),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -696,6 +785,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         setState(() => _textBold = i);
         _apply();
       },
+      palette: _palette,
     );
   }
 
@@ -709,6 +799,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       onSelected: (i) {
         setState(() => _chineseConverterType = i);
       },
+      palette: _palette,
     );
   }
 
@@ -728,6 +819,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       PageAnimMode.simulation,
       PageAnimMode.none,
     ];
+    final p = _palette;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -735,14 +827,14 @@ class _StyleDialogState extends State<_StyleDialog> {
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           height: 0.8,
-          color: Colors.grey.shade200,
+          color: p.divider.withValues(alpha: 0.5),
         ),
         // 标题: 12sp, alpha 0.75 (对齐 tv_page_anim: alpha=0.75, textSize=12sp)。
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: Text(
             '翻页动画',
-            style: TextStyle(fontSize: 12, color: Colors.black54.withValues(alpha: 0.75)),
+            style: TextStyle(fontSize: 12, color: p.onSurfaceMedium.withValues(alpha: 0.75)),
           ),
         ),
         // RadioGroup: marginHorizontal=11dp, 等宽 5 份。
@@ -777,7 +869,7 @@ class _StyleDialogState extends State<_StyleDialog> {
   Widget _buildAnimRadio(String label, bool selected, VoidCallback onTap) {
     final accent = Theme.of(context).colorScheme.primary;
     final isLightAccent = ThemeData.estimateBrightnessForColor(accent) == Brightness.light;
-    final textColor = Colors.black87;
+    final textColor = _palette.onSurface;
     final checkedTextColor = isLightAccent ? Colors.black : Colors.white;
     return Material(
       color: selected ? accent : Colors.transparent,
@@ -870,7 +962,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       display: display,
       onChanged: onChanged,
       onChangeEnd: onChangeEnd,
-      textColor: Colors.black54,
+      textColor: _palette.onSurfaceMedium,
     );
   }
 
@@ -878,7 +970,7 @@ class _StyleDialogState extends State<_StyleDialog> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       height: 0.8,
-      color: Colors.grey.shade200,
+      color: _palette.divider.withValues(alpha: 0.5),
     );
   }
 
@@ -897,11 +989,11 @@ class _StyleDialogState extends State<_StyleDialog> {
                   '颜色与背景 (长按自定义)',
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.black54.withValues(alpha: 0.75),
+                    color: _palette.onSurfaceMedium.withValues(alpha: 0.75),
                   ),
                 ),
               ),
-              Text('共享排版', style: TextStyle(fontSize: 12, color: Colors.black54)),
+              Text('共享排版', style: TextStyle(fontSize: 12, color: _palette.onSurfaceMedium)),
               const SizedBox(width: 4),
               SizedBox(
                 width: 20,
@@ -915,7 +1007,7 @@ class _StyleDialogState extends State<_StyleDialog> {
                   },
                   activeColor: Theme.of(context).colorScheme.primary,
                   visualDensity: VisualDensity.compact,
-                  side: BorderSide(color: Colors.grey.shade400),
+                  side: BorderSide(color: _palette.divider),
                 ),
               ),
             ],
@@ -961,6 +1053,7 @@ class _StyleDialogState extends State<_StyleDialog> {
   /// "+"添加预设圆形(对齐原生 footer add swatch)。
   /// 点击: 用当前 bg/text 新建一个用户预设, 存库, 刷新列表, 自动选中。
   Widget _buildAddSwatch() {
+    final p = _palette;
     return GestureDetector(
       onTap: _addUserPreset,
       child: Container(
@@ -968,10 +1061,10 @@ class _StyleDialogState extends State<_StyleDialog> {
         height: 48,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.black54),
+          border: Border.all(color: p.onSurfaceMedium),
         ),
         child: Center(
-          child: LegadoIcons.add(size: 20, color: Colors.black54),
+          child: LegadoIcons.add(size: 20, color: p.onSurfaceMedium),
         ),
       ),
     );
@@ -1106,6 +1199,7 @@ class _StyleDialogState extends State<_StyleDialog> {
       maskColor: Colors.transparent,
       builder: (_) => _PresetEditorDialog(
         preset: preset,
+        palette: _palette,
         onDelete: () async {
           await widget.controller.deleteStylePreset(preset.id);
           await _loadUserPresets();
@@ -1130,6 +1224,7 @@ class _StyleDialogState extends State<_StyleDialog> {
         setState(() => textIndent = i);
         _apply();
       },
+      palette: _palette,
     );
   }
 
@@ -1193,6 +1288,7 @@ class _PaddingConfigDialog extends StatefulWidget {
 }
 
 class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
+  MenuPalette get _palette => MenuPalette.of(widget.controller.settings);
   late double _bodyLeft, _bodyRight;
   late double _headerTop, _headerBottom, _headerLeft, _headerRight;
   late double _footerTop, _footerBottom, _footerLeft, _footerRight;
@@ -1251,8 +1347,9 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
           ),
           padding: const EdgeInsets.all(10),
           // 对齐原生 BaseDialogFragment: 仅 setBackgroundColor, 无圆角。
-          decoration: const BoxDecoration(
-            color: Color(0xFFFAFAFA),
+          // 夜晚态随 palette。
+          decoration: BoxDecoration(
+            color: _palette.dialogBackground,
           ),
           child: SingleChildScrollView(
             child: Column(
@@ -1322,7 +1419,8 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
             ),
           ),
           if (showLine != null && onToggle != null) ...[
-            Text('显示分隔线', style: const TextStyle(fontSize: 13)),
+            Text('显示分隔线',
+                style: TextStyle(fontSize: 13, color: _palette.onSurface)),
             const SizedBox(width: 6),
             SizedBox(
               width: 20,
@@ -1333,6 +1431,7 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
                 activeColor: Theme.of(context).colorScheme.primary,
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 visualDensity: VisualDensity.compact,
+                side: BorderSide(color: _palette.divider),
               ),
             ),
           ],
@@ -1352,6 +1451,7 @@ class _PaddingConfigDialogState extends State<_PaddingConfigDialog> {
         // 拖动只刷数字, 松手才 _apply(对齐原生 DetailSeekBar onStopTrackingTouch)。
         onChanged: onChanged,
         onChangeEnd: (v) { onChanged(v); _apply(); },
+        textColor: _palette.onSurface,
       ),
     );
   }
@@ -1363,11 +1463,13 @@ class _PresetEditorDialog extends StatefulWidget {
   final ReadingStylePreset preset;
   final Future<void> Function() onDelete;
   final Future<void> Function(ReadingStylePreset updated) onSave;
+  final MenuPalette palette;
 
   const _PresetEditorDialog({
     required this.preset,
     required this.onDelete,
     required this.onSave,
+    required this.palette,
   });
 
   @override
@@ -1375,6 +1477,7 @@ class _PresetEditorDialog extends StatefulWidget {
 }
 
 class _PresetEditorDialogState extends State<_PresetEditorDialog> {
+  MenuPalette get _palette => widget.palette;
   late final TextEditingController _nameController;
   late Color _bg;
   late Color _text;
@@ -1404,6 +1507,7 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
   @override
   Widget build(BuildContext context) {
     final dialogWidth = MediaQuery.of(context).size.width * 0.85;
+    final p = _palette;
     return Center(
       child: Material(
         color: Colors.transparent,
@@ -1411,7 +1515,7 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
           width: dialogWidth,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFFFAFAFA),
+            color: p.dialogBackground,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
@@ -1421,16 +1525,22 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
               // 名称行
               Row(
                 children: [
-                  const Text('名称', style: TextStyle(fontSize: 14)),
+                  Text('名称',
+                      style: TextStyle(fontSize: 14, color: p.onSurface)),
                   const SizedBox(width: 12),
                   Expanded(
                     child: TextField(
                       controller: _nameController,
-                      style: const TextStyle(fontSize: 14),
-                      decoration: const InputDecoration(
+                      style: TextStyle(fontSize: 14, color: p.onSurface),
+                      decoration: InputDecoration(
                         isDense: true,
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
+                        border: OutlineInputBorder(
+                          borderSide: BorderSide(color: p.divider),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: p.divider),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 8),
                       ),
                     ),
@@ -1480,6 +1590,7 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
 
   Widget _colorSection(
       String label, Color selected, ValueChanged<Color> onPick) {
+    final p = _palette;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1487,7 +1598,7 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
           padding: const EdgeInsets.only(bottom: 6),
           child: Row(
             children: [
-              Text(label, style: const TextStyle(fontSize: 13)),
+              Text(label, style: TextStyle(fontSize: 13, color: p.onSurface)),
               const SizedBox(width: 8),
               // 当前选中色预览
               Container(
@@ -1496,7 +1607,7 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
                 decoration: BoxDecoration(
                   color: selected,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.black26),
+                  border: Border.all(color: p.divider),
                 ),
               ),
             ],
@@ -1520,7 +1631,7 @@ class _PresetEditorDialogState extends State<_PresetEditorDialog> {
                   border: Border.all(
                     color: isSel
                         ? Theme.of(context).colorScheme.primary
-                        : Colors.black12,
+                        : p.divider,
                     width: isSel ? 2 : 1,
                   ),
                 ),
@@ -1542,6 +1653,7 @@ class _MoreSettingsSheet extends StatefulWidget {
 }
 
 class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
+  MenuPalette get _palette => MenuPalette.of(widget.controller.settings);
   late bool keepScreenOn;
   late bool hideStatusBar;
   late bool hideNavigationBar;
@@ -1586,10 +1698,11 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final p = _palette;
     return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      decoration: BoxDecoration(
+        color: p.dialogBackground,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1598,7 +1711,7 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Container(
               width: 32, height: 4,
-              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(color: p.divider, borderRadius: BorderRadius.circular(2)),
             ),
           ),
           Flexible(
@@ -1625,10 +1738,11 @@ class _MoreSettingsSheetState extends State<_MoreSettingsSheet> {
 
   Widget _buildSwitch(String title, bool value, ValueChanged<bool> onChanged) {
     return SwitchListTile(
-      title: Text(title, style: const TextStyle(fontSize: 14)),
+      title: Text(title,
+          style: TextStyle(fontSize: 14, color: _palette.onSurface)),
       value: value,
       onChanged: onChanged,
-      activeThumbColor: Colors.blue,
+      activeThumbColor: Theme.of(context).colorScheme.primary,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
     );
   }
@@ -1661,6 +1775,7 @@ class _TipConfigDialog extends StatefulWidget {
 }
 
 class _TipConfigDialogState extends State<_TipConfigDialog> {
+  MenuPalette get _palette => MenuPalette.of(widget.controller.settings);
   late int _titleMode;
   late double _titleSize;
   late double _titleTopSpacing;
@@ -1709,8 +1824,8 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
               maxHeight: MediaQuery.of(context).size.height * 0.8,
             ),
             decoration: BoxDecoration(
-              color: Theme.of(context).dialogTheme.backgroundColor ??
-                  Theme.of(context).colorScheme.surface,
+              // 走 palette(夜晚切深色), 不再依赖宿主主题。
+              color: _palette.dialogBackground,
               borderRadius: BorderRadius.circular(12),
             ),
             child: SingleChildScrollView(
@@ -1811,7 +1926,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
                 ),
-                Text(options[i], style: const TextStyle(fontSize: 14)),
+                Text(options[i], style: TextStyle(fontSize: 14, color: _palette.onSurface)),
                 const SizedBox(width: 3),
               ],
             );
@@ -1825,11 +1940,12 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
       String label, double value, int max,
       {required ValueChanged<double> onChanged,
        required ValueChanged<double> onChangeEnd}) {
+    final p = _palette;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          SizedBox(width: 60, child: Text(label, style: const TextStyle(fontSize: 13))),
+          SizedBox(width: 60, child: Text(label, style: TextStyle(fontSize: 13, color: p.onSurface))),
           Expanded(
             child: Slider(
               value: value.clamp(0, max.toDouble()),
@@ -1846,7 +1962,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
           SizedBox(
             width: 28,
             child: Text(value.toStringAsFixed(0),
-                textAlign: TextAlign.right, style: const TextStyle(fontSize: 13)),
+                textAlign: TextAlign.right, style: TextStyle(fontSize: 13, color: p.onSurface)),
           ),
         ],
       ),
@@ -1855,14 +1971,15 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
 
   /// 单行(label + 当前值), 整行可点。padding 6dp(对齐 dialog_tip_config.xml 各 ll_* 项)。
   Widget _buildTipRow(String label, String value, VoidCallback onTap) {
+    final p = _palette;
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
         child: Row(
           children: [
-            Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
-            Text(value, style: const TextStyle(fontSize: 14, color: Colors.black54)),
+            Expanded(child: Text(label, style: TextStyle(fontSize: 14, color: p.onSurface))),
+            Text(value, style: TextStyle(fontSize: 14, color: p.onSurfaceMedium)),
           ],
         ),
       ),
@@ -1884,6 +2001,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
           footerConfig: isHeader ? null : newCfg,
         ));
       },
+      palette: _palette,
     );
   }
 
@@ -1908,6 +2026,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
         }
         _updateSettings(s.copyWith(headerConfig: h, footerConfig: f));
       },
+      palette: _palette,
     );
   }
 
@@ -1933,6 +2052,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
           _showCustomColorSwatch(isTip: isTip);
         }
       },
+      palette: _palette,
     );
   }
 
@@ -1953,6 +2073,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
           _showCustomColorSwatch(isTip: false, isDivider: true);
         }
       },
+      palette: _palette,
     );
   }
 
@@ -1964,6 +2085,7 @@ class _TipConfigDialogState extends State<_TipConfigDialog> {
       maskColor: Colors.black.withValues(alpha: 0.5),
       builder: (_) => _ColorSwatchPicker(
         current: isDivider ? (s.tipDividerColor ?? s.tipColor) : s.tipColor,
+        palette: _palette,
         onPicked: (c) {
           _updateSettings(s.copyWith(
             tipColor: isTip && !isDivider ? c : null,
@@ -2029,6 +2151,7 @@ enum _Slot { left, center, right }
 class _ColorSwatchPicker extends StatelessWidget {
   final Color current;
   final ValueChanged<Color> onPicked;
+  final MenuPalette palette;
   // 对齐 _PresetEditorDialog._swatch(常用底/字色 + 灰阶)。
   static const _swatch = <Color>[
     Color(0xFFC0EDC6), Color(0xFFFFFFFF), Color(0xFFDDC090), Color(0xFFC2D8AA),
@@ -2037,16 +2160,21 @@ class _ColorSwatchPicker extends StatelessWidget {
     Color(0xFF3D4C54), Color(0xFF333333), Color(0xFF666666), Color(0xFF999999),
   ];
 
-  const _ColorSwatchPicker({required this.current, required this.onPicked});
+  const _ColorSwatchPicker({
+    required this.current,
+    required this.onPicked,
+    required this.palette,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final p = palette;
     return Center(
       child: Container(
         width: MediaQuery.of(context).size.width * 0.7,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: p.dialogBackground,
           borderRadius: BorderRadius.circular(3),
         ),
         child: GridView.count(
@@ -2068,7 +2196,7 @@ class _ColorSwatchPicker extends StatelessWidget {
                   color: c,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: isSel ? Theme.of(context).colorScheme.primary : Colors.black26,
+                    color: isSel ? Theme.of(context).colorScheme.primary : p.divider,
                     width: isSel ? 2 : 1,
                   ),
                 ),
