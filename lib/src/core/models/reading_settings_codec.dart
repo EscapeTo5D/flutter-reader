@@ -155,6 +155,10 @@ Map<String, dynamic> encodeReadingSettings(ReadingSettings s) {
     'textAccentColor': _colorToJson(s.textAccentColor),
     'tipColor': _colorToJson(s.tipColor),
     'tipDividerColor': s.tipDividerColor == null ? null : _colorToJson(s.tipDividerColor!),
+    'nightBackgroundColor': _colorToJson(s.nightBackgroundColor),
+    'nightTextColor': _colorToJson(s.nightTextColor),
+    'nightTextAccentColor': _colorToJson(s.nightTextAccentColor),
+    'isNightTheme': s.isNightTheme,
     'fontFamily': _fontToJson(s.fontFamily),
     'backgroundImage': s.backgroundImage,
     'headerConfig': _headerFooterToJson(s.headerConfig),
@@ -201,6 +205,10 @@ ReadingSettings decodeReadingSettings(Map<String, dynamic> json) {
     tipDividerColor: json['tipDividerColor'] == null
         ? null
         : _colorFromJson(_asInt(json['tipDividerColor'], d.tipDividerColor?.toARGB32() ?? 0)),
+    nightBackgroundColor: _colorFromJson(_asInt(json['nightBackgroundColor'], d.nightBackgroundColor.toARGB32())),
+    nightTextColor: _colorFromJson(_asInt(json['nightTextColor'], d.nightTextColor.toARGB32())),
+    nightTextAccentColor: _colorFromJson(_asInt(json['nightTextAccentColor'], d.nightTextAccentColor.toARGB32())),
+    isNightTheme: (json['isNightTheme'] as bool?) ?? d.isNightTheme,
     fontFamily: _fontFromJson(json['fontFamily']),
     backgroundImage: json['backgroundImage']?.toString(),
     headerConfig: _headerFooterFromJson(

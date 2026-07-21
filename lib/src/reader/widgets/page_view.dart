@@ -385,7 +385,7 @@ class PageView extends StatelessWidget {
           painter: _TextLinePainter(
             line: line,
             style: style,
-            accentColor: settings.textAccentColor,
+            accentColor: settings.effectiveTextAccentColor,
             aloudVersion: aloudVersion,
           ),
         ),
@@ -405,7 +405,7 @@ class PageView extends StatelessWidget {
       fontWeight: isTitle ? FontWeight.bold : settings.fontWeight,
       height: settings.lineHeight,
       letterSpacing: settings.letterSpacing,
-      color: settings.textColor,
+      color: settings.effectiveTextColor,
       fontFamily: settings.fontFamily,
     );
   }
@@ -477,7 +477,7 @@ class PageView extends StatelessWidget {
         ),
       );
     }
-    return BoxDecoration(color: settings.backgroundColor);
+    return BoxDecoration(color: settings.effectiveBackgroundColor);
   }
 }
 

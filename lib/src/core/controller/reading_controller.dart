@@ -441,6 +441,14 @@ class ReadingController extends ChangeNotifier {
     _scheduleSettingsSave();
   }
 
+  /// 切换夜晚主题。对齐原生 `AppConfig.isNightTheme = !isNightTheme` +
+  /// `ThemeConfig.applyDayNight`: 仅切渲染色组(bg/text/accent 的 effective 切换),
+  /// 颜色不进排版指纹故不触发重排。夜晚态由设置层 `isNightTheme` 标志驱动,
+  /// reader_view 读此标志同步切状态栏图标色。落盘随 updateSettings 走 settings KV。
+  void toggleNightTheme() {
+    updateSettings(_settings.copyWith(isNightTheme: !_settings.isNightTheme));
+  }
+
   /// 聚合所有「影响 page_engine.paginate 分页结果」的设置字段, 用于判断改设置后
   /// 是否需要重排。返回 record, 字段顺序与 [ReadingSettings] 声明顺序一致, 便于
   /// 对照增删。

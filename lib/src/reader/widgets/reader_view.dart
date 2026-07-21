@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
+import 'package:flutter/services.dart' show SystemChrome, SystemUiOverlayStyle;
 import '../../core/battery_provider.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
@@ -355,6 +356,20 @@ class _ReaderViewState extends State<ReaderView>
       showStatusBar: showStatusBar,
       showNavBar: showNavBar,
     );
+    // 状态栏图标明/暗跟随夜晚态(对齐原生 darkStatusIconNight=false 让图标变亮)。
+    // Android only: iOS 状态栏不受此控制。仅菜单可见(状态栏一定可见)或
+    // hideStatusBar=false 时有意义; 状态栏隐藏时设置无效但不报错。
+    final iconBrightness =
+        settings.isNightTheme ? Brightness.light : Brightness.dark;
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: iconBrightness,
+      statusBarBrightness: iconBrightness == Brightness.light
+          ? Brightness.dark
+          : Brightness.light, // iOS 反向
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: iconBrightness,
+    ));
   }
 
   @override

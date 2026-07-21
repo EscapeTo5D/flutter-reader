@@ -138,7 +138,17 @@ class _ReadMenuState extends State<ReadMenu> {
           }),
           _buildFab(LegadoIcons.autoPage(), '自动', () {}),
           _buildFab(LegadoIcons.findReplace(), '替换', () {}),
-          _buildFab(LegadoIcons.brightness(), '夜间', () {}),
+          // 对齐原生 ReadMenu.kt:560-564 fabNightTheme:
+          // 切 AppConfig.isNightTheme + ThemeConfig.applyDayNight。
+          // upBrightnessState 按 isNightTheme 切图标/文案(brightness/夜间 ↔ daytime/白天)。
+          Builder(builder: (_) {
+            final isNight = widget.controller.settings.isNightTheme;
+            return _buildFab(
+              isNight ? LegadoIcons.daytime() : LegadoIcons.brightness(),
+              isNight ? '白天' : '夜间',
+              () => widget.controller.toggleNightTheme(),
+            );
+          }),
         ],
       ),
     );

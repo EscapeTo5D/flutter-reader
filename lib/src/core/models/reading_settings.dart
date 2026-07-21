@@ -187,6 +187,16 @@ class ReadingSettings {
   /// 原生值 -1=跟随背景, 0=跟随文字, >0=自定义 ARGB; Flutter 用 Color 表达,
   /// 默认 null=跟随文字(与 tipColor 一致渲染时回退)。
   Color? tipDividerColor;
+  /// 夜晚模式背景色, 对齐原生 `ReadBookConfig.bgStrNight`(微信读书预设 `#000000`)。
+  /// 仅 [isNightTheme]=true 时由 [effectiveBackgroundColor] 读取。
+  Color nightBackgroundColor;
+  /// 夜晚模式文字色, 对齐原生 `ReadBookConfig.textColorNight`(默认 `#ADADAD`)。
+  Color nightTextColor;
+  /// 夜晚模式强调色, 对齐原生 `ReadBookConfig.textAccentColorNight`(默认 `#FE4D55`)。
+  Color nightTextAccentColor;
+  /// 是否启用夜晚主题。对齐原生 `AppConfig.isNightTheme`: true 时渲染层读 night* 色组,
+  /// false 时读白天色组。颜色字段不进排版指纹, 切换不触发重排。
+  bool isNightTheme;
   String? fontFamily;
   String? backgroundImage;
   HeaderFooterConfig headerConfig;
@@ -216,6 +226,17 @@ class ReadingSettings {
   /// 不重置滑块值(保留当前排版参数); false 时切预设连同排版参数一起重置(原生默认行为)。
   bool shareLayout;
 
+  /// 渲染层读取的「生效」背景色: 夜晚态返回 [nightBackgroundColor], 否则 [backgroundColor]。
+  /// 渲染层应一律读 effective*, 不要自写三元, 避免夜晚切换时漏改。
+  Color get effectiveBackgroundColor =>
+      isNightTheme ? nightBackgroundColor : backgroundColor;
+  /// 渲染层读取的「生效」文字色: 夜晚态返回 [nightTextColor], 否则 [textColor]。
+  Color get effectiveTextColor =>
+      isNightTheme ? nightTextColor : textColor;
+  /// 渲染层读取的「生效」强调色: 夜晚态返回 [nightTextAccentColor], 否则 [textAccentColor]。
+  Color get effectiveTextAccentColor =>
+      isNightTheme ? nightTextAccentColor : textAccentColor;
+
   ReadingSettings({
     // 默认值对齐原生 legado「微信读书」预设(readConfig.json 第 0 项):
     // textSize=24, letterSpacing=0, lineSpacingExtra=10, paragraphSpacing=6,
@@ -232,6 +253,12 @@ class ReadingSettings {
     this.textAccentColor = const Color(0xFFE53935),
     this.tipColor = const Color(0xFF999999),
     this.tipDividerColor,
+    // 夜晚模式色组默认对齐原生 legado(微信读书预设 bgStrNight=#000000 /
+    // Config data class textColorNight=#ADADAD / textAccentColorNight=#FE4D55)。
+    this.nightBackgroundColor = const Color(0xFF000000),
+    this.nightTextColor = const Color(0xFFADADAD),
+    this.nightTextAccentColor = const Color(0xFFFE4D55),
+    this.isNightTheme = false,
     this.fontFamily,
     this.backgroundImage,
     // 对齐原生微信读书预设 readConfig.json:
@@ -284,6 +311,10 @@ class ReadingSettings {
     String? backgroundImage,
     bool clearBackgroundImage = false,
     Color? tipDividerColor,
+    Color? nightBackgroundColor,
+    Color? nightTextColor,
+    Color? nightTextAccentColor,
+    bool? isNightTheme,
     HeaderFooterConfig? headerConfig,
     HeaderFooterConfig? footerConfig,
     ReaderPadding? padding,
@@ -317,6 +348,10 @@ class ReadingSettings {
       textAccentColor: textAccentColor ?? this.textAccentColor,
       tipColor: tipColor ?? this.tipColor,
       tipDividerColor: tipDividerColor ?? this.tipDividerColor,
+      nightBackgroundColor: nightBackgroundColor ?? this.nightBackgroundColor,
+      nightTextColor: nightTextColor ?? this.nightTextColor,
+      nightTextAccentColor: nightTextAccentColor ?? this.nightTextAccentColor,
+      isNightTheme: isNightTheme ?? this.isNightTheme,
       fontFamily: fontFamily ?? this.fontFamily,
       backgroundImage: clearBackgroundImage ? null : (backgroundImage ?? this.backgroundImage),
       headerConfig: headerConfig ?? this.headerConfig,

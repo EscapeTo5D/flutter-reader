@@ -108,6 +108,57 @@ void main() {
     expect(restored.pageAnimMode, ReadingSettings().pageAnimMode);
   });
 
+  /// 夜晚模式色组(isNightTheme + night bg/text/accent)往返一致性。
+  /// 对齐原生 legado day/night 独立存色: 切夜晚不丢用户自定义的两套色。
+  test('夜晚模式色组 encode→decode 往返一致', () {
+    final original = ReadingSettings().copyWith(
+      isNightTheme: true,
+      nightBackgroundColor: const Color(0xFF111111),
+      nightTextColor: const Color(0xFFBBBBBB),
+      nightTextAccentColor: const Color(0xFFFE4D55),
+    );
+    final restored = decodeReadingSettings(encodeReadingSettings(original));
+    expect(restored.isNightTheme, true);
+    // 颜色断言用 toARGB32() int 比较(不同 colorSpace 直接 == 会判不等)。
+    expect(restored.nightBackgroundColor.toARGB32(),
+        const Color(0xFF111111).toARGB32());
+    expect(restored.nightTextColor.toARGB32(),
+        const Color(0xFFBBBBBB).toARGB32());
+    expect(restored.nightTextAccentColor.toARGB32(),
+        const Color(0xFFFE4D55).toARGB32());
+    // 白天色组不因切夜晚而改变。
+    expect(restored.backgroundColor.toARGB32(),
+        ReadingSettings().backgroundColor.toARGB32());
+    expect(restored.textColor.toARGB32(),
+        ReadingSettings().textColor.toARGB32());
+    // effective* getter 在夜晚态返回 night 色组。
+    expect(restored.effectiveBackgroundColor.toARGB32(),
+        const Color(0xFF111111).toARGB32());
+    expect(restored.effectiveTextColor.toARGB32(),
+        const Color(0xFFBBBBBB).toARGB32());
+    expect(restored.effectiveTextAccentColor.toARGB32(),
+        const Color(0xFFFE4D55).toARGB32());
+  });
+
+  /// 旧 schema(无 night 字段)解码时 night 色组回落默认值, isNightTheme 回落 false。
+  test('旧 schema(缺 night 字段)解码回落默认值', () {
+    final restored = decodeReadingSettings({
+      'fontSize': 20,
+      '_version': 1,
+      // 故意不写 night*/isNightTheme
+    });
+    expect(restored.isNightTheme, false);
+    expect(restored.nightBackgroundColor.toARGB32(),
+        ReadingSettings().nightBackgroundColor.toARGB32());
+    expect(restored.nightTextColor.toARGB32(),
+        ReadingSettings().nightTextColor.toARGB32());
+    expect(restored.nightTextAccentColor.toARGB32(),
+        ReadingSettings().nightTextAccentColor.toARGB32());
+    // 白天态 effective* 返回白天色组。
+    expect(restored.effectiveBackgroundColor.toARGB32(),
+        ReadingSettings().backgroundColor.toARGB32());
+  });
+
   /// encode 输出可被 jsonEncode 序列化(无 Color/枚举等不可序列化对象)。
   test('encodeReadingSettings 输出可 JSON 字符串化', () {
     // 用 jsonEncode 检验: 若含 Color/枚举对象会抛异常

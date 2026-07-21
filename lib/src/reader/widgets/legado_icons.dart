@@ -31,6 +31,12 @@ class LegadoIcons {
   static Widget brightness({double size = 24, Color color = const Color(0xFF595757)}) =>
       CustomPaint(size: Size(size, size), painter: _BrightnessPainter(color));
 
+  /// ic_daytime.xml — 夜晚态启用时显示的「白天」图标(切回白天模式), 对齐原生
+  /// `ReadMenu.upBrightnessState`: `AppConfig.isNightTheme=true` 时 fabNightTheme
+  /// 切 `R.drawable.ic_daytime`。
+  static Widget daytime({double size = 24, Color color = const Color(0xFF595757)}) =>
+      CustomPaint(size: Size(size, size), painter: _DaytimePainter(color));
+
   static Widget autoPage({double size = 24, Color color = const Color(0xFF595757)}) =>
       CustomPaint(size: Size(size, size), painter: _AutoPagePainter(color));
 
@@ -487,9 +493,136 @@ class _BrightnessPainter extends CustomPainter {
     canvas.restore();
   }
 
-  @override
+    @override
   bool shouldRepaint(covariant _BrightnessPainter old) => old.color != color;
 }
+
+// ic_daytime.xml —— 太阳图标(夜晚态下显示, 切回白天)。
+// 9 个 path: 8 道光线 + 中心圆环。逐 pathData 翻译。
+class _DaytimePainter extends CustomPainter {
+  final Color color;
+  _DaytimePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final s = size.width / 24;
+    canvas.save();
+    canvas.scale(s, s);
+
+    // 8 道光线
+    canvas.drawPath(
+      Path()
+        ..moveTo(16.638, 8.494)
+        ..lineTo(18.223, 6.908)
+        ..lineTo(17.091, 5.777)
+        ..lineTo(15.506, 7.363)
+        ..cubicTo(15.933, 7.687, 16.313, 8.066, 16.638, 8.494)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(8.495, 7.363)
+        ..lineTo(6.909, 5.777)
+        ..lineTo(5.778, 6.909)
+        ..lineTo(7.362, 8.494)
+        ..cubicTo(7.687, 8.067, 8.067, 7.687, 8.495, 7.363)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(12.001, 6.181)
+        ..cubicTo(12.271, 6.181, 12.537, 6.206, 12.799, 6.243)
+        ..lineTo(12.799, 4)
+        ..lineTo(11.2, 4)
+        ..lineTo(11.2, 6.243)
+        ..cubicTo(11.462, 6.206, 11.728, 6.181, 12.001, 6.181)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(6.181, 12)
+        ..cubicTo(6.181, 11.729, 6.206, 11.463, 6.243, 11.2)
+        ..lineTo(4, 11.2)
+        ..lineTo(4, 12.8)
+        ..lineTo(6.243, 12.8)
+        ..cubicTo(6.206, 12.538, 6.181, 12.272, 6.181, 12)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(15.506, 16.638)
+        ..lineTo(17.091, 18.223)
+        ..lineTo(18.222, 17.091)
+        ..lineTo(16.638, 15.506)
+        ..cubicTo(16.313, 15.934, 15.933, 16.313, 15.506, 16.638)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(17.759, 11.2)
+        ..cubicTo(17.794, 11.463, 17.82, 11.728, 17.82, 12)
+        ..cubicTo(17.82, 12.272, 17.795, 12.538, 17.759, 12.8)
+        ..lineTo(20, 12.8)
+        ..lineTo(20, 11.2)
+        ..lineTo(17.759, 11.2)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(7.363, 15.506)
+        ..lineTo(5.778, 17.091)
+        ..lineTo(6.909, 18.222)
+        ..lineTo(8.494, 16.638)
+        ..cubicTo(8.067, 16.313, 7.687, 15.934, 7.363, 15.506)
+        ..close(),
+      paint,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(12.001, 17.819)
+        ..cubicTo(11.728, 17.819, 11.462, 17.795, 11.2, 17.757)
+        ..lineTo(11.2, 20)
+        ..lineTo(12.8, 20)
+        ..lineTo(12.8, 17.757)
+        ..cubicTo(12.538, 17.795, 12.272, 17.819, 12.001, 17.819)
+        ..close(),
+      paint,
+    );
+    // 中心: 外圆 r=2.6 + 内圆 r=2 的环(原生 pathData 用 even-odd 填充规则
+    // 由「外圆 + 反向内圆」挖空)。Flutter 用 PathFillType.evenOdd 显式声明,
+    // 两 subpath 顺时针/逆时针均可正确挖空。
+    canvas.drawPath(
+      Path()
+        ..fillType = PathFillType.evenOdd
+        ..moveTo(12, 16.6)
+        ..cubicTo(9.464, 16.6, 7.4, 14.537, 7.4, 12)
+        ..cubicTo(7.4, 9.463, 9.464, 7.4, 12, 7.4)
+        ..cubicTo(14.536, 7.4, 16.6, 9.463, 16.6, 12)
+        ..cubicTo(16.6, 14.537, 14.536, 16.6, 12, 16.6)
+        ..close()
+        ..moveTo(12, 9)
+        ..cubicTo(10.346, 9, 9, 10.346, 9, 12)
+        ..cubicTo(9, 13.654, 10.346, 15, 12, 15)
+        ..cubicTo(13.654, 15, 15, 13.654, 15, 12)
+        ..cubicTo(15, 10.346, 13.654, 9, 12, 9)
+        ..close(),
+      paint..style = PaintingStyle.fill,
+    );
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _DaytimePainter old) => old.color != color;
+}
+
 
 // ic_auto_page.xml
 class _AutoPagePainter extends CustomPainter {
