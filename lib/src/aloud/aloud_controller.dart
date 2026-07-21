@@ -333,6 +333,10 @@ class AloudController extends ChangeNotifier {
   Future<void> stop() async {
     await _engine?.stop();
     _cursor = null;
+    // bump 版本号: 虽然 _cursor=null 让 _markAloud 不再标记, 但 TextLine 是 const
+    // 不可变对象, 引用不变 → _TextLinePainter.shouldRepaint 返 false → 不重绘 →
+    // 上次绘制的高亮残留。必须 bump 让 painter 重绘一次清掉 isAloud 标记。
+    _bumpVersion();
     _setState(AloudState.idle);
   }
 
