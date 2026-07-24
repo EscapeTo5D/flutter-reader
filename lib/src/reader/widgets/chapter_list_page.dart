@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
+import 'bookmark_dialog.dart';
 import 'legado_icons.dart';
 
 class ChapterListPage extends StatefulWidget {
@@ -423,12 +424,29 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
   void initState() {
     super.initState();
     _scrollController = ScrollController();
+    // 监听 controller: 书签增删(阅读页加书签 / 长按 Dialog 删除)后列表实时刷新,
+    // 不依赖路由重建。对齐原生 BookmarkFragment 的 LiveData flow 订阅。
+    widget.controller.addListener(_onChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _BookmarkListView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onChanged);
+      widget.controller.addListener(_onChanged);
+    }
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onChanged);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -461,26 +479,63 @@ class _BookmarkListViewState extends State<_BookmarkListView> {
             ),
             itemBuilder: (ctx, i) {
               final bm = bookmarks[i];
-              final chapterName = bm.chapterIndex < book.chapters.length
-                  ? book.chapters[bm.chapterIndex].title
+              // 用 controller.chapterTitle(支持 chapterSource 按章懒加载模式,
+              // 不依赖 book.chapters 列表——该列表在 chapterSource 模式下可能为空)。
+              final chapterName = widget.controller
+                      .chapterTitle(bm.chapterIndex)
+                      .isNotEmpty
+                  ? widget.controller.chapterTitle(bm.chapterIndex)
                   : '未知章节';
               return InkWell(
                 onTap: () {
-                  widget.controller.goToChapter(bm.chapterIndex);
-                  widget.controller.goToPage(bm.pageIndex);
+                  // 跳转用 chapterCharOffset 精确定位(跨字号/换设备不漂移);
+                  // 旧书签 charOffset 为 null 时回退 pageIndex。
+                  final offset = bm.chapterCharOffset;
+                  if (offset != null) {
+                    widget.controller.goToBookmarkLocation(
+                      bm.chapterIndex,
+                      offset,
+                    );
+                  } else {
+                    widget.controller.goToChapter(bm.chapterIndex);
+                    widget.controller.goToPage(bm.pageIndex);
+                  }
                   Navigator.pop(context);
+                },
+                onLongPress: () {
+                  // 长按弹 BookmarkDialog 编辑笔记/原文/删除(对齐原生
+                  // BookmarkFragment 长按 → BookmarkDialog(editPos))。
+                  showBookmarkDialog(
+                    context,
+                    controller: widget.controller,
+                    bookmark: bm,
+                  );
                 },
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 三行布局对齐原生 item_bookmark.xml:
+                      // 章名 / bookText(原文, 空则隐藏) / content(笔记, 空则隐藏)。
                       Text(
                         chapterName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 14, color: palette.onSurface),
                       ),
+                      if (bm.bookText.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          bm.bookText,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: palette.onSurfaceMedium,
+                          ),
+                        ),
+                      ],
                       if (bm.content.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text(

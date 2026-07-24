@@ -81,6 +81,7 @@ class ReadingProgress {
         chapterIndex: chapterIndex,
         pageIndex: pageIndex ?? 0,
         content: content,
+        bookText: '',
         createdAt: lastReadAt,
         chapterCharOffset: chapterCharOffset,
         userId: userId,

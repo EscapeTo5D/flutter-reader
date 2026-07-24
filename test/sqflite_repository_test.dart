@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_reader/src/aloud/aloud_engine.dart';
@@ -89,11 +92,11 @@ void main() {
 
     await repo.saveBookmark(Bookmark(
       id: 'bm1', bookId: 'b1', chapterIndex: 0, pageIndex: 2,
-      content: '第一处', createdAt: DateTime(2026, 6, 1),
+      content: '第一处笔记', bookText: '第一处原文', createdAt: DateTime(2026, 6, 1),
       chapterCharOffset: 50, userId: 'u1'));
     await repo.saveBookmark(Bookmark(
       id: 'bm2', bookId: 'b1', chapterIndex: 1, pageIndex: 0,
-      content: '第二处', createdAt: DateTime(2026, 6, 2),
+      content: '第二处笔记', bookText: '第二处原文', createdAt: DateTime(2026, 6, 2),
       chapterCharOffset: 100, userId: 'u1'));
 
     final list = await repo.getBookmarks('u1', 'b1');
@@ -101,10 +104,79 @@ void main() {
     // 倒序(最新在前)
     expect(list.first.id, 'bm2');
     expect(list.first.chapterCharOffset, 100);
+    expect(list.first.bookText, '第二处原文');
+    expect(list.first.content, '第二处笔记');
 
     await repo.deleteBookmark('bm1');
     expect((await repo.getBookmarks('u1', 'b1')).length, 1);
     await repo.close();
+  });
+
+  // v3→v4 schema 升级: bookmarks 表加 book_text 列, 旧数据(无该列)升级后
+  // 读回 bookText='' 不崩, 新写入正常。
+  test('schema v3→v4 升级: bookmarks 加 book_text 列, 旧书签不丢', () async {
+    // 用临时文件模拟老库(v3 schema, 无 book_text 列)。
+    final tmpDir = await Directory.systemTemp.createTemp('fr_upgrade_test_');
+    final dbPath = p.join(tmpDir.path, 'test.db');
+    try {
+      // 1) 手动建 v3 库: version=3, bookmarks 表无 book_text 列。
+      final oldDb = await databaseFactoryFfi.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: 3,
+          onCreate: (db, _) async {
+            await db.execute('''
+              CREATE TABLE bookmarks (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                book_id TEXT NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                page_index INTEGER NOT NULL,
+                char_offset INTEGER,
+                content TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL
+              )
+            ''');
+          },
+        ),
+      );
+      // 写一条旧书签(无 book_text)。
+      await oldDb.insert('bookmarks', {
+        'id': 'old1',
+        'user_id': 'u1',
+        'book_id': 'b1',
+        'chapter_index': 0,
+        'page_index': 0,
+        'char_offset': 10,
+        'content': '旧笔记',
+        'created_at': DateTime(2026, 1, 1).millisecondsSinceEpoch,
+      });
+      await oldDb.close();
+
+      // 2) 用 SqfliteReaderRepository.open 打开(version=3<4 → 触发 _onUpgrade 加 book_text 列)。
+      final repo = await SqfliteReaderRepository.open(dbPath: dbPath);
+      final list = await repo.getBookmarks('u1', 'b1');
+      expect(list.length, 1);
+      // 旧书签升级后 bookText 为默认空串, 其余字段不丢。
+      expect(list.first.id, 'old1');
+      expect(list.first.bookText, '');
+      expect(list.first.content, '旧笔记');
+      expect(list.first.chapterCharOffset, 10);
+
+      // 3) 升级后正常写新书签(含 book_text)。
+      await repo.saveBookmark(Bookmark(
+        id: 'new1', bookId: 'b1', chapterIndex: 1, pageIndex: 0,
+        content: '新笔记', bookText: '新原文', createdAt: DateTime(2026, 7, 1),
+        chapterCharOffset: 20, userId: 'u1'));
+      final list2 = await repo.getBookmarks('u1', 'b1');
+      expect(list2.length, 2);
+      final newBm = list2.firstWhere((b) => b.id == 'new1');
+      expect(newBm.bookText, '新原文');
+      expect(newBm.content, '新笔记');
+      await repo.close();
+    } finally {
+      if (await tmpDir.exists()) await tmpDir.delete(recursive: true);
+    }
   });
 
   // ─────────────────────────── 设置 ───────────────────────────
@@ -146,7 +218,7 @@ void main() {
       chapterCharOffset: 0, lastReadAt: DateTime.now()));
     await repo.saveBookmark(Bookmark(
       id: 'bm1', bookId: 'b1', chapterIndex: 0, pageIndex: 0,
-      content: '', createdAt: DateTime.now(), userId: 'u1'));
+      content: '', bookText: '', createdAt: DateTime.now(), userId: 'u1'));
 
     await repo.removeBook('u1', 'b1');
     expect(await repo.getBookshelf('u1'), isEmpty);

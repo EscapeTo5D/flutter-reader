@@ -22,6 +22,7 @@ export 'src/reader/widgets/reader_view.dart';
 export 'src/reader/widgets/read_menu.dart';
 export 'src/reader/widgets/page_view.dart';
 export 'src/reader/widgets/chapter_list_page.dart';
+export 'src/reader/widgets/bookmark_dialog.dart' show showBookmarkDialog;
 export 'src/reader/widgets/legado_icons.dart';
 export 'src/reader/widgets/search_content_page.dart';
 export 'src/reader/widgets/text_selection_toolbar.dart'

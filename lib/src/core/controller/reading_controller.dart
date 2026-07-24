@@ -765,8 +765,15 @@ class ReadingController extends ChangeNotifier {
     _scheduleProgressSave();
   }
 
-  void addBookmark() {
-    if (_book == null || currentChapter == null) return;
+  /// 加/删当前页书签(toggle)。
+  ///
+  /// 返回本次操作结果: true=已添加, false=已删除(原本存在), null=未执行(无书/无章)。
+  /// UI 据此弹 toast 反馈(对齐原生操作反馈, 避免用户以为「点了没反应」)。
+  bool? addBookmark() {
+    // ⚠️ 早退条件: 不依赖 currentChapter(它在按章懒加载模式 chapters 为空时恒为 null,
+    // 会让 chapterSource 模式下永远加不了书签)。书签真正依赖的是当前页正文(_pages),
+    // 故用 _pages.isEmpty 判断「无内容可标记」。
+    if (_book == null || _pages.isEmpty) return null;
     final existing = _bookmarks.indexWhere(
       (b) =>
           b.bookId == _book!.id &&
@@ -779,17 +786,23 @@ class ReadingController extends ChangeNotifier {
       if (_repository != null && removed.userId == _userId) {
         _repository!.deleteBookmark(removed.id);
       }
+      notifyListeners();
+      return false;
     } else {
       final page = _pages.isNotEmpty && _currentPageIndex < _pages.length
           ? _pages[_currentPageIndex]
           : null;
-      final content = page?.lines.take(2).map((l) => l.text).join() ?? '';
+      // bookText 存整页正文(对齐原生 legado `page.text.trim()`),
+      // content 留空供用户在 BookmarkDialog 填笔记。
+      final bookText =
+          page?.lines.map((l) => l.text).join('\n').trim() ?? '';
       final bookmark = Bookmark(
         id: '${_book!.id}_${_currentChapterIndex}_$_currentPageIndex',
         bookId: _book!.id,
         chapterIndex: _currentChapterIndex,
         pageIndex: _currentPageIndex,
-        content: content,
+        content: '',
+        bookText: bookText,
         createdAt: DateTime.now(),
         chapterCharOffset: charOffsetForCurrentPage(),
         userId: _userId,
@@ -799,6 +812,55 @@ class ReadingController extends ChangeNotifier {
       if (_repository != null && _userId != null) {
         _repository!.saveBookmark(bookmark);
       }
+      notifyListeners();
+      return true;
+    }
+  }
+
+  /// 跳转到书签位置(用章内字符偏移精确定位, 跨字号/换设备不漂移)。
+  ///
+  /// 复用搜索结果跳转同款异步竞争安全机制(`_pendingBrowse` 带章号 +
+  /// 排版完成回调校验章号双重保险): 跨章点击时 `_rePaginate` 异步排版,
+  /// pending 暂存目标, 排版完成后落页; 同章排版就绪则立即落页。
+  /// 旧书签 `chapterCharOffset` 为 null 时调用方应回退 [goToChapter]+[goToPage]。
+  void goToBookmarkLocation(int chapterIndex, int charOffset) {
+    if (_book == null) return;
+    if (chapterIndex < 0 || chapterIndex >= totalChapters) return;
+    final needPaginate = chapterIndex != _currentChapterIndex;
+    if (needPaginate) {
+      _currentChapterIndex = chapterIndex;
+      _currentPageIndex = 0;
+    }
+    if (!needPaginate && _pages.isNotEmpty) {
+      _pendingBrowse = null;
+      _currentPageIndex = pageIndexForCharOffset(charOffset);
+    } else {
+      _pendingBrowse = (chapterIndex: chapterIndex, charOffset: charOffset);
+      if (needPaginate) _rePaginate();
+    }
+    _scheduleProgressSave();
+  }
+
+  /// 更新书签(笔记/原文编辑后保存)。按 id upsert 内存列表 + 落库。
+  ///
+  /// 供 BookmarkDialog 的「确定」按钮调用。
+  Future<void> updateBookmark(Bookmark bookmark) async {
+    final i = _bookmarks.indexWhere((b) => b.id == bookmark.id);
+    if (i < 0) return;
+    _bookmarks[i] = bookmark;
+    if (_repository != null && bookmark.userId == _userId) {
+      await _repository!.saveBookmark(bookmark);
+    }
+    notifyListeners();
+  }
+
+  /// 按 id 删除书签(内存 + 落库)。供 BookmarkDialog 的「删除」按钮调用。
+  Future<void> removeBookmark(String bookmarkId) async {
+    final i = _bookmarks.indexWhere((b) => b.id == bookmarkId);
+    if (i < 0) return;
+    final removed = _bookmarks.removeAt(i);
+    if (_repository != null && removed.userId == _userId) {
+      await _repository!.deleteBookmark(bookmarkId);
     }
     notifyListeners();
   }
@@ -1034,6 +1096,9 @@ class ReadingController extends ChangeNotifier {
       }
       _pages = _paginateChapterCached(_currentChapterIndex);
       _clampCurrentPage();
+      // 同步路径(无 chapterSource)也要消费 pending: 否则跨章书签/搜索跳转
+      // 在全量内存模式下落不了页(_loadAndPaginateCurrentAsync 不被调用)。
+      _consumePendingBrowse();
       return;
     }
     // 按章加载模式。
@@ -1047,12 +1112,29 @@ class ReadingController extends ChangeNotifier {
     if (cached != null) {
       _pages = cached;
       _clampCurrentPage();
+      // 同步路径(缓存命中)也要消费 pending, 与无 chapterSource 分支同理。
+      _consumePendingBrowse();
       return;
     }
     // 未命中: 正文可能未加载或未排版。启动后台加载+排版, 期间 _pages 暂空(loading 态)。
-    // 异步完成后填 _pages 并 notifyListeners。
+    // 异步完成后填 _pages 并 notifyListeners; _pendingBrowse 在
+    // _loadAndPaginateCurrentAsync 完成回调里消费。
     _pages = [];
     _loadAndPaginateCurrentAsync();
+  }
+
+  /// 消费待落页的 charOffset 偏移(书签/搜索跳转用)。
+  ///
+  /// `_rePaginate` 的两条同步路径(无 chapterSource / 缓存命中)在填好 _pages 后
+  /// 调本方法把 pending 偏移落到对应页; 异步路径由 `_loadAndPaginateCurrentAsync`
+  /// 完成回调自行消费。带章号校验: pending 章号必须等于当前章才落页, 防跨章快速
+  /// 点击时异步排版乱序污染。
+  void _consumePendingBrowse() {
+    final pending = _pendingBrowse;
+    if (pending != null && pending.chapterIndex == _currentChapterIndex) {
+      _currentPageIndex = pageIndexForCharOffset(pending.charOffset);
+      _pendingBrowse = null;
+    }
   }
 
   void _clampCurrentPage() {
@@ -1091,15 +1173,10 @@ class ReadingController extends ChangeNotifier {
       if (stillCurrent) {
         _pages = pages;
         _clampCurrentPage();
-        // 搜索结果跳转: 章切换后排版刚完成, 用待落偏移精确定位到命中所在页
+        // 搜索结果/书签跳转: 章切换后排版刚完成, 用待落偏移精确定位到命中所在页
         // (对齐 restoreProgress 的 charOffset→page 二分落位)。
-        // **带章号校验**(根因修复): pending 的章号必须等于当前章才落页,
-        // 防跨章快速点击时异步排版乱序把旧章 pending 落到新章。
-        final pending = _pendingBrowse;
-        if (pending != null && pending.chapterIndex == _currentChapterIndex) {
-          _currentPageIndex = pageIndexForCharOffset(pending.charOffset);
-          _pendingBrowse = null;
-        }
+        // 带章号校验防跨章快速点击时异步排版乱序污染(见 _consumePendingBrowse)。
+        _consumePendingBrowse();
         _loadingChapters.remove(chapterIndex);
         notifyListeners();
         // 当前章就绪后, 预取相邻章(对齐 legado prefetch, 翻章命中缓存 O(1))。

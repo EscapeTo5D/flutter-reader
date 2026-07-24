@@ -18,8 +18,10 @@ import '../http_tts_config.dart';
 /// 核心设计(对齐原生):
 /// - **段落 → mp3**: 每段文本经 [HttpTtsConfigResolver] 解析成 url, dio 下载 mp3,
 ///   落盘(md5 文件名, 含 url+speed+text), 命中缓存复用。
-/// - **播放队列**: 用 `ConcatenatingAudioSource` 滚动追加(窗口大小 [_windowSize]),
-///   避免一章几十段一次性塞队列卡顿(对齐原生 ExoPlayer playlist)。
+/// - **播放队列**: 用 `AudioPlayer.setAudioSources` 初始化 + `addAudioSource` 滚动追加
+///   (窗口大小 [_windowSize]), 避免一章几十段一次性塞队列卡顿(对齐原生 ExoPlayer
+///   playlist)。注: 旧版用 `ConcatenatingAudioSource`, just_audio 0.10.6 起该类
+///   deprecated, 改用 `setAudioSources`/`addAudioSource`/`audioSources` 等价 API。
 /// - **段推进**: `onPlayerComplete`(整队列播完)/`currentIndex` 变化 → 推进段下标。
 /// - **逐字进度(估算)**: ExoPlayer 无字符级回调, 用音频时长 ÷ 段字符数估算当前字符
 ///   位置(对应原生 `upPlayPos = delay(duration/charCount)`)。
@@ -58,7 +60,6 @@ class HttpTtsEngine implements AloudEngine {
   /// 对齐原生 ExoPlayer playlist, 避免大队列卡顿(参见 just_audio issue #294)。
   static const int _windowSize = 3;
 
-  ConcatenatingAudioSource? _playlist;
   Directory? _cacheDir;
   StreamSubscription<int?>? _indexSub;
   StreamSubscription<PlayerState>? _playerStateSub;
@@ -101,11 +102,8 @@ class HttpTtsEngine implements AloudEngine {
       sources.add(AudioSource.file(file.path));
     }
 
-    _playlist = ConcatenatingAudioSource(
-      children: sources,
-      useLazyPreparation: true,
-    );
-    await _player.setAudioSource(_playlist!, initialIndex: 0);
+    // 用 setAudioSources 初始化播放队列(替代已 deprecated 的 ConcatenatingAudioSource)。
+    await _player.setAudioSources(sources, initialIndex: 0);
     await _player.setSpeed(speed);
 
     // 订阅播放器事件。
@@ -157,11 +155,11 @@ class HttpTtsEngine implements AloudEngine {
   }
 
   void _onIndexChange(int? idx) {
-    if (_disposed || idx == null || _playlist == null) return;
+    if (_disposed || idx == null) return;
     // absoluteIndex = 队列起点偏移 + 当前播放项下标。
     // ⚠️ 不做头部回收(曾用 removeRange 但会破坏 _currentIndex/player.currentIndex
-    //    不变式, 导致段推进错位)。just_audio ConcatenatingAudioSource 处理
-    //    几十段播放列表无性能问题(官方 issue #294 确认), 故保持队列单调追加。
+    //    不变式, 导致段推进错位)。just_audio 处理几十段播放列表无性能问题
+    //    (官方 issue #294 确认), 故保持队列单调追加。
     final absoluteIndex = _currentIndex + idx;
     if (absoluteIndex >= _paragraphs.length) return;
     // 报段首进度(charEndInParagraph=1 让段切换瞬间即有高亮反馈, 避免闪烁)。
@@ -182,9 +180,8 @@ class HttpTtsEngine implements AloudEngine {
   /// 段推进/高亮全面错位。just_audio 处理几十段播放列表无压力(对齐原生
   /// ExoPlayer playlist), 故保持单调追加。
   Future<void> _slideWindow(int currentQueueIdx) async {
-    final playlist = _playlist;
-    if (playlist == null || _disposed) return;
-    final queueLen = playlist.length;
+    if (_disposed) return;
+    final queueLen = _player.audioSources.length;
     // 接近窗口尾部 → 追加下一段(若还有)。
     if (currentQueueIdx < queueLen - 1) return;
     final nextAbsolute = _currentIndex + queueLen;
@@ -192,7 +189,7 @@ class HttpTtsEngine implements AloudEngine {
     final cacheDir = await _ensureCacheDir();
     try {
       final file = await _ensureSegmentCached(nextAbsolute, cacheDir);
-      await playlist.add(AudioSource.file(file.path));
+      await _player.addAudioSource(AudioSource.file(file.path));
     } catch (_) {
       // 预取失败静默, 到时播到了再报错。
     }

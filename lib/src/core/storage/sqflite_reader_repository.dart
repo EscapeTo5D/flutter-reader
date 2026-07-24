@@ -43,8 +43,9 @@ class SqfliteReaderRepository implements ReaderRepository {
   static const _kDbName = 'flutter_reader.db';
   // v2: 新增 chapter_contents 表(章节正文缓存, 用于二次打开秒开)。
   // v3: 新增 reading_style_presets 表(用户自定义阅读样式预设, bg/text 色)。
+  // v4: bookmarks 表加 book_text 列(对齐原生 legado bookText 字段, 存原文片段)。
   // _onUpgrade 在老库上用 IF NOT EXISTS 增量建表, 已有数据不动。
-  static const _kDbVersion = 3;
+  static const _kDbVersion = 4;
 
   /// 打开(或创建)数据库。
   ///
@@ -99,6 +100,7 @@ class SqfliteReaderRepository implements ReaderRepository {
         page_index INTEGER NOT NULL,
         char_offset INTEGER,
         content TEXT NOT NULL DEFAULT '',
+        book_text TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL
       )
     ''');
@@ -195,6 +197,13 @@ class SqfliteReaderRepository implements ReaderRepository {
       ''');
       await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_style_presets_user ON reading_style_presets(user_id, sort_order)',
+      );
+    }
+    // v4: bookmarks 表加 book_text 列(对齐原生 legado bookText)。
+    // ALTER ADD COLUMN 会让所有现有行自动填默认值 '', 旧书签安全。
+    if (oldVersion < 4) {
+      await db.execute(
+        "ALTER TABLE bookmarks ADD COLUMN book_text TEXT NOT NULL DEFAULT ''",
       );
     }
   }
@@ -301,6 +310,7 @@ class SqfliteReaderRepository implements ReaderRepository {
         'page_index': bookmark.pageIndex,
         'char_offset': bookmark.chapterCharOffset,
         'content': bookmark.content,
+        'book_text': bookmark.bookText,
         'created_at': bookmark.createdAt.millisecondsSinceEpoch,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -319,6 +329,7 @@ class SqfliteReaderRepository implements ReaderRepository {
       chapterIndex: row['chapter_index'] as int,
       pageIndex: row['page_index'] as int,
       content: (row['content'] as String?) ?? '',
+      bookText: (row['book_text'] as String?) ?? '',
       createdAt:
           DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
       chapterCharOffset: row['char_offset'] as int?,

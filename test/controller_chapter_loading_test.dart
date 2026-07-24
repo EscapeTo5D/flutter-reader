@@ -149,6 +149,47 @@ void main() {
     expect(c.pages, isNotEmpty);
     c.dispose();
   });
+
+  // 回归测试: chapterSource 模式下 chapters 列表为空, currentChapter 为 null,
+  // 但 addBookmark 必须能工作(早退条件不依赖 currentChapter, 而依赖 _pages)。
+  // 复现 bug: 之前 addBookmark 用 `if (currentChapter == null) return null`,
+  // 导致 chapterSource 模式下永远加不了书签(example app 正是此模式)。
+  test('chapterSource 模式(chapters 空)下 addBookmark 能正常加书签', () async {
+    final source = makeSource([
+      ChapterMeta(title: '第一章', content: '第一章正文,足够排一页。' * 5),
+    ]);
+    final book = Book(
+      id: 'b1',
+      title: '测试书',
+      author: '',
+      chapterSource: source,
+    );
+    // chapters 故意留空(对齐 example app 的按章懒加载模式)。
+    expect(book.chapters, isEmpty);
+    final c = ReadingController();
+    c.updatePageSize(const Size(360, 600));
+    c.loadBook(book);
+    await waitForChapterReady(c);
+
+    // currentChapter 在 chapters 空时为 null(已知行为), 但这不该阻止加书签。
+    expect(c.currentChapter, isNull);
+    expect(c.pages, isNotEmpty);
+
+    // 加书签: 应成功返回 true(不再因 currentChapter==null 早退)。
+    final result = c.addBookmark();
+    expect(result, true);
+    expect(c.bookmarks.length, 1);
+    expect(c.isCurrentPageBookmarked(), isTrue);
+    // bookText 应取自当前页正文(_pages), 不是空串。
+    expect(c.bookmarks.first.bookText, isNotEmpty);
+    // chapterTitle 在 chapterSource 模式下也能取到(供列表展示用)。
+    expect(c.chapterTitle(0), '第一章');
+
+    // toggle 删除。
+    expect(c.addBookmark(), false);
+    expect(c.bookmarks, isEmpty);
+    c.dispose();
+  });
 }
 
 /// 可控的测试用 ChapterSource: 记录每章被加载的次数。
