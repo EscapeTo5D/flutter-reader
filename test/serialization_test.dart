@@ -185,7 +185,8 @@ void main() {
       bookId: 'book-1',
       chapterIndex: 3,
       pageIndex: 5,
-      content: '某页首行内容',
+      content: '我的笔记',
+      bookText: '这是整页原文片段',
       createdAt: DateTime(2026, 6, 29, 10, 30),
       chapterCharOffset: 128,
       userId: 'u1',
@@ -198,6 +199,7 @@ void main() {
     expect(restored.chapterIndex, original.chapterIndex);
     expect(restored.pageIndex, original.pageIndex);
     expect(restored.content, original.content);
+    expect(restored.bookText, original.bookText);
     expect(restored.createdAt, original.createdAt);
     expect(restored.chapterCharOffset, original.chapterCharOffset);
     expect(restored.userId, 'u1');
@@ -215,5 +217,19 @@ void main() {
     });
     expect(restored.chapterCharOffset, isNull);
     expect(restored.pageIndex, 0);
+  });
+
+  /// 旧书签(v3 schema 前, 无 bookText 字段)解码不报错, bookText 为空串。
+  test('旧 Bookmark(无 bookText)解码 bookText 为空串', () {
+    final restored = Bookmark.fromJson({
+      'id': 'b3',
+      'bookId': 'book-1',
+      'chapterIndex': 0,
+      'pageIndex': 0,
+      'content': '旧字段还在',
+      'createdAt': '2026-06-29T10:30:00.000',
+    });
+    expect(restored.bookText, '');
+    expect(restored.content, '旧字段还在');
   });
 }

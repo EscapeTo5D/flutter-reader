@@ -187,6 +187,93 @@ void main() {
     await repo.close();
   });
 
+  test('updateBookmark 编辑笔记/原文后落库', () async {
+    final repo = await newRepo();
+    final c = ReadingController(repository: repo, userId: 'u1');
+    c.loadBook(makeBook());
+    c.updatePageSize(const Size(120, 200));
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    c.addBookmark();
+    expect(c.bookmarks.length, 1);
+    final bm = c.bookmarks.first;
+    // addBookmark 时 content=''(笔记留空), bookText=整页正文。
+    expect(bm.content, '');
+    expect(bm.bookText, isNotEmpty);
+
+    // 编辑笔记 + 改原文。
+    await c.updateBookmark(bm.copyWith(
+      content: '我的读书笔记',
+      bookText: '改后的原文',
+    ));
+    expect(c.bookmarks.first.content, '我的读书笔记');
+    expect(c.bookmarks.first.bookText, '改后的原文');
+
+    // 验证已落库。
+    final stored = await repo.getBookmarks('u1', 'book-test');
+    expect(stored.first.content, '我的读书笔记');
+    expect(stored.first.bookText, '改后的原文');
+
+    await closeController(c);
+    await repo.close();
+  });
+
+  test('removeBookmark 按 id 删除内存+落库', () async {
+    final repo = await newRepo();
+    final c = ReadingController(repository: repo, userId: 'u1');
+    c.loadBook(makeBook());
+    c.updatePageSize(const Size(120, 200));
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    c.addBookmark();
+    final id = c.bookmarks.first.id;
+    expect(c.bookmarks.length, 1);
+    expect((await repo.getBookmarks('u1', 'book-test')).length, 1);
+
+    await c.removeBookmark(id);
+    expect(c.bookmarks, isEmpty);
+    expect((await repo.getBookmarks('u1', 'book-test')), isEmpty);
+
+    await closeController(c);
+    await repo.close();
+  });
+
+  test('goToBookmarkLocation 用 charOffset 跨章精确定位', () async {
+    final repo = await newRepo();
+    final c = ReadingController(repository: repo, userId: 'u1');
+    c.loadBook(makeBook());
+    c.updatePageSize(const Size(120, 200));
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 跳到第 2 章(idx=1)某页, 记下 charOffset, 加书签。
+    c.goToChapter(1);
+    await Future.delayed(const Duration(milliseconds: 50));
+    c.goToPage(1);
+    await Future.delayed(const Duration(milliseconds: 30));
+    final targetChapter = c.currentChapterIndex;
+    final targetOffset = c.charOffsetForCurrentPage();
+    final targetPage = c.currentPageIndex;
+    expect(targetChapter, 1);
+    expect(targetOffset, greaterThan(0));
+
+    c.addBookmark();
+    final bm = c.bookmarks.first;
+
+    // 跑到别处, 再用书签的 (chapter, charOffset) 跳回。
+    c.goToChapter(0);
+    c.goToPage(0);
+    await Future.delayed(const Duration(milliseconds: 30));
+    expect(c.currentChapterIndex, 0);
+
+    c.goToBookmarkLocation(bm.chapterIndex, bm.chapterCharOffset!);
+    await Future.delayed(const Duration(milliseconds: 80));
+    expect(c.currentChapterIndex, targetChapter);
+    expect(c.currentPageIndex, targetPage);
+
+    await closeController(c);
+    await repo.close();
+  });
+
   test('设置持久化: loadSettings 恢复上次字号', () async {
     final repo = await newRepo();
     final c1 = ReadingController(repository: repo, userId: 'u1');

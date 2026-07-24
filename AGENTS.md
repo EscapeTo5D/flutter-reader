@@ -794,4 +794,78 @@ class _RippleButtonState extends State<_RippleButton> {
 ### 新增依赖（pubspec.yaml）
 `flutter_tts: ^4.2.5` / `just_audio: ^0.10.6` / `dio: ^5.7.0` / `crypto: ^3.0.6`（+ 传递依赖 `rxdart`/`uuid`/`just_audio_web`）。
 
+## 书签功能（2026-07-24 对齐原生 legado）
+
+对齐原生 legado `BookmarkDialog` + `BookmarkFragment` + `Bookmark.kt`。本轮把书签从「能存能 toggle」补齐到「原文本/笔记双字段 + 精确跨字号跳转 + 弹窗编辑/删除」。
+
+### ⚠️ 关键：bookmarks 表 schema v4（book_text 列）
+- `_kDbVersion` 由 3 → **4**。bookmarks 表加 `book_text TEXT NOT NULL DEFAULT ''` 列（对齐原生 `Bookmark.bookText`）。
+- 迁移用 `ALTER TABLE bookmarks ADD COLUMN book_text TEXT NOT NULL DEFAULT ''`（sqflite ALTER ADD COLUMN 安全，旧行自动填默认值）。
+- `_onCreate`（新装）也同步加列，新旧库 schema 一致。
+- 旧书签（v3 前）读回 `bookText=''`，`content` 仍是旧字段（可能存了页前两行）。
+
+### 数据模型 `Bookmark`（`lib/src/core/models/bookmark.dart`）
+- 字段（对齐原生 `Bookmark.kt`）：
+  - `id` / `bookId` / `chapterIndex` / `pageIndex` / `content`(笔记) / `bookText`(原文) / `createdAt` / `chapterCharOffset?`(章内偏移) / `userId?`
+- `bookText` 是 **required** 字段（构造必传）。旧调用方传 `''`。
+- `toJson` 含 `bookText`；`fromJson` 用 `(json['bookText'] as String?) ?? ''`（旧 JSON 无此字段 → 空串，向前兼容）。
+- `userId` 仍不序列化（表列承载）。
+- ⚠️ `ReadingProgress.toBookmark()`（dead code，无调用方）也补了 `bookText: ''` 保持编译。
+
+### 加书签交互（双交互，对齐原生语义）
+- **read_menu 顶部书签按钮 = toggle 快速加/删**（保留现状，即时反馈，符合「把当前页标记一下」直觉）。id 规则 `{bookId}_{chapterIndex}_{pageIndex}` 不变（单页单书签）。
+- **`addBookmark()` 取值改**：
+  - 旧：`content = page.lines.take(2).map((l)=>l.text).join()`（页前两行）。
+  - 新：`bookText = page.lines.map((l)=>l.text).join('\n').trim()`（**整页正文**，对齐原生 `page.text.trim()`），`content = ''`（笔记留空，用户在 Dialog 填）。
+- **列表项长按 → 弹 BookmarkDialog**（对齐原生 `BookmarkFragment` 长按 → `BookmarkDialog(editPos)`）。
+
+### BookmarkDialog（`lib/src/reader/widgets/bookmark_dialog.dart`，新文件）
+- 复刻原生 `dialog_bookmark.xml`：标题栏「书签」+ 章节名文本(不可编辑) + 原文输入框(hint「内容」) + 笔记输入框(hint「笔记内容」) + 底部三按钮(左下「删除」仅编辑态显示 / 取消 / 确定)。
+- 挂载用 `SmartDialog.show(alignment: center, maskColor: 0.5黑)` + 外层 `Material(color: transparent)` 给 TextField/按钮提供墨水宿主（对齐 `_PresetEditorDialog` 模板）。
+- 公开入口 `showBookmarkDialog(BuildContext, {controller, bookmark, isNew})`，已 export 到 `flutter_reader.dart`。
+- 自带轻量日夜色板 `_DialogPalette`（色值与 `MenuPalette`/`_ChapterListPalette` 一致，独立定义避免跨文件依赖私有类）。
+- 确定 → `controller.updateBookmark(...)`；删除 → `controller.removeBookmark(id)`。
+
+### Controller 新增 3 方法（`reading_controller.dart`）
+- **`goToBookmarkLocation(int chapterIndex, int charOffset)`**：书签跳转统一入口。复用 `_pendingBrowse` 带章号 + `pageIndexForCharOffset` 二分落页，跨字号/换设备不漂移。旧书签 `charOffset=null` 时调用方回退 `goToChapter`+`goToPage`。
+- **`updateBookmark(Bookmark)`**：编辑笔记/原文后保存（内存按 id 替换 + upsert 落库 + notify）。
+- **`removeBookmark(String id)`**：按 id 删（内存 + 落库 + notify），供 Dialog「删除」用。
+
+### ⚠️ `_pendingBrowse` 消费修复（本轮发现 + 修的 bug，别重蹈）
+**问题**：`_pendingBrowse`（书签/搜索跳转的待落页偏移）原本只在 `_loadAndPaginateCurrentAsync`（chapterSource 异步加载模式）完成回调里消费。但 `_rePaginate` 有**两条同步路径**会提前 return：
+1. 无 chapterSource（全量内存模式，测试环境）→ 同步 `_paginateChapterCached` + return
+2. chapterSource 缓存命中 → 同步填 `_pages` + return
+
+这两条同步路径**都不消费 `_pendingBrowse`** → 跨章书签/搜索跳转在全量内存模式下落不了页（`_currentPageIndex` 停在跨章分支设的 0）。这是 `_goToSearchResult` 既有缺陷，之前无测试覆盖到。
+
+**修复**：抽 `_consumePendingBrowse()` helper（带章号校验 + `pageIndexForCharOffset` 落页），在 `_rePaginate` 两条同步路径 return 前调用，异步路径（`_loadAndPaginateCurrentAsync`）也改成调同一 helper（消除重复逻辑）。三条路径现在都消费 pending。
+
+### 列表 UI（`chapter_list_page.dart` 的 `_BookmarkListView`）
+- 三行布局对齐原生 `item_bookmark.xml`：章名 / bookText(原文, 空则隐藏) / content(笔记, 空则隐藏)。
+- **跳转用 `chapterCharOffset`**（旧书签 null 时回退 pageIndex）：
+  ```dart
+  final offset = bm.chapterCharOffset;
+  if (offset != null) controller.goToBookmarkLocation(bm.chapterIndex, offset);
+  else { controller.goToChapter(bm.chapterIndex); controller.goToPage(bm.pageIndex); }
+  ```
+- 长按 → `showBookmarkDialog`（编辑态，显示「删除」）。
+
+### 原生对照（关键差异）
+| 维度 | 原生 legado | 本轮 Flutter |
+|---|---|---|
+| 主键 | `time`(时间戳) | `id`(`{bookId}_{chIdx}_{pageIdx}`) |
+| 书定位 | `(bookName, bookAuthor)` 索引 | `userId + bookId` 复合键 |
+| 跳转 | `chapterPos`(charOffset) | `chapterCharOffset`(同源) |
+| 加书签入口 | 菜单+选中文本两个 | toggle 按钮(单入口，选中加书签 onBookmark 仍 dead UI 未接) |
+
+### 测试（新增/更新）
+- `serialization_test.dart`：bookText 往返 + 旧 JSON(无 bookText)解码兼容。
+- `sqflite_repository_test.dart`：书签往返加 bookText 断言 + **v3→v4 schema 升级用例**（建 v3 库写旧书签 → 升 v4 → 读回 bookText='' 不崩 + 新书签正常写）。全套件 +1。
+- `persistence_integration_test.dart`：`updateBookmark`/`removeBookmark`/`goToBookmarkLocation` 三个 controller 用例。全套件 217 测试通过。
+
+### 不做（本轮排除）
+- ❌ **选中文本加书签**（`ReaderTextSelectionToolbar.onBookmark` 仍是 dead UI，未接线）。原生入口 B（选中片段→书签）需接 page_view 的选区回调，本轮只做整页加书签。
+- ❌ **所有书签页**（原生 `AllBookmarkActivity` 跨书聚合 + 导出 JSON/MD）。本包是阅读器 widget，书签按书管理即可，跨书聚合属宿主 App 职责。
+- ❌ 书签搜索（原生 `BookmarkDao.flowSearch`）。当前书签量小，目录页书签 Tab 不带搜索。
+
 

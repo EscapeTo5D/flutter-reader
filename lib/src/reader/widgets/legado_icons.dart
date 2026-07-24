@@ -4,8 +4,8 @@ class LegadoIcons {
   static Widget arrowBack({double size = 24, Color color = const Color(0xFF000000)}) =>
       CustomPaint(size: Size(size, size), painter: _ArrowBackPainter(color));
 
-  static Widget bookmark({double size = 24, Color color = const Color(0xFF595757)}) =>
-      CustomPaint(size: Size(size, size), painter: _BookmarkPainter(color));
+  static Widget bookmark({double size = 24, Color color = const Color(0xFF595757), bool filled = false}) =>
+      CustomPaint(size: Size(size, size), painter: _BookmarkPainter(color, filled: filled));
 
   static Widget close({double size = 24, Color color = const Color(0xFFFFFFFF)}) =>
       CustomPaint(size: Size(size, size), painter: _ClosePainter(color));
@@ -128,7 +128,11 @@ class _ArrowBackPainter extends CustomPainter {
 // ic_bookmark.xml
 class _BookmarkPainter extends CustomPainter {
   final Color color;
-  _BookmarkPainter(this.color);
+  /// true=实心书签(当前页已加书签态); false=空心轮廓(默认)。
+  /// 实心态只画外轮廓 path, 跳过内轮廓 path(内 path 本是用来 fill 同色"挖空"中间
+  /// 产生边框效果的, 不画内 path 即得实心)。
+  final bool filled;
+  _BookmarkPainter(this.color, {this.filled = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -145,20 +149,28 @@ class _BookmarkPainter extends CustomPainter {
         ..lineTo(16.649, 20)
         ..lineTo(18.06, 20)
         ..lineTo(18.06, 4)
-        ..close()
-        ..moveTo(16.606, 18.278)
-        ..lineTo(12.001, 15.515)
-        ..lineTo(7.397, 18.279)
-        ..lineTo(7.397, 5.454)
-        ..lineTo(16.612, 5.454)
         ..close(),
       paint,
     );
+    if (!filled) {
+      // 空心态: 内轮廓 fill 同色覆盖中间, 留下边框。
+      canvas.drawPath(
+        Path()
+          ..moveTo(16.606, 18.278)
+          ..lineTo(12.001, 15.515)
+          ..lineTo(7.397, 18.279)
+          ..lineTo(7.397, 5.454)
+          ..lineTo(16.612, 5.454)
+          ..close(),
+        paint,
+      );
+    }
     canvas.restore();
   }
 
   @override
-  bool shouldRepaint(covariant _BookmarkPainter old) => old.color != color;
+  bool shouldRepaint(covariant _BookmarkPainter old) =>
+      old.color != color || old.filled != filled;
 }
 
 // ic_baseline_close.xml
