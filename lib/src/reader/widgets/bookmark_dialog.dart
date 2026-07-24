@@ -60,15 +60,12 @@ class _BookmarkDialogState extends State<BookmarkDialog> {
     super.dispose();
   }
 
-  /// 章节名: 取书签所在章的标题; 取不到回退「未知章节」。
+  /// 章节名: 用 controller.chapterTitle(支持 chapterSource 按章懒加载模式,
+  /// 不依赖 book.chapters 列表——该列表在 chapterSource 模式下为空);
+  /// 取不到回退「未知章节」。
   String get _chapterName {
-    final book = widget.controller.book;
-    if (book == null) return '未知章节';
-    if (widget.bookmark.chapterIndex < 0 ||
-        widget.bookmark.chapterIndex >= book.chapters.length) {
-      return '未知章节';
-    }
-    return book.chapters[widget.bookmark.chapterIndex].title;
+    final title = widget.controller.chapterTitle(widget.bookmark.chapterIndex);
+    return title.isEmpty ? '未知章节' : title;
   }
 
   Future<void> _onSave() async {
@@ -78,11 +75,14 @@ class _BookmarkDialogState extends State<BookmarkDialog> {
     );
     await widget.controller.updateBookmark(updated);
     if (mounted) SmartDialog.dismiss();
+    // 操作反馈: 新建态说「已添加」, 编辑态说「已保存」。
+    SmartDialog.showToast(widget.isNew ? '已添加书签' : '已保存');
   }
 
   Future<void> _onDelete() async {
     await widget.controller.removeBookmark(widget.bookmark.id);
     if (mounted) SmartDialog.dismiss();
+    SmartDialog.showToast('已删除书签');
   }
 
   @override
