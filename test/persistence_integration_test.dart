@@ -218,6 +218,42 @@ void main() {
     await repo.close();
   });
 
+  // 对齐原生: 点书签按钮弹 Dialog, 当前页无书签时 currentBookmarkDraft 返回预填原文
+  // 的新书签草稿; 确定 → updateBookmark upsert(不存在则新建)。覆盖该新建路径。
+  test('currentBookmarkDraft + updateBookmark 新建路径(对齐原生 Dialog 流程)', () async {
+    final repo = await newRepo();
+    final c = ReadingController(repository: repo, userId: 'u1');
+    c.loadBook(makeBook());
+    c.updatePageSize(const Size(120, 200));
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 当前页无书签 → draft 是预填原文的新草稿(笔记空)。
+    expect(c.isCurrentPageBookmarked(), isFalse);
+    final draft = c.currentBookmarkDraft();
+    expect(draft, isNotNull);
+    expect(draft!.content, '');
+    expect(draft.bookText, isNotEmpty); // 预填整页原文
+    expect(draft.chapterCharOffset, isNotNull);
+
+    // 用户在 Dialog 填笔记后确定 → updateBookmark upsert 新建。
+    await c.updateBookmark(draft.copyWith(content: '我标记的笔记'));
+    expect(c.bookmarks.length, 1);
+    expect(c.isCurrentPageBookmarked(), isTrue);
+    expect(c.bookmarks.first.content, '我标记的笔记');
+
+    // 已落库。
+    final stored = await repo.getBookmarks('u1', 'book-test');
+    expect(stored.length, 1);
+    expect(stored.first.content, '我标记的笔记');
+
+    // 再次取 draft: 当前页已有书签 → 返回它(编辑态, 含已填笔记)。
+    final draft2 = c.currentBookmarkDraft();
+    expect(draft2!.content, '我标记的笔记');
+
+    await closeController(c);
+    await repo.close();
+  });
+
   test('removeBookmark 按 id 删除内存+落库', () async {
     final repo = await newRepo();
     final c = ReadingController(repository: repo, userId: 'u1');
