@@ -5,6 +5,7 @@ import '../../core/controller/reading_controller.dart';
 import '../../core/models/reading_settings.dart';
 import '../../core/storage/reading_style_preset.dart';
 import '../../core/storage/search_result.dart';
+import 'bookmark_dialog.dart';
 import 'chapter_list_page.dart';
 import 'detail_seek_bar.dart';
 import 'legado_icons.dart';
@@ -182,7 +183,18 @@ class _ReadMenuState extends State<ReadMenu> {
             ),
             IconButton(
               icon: LegadoIcons.bookmark(size: 24, color: p.onSurface),
-              onPressed: () => widget.controller.addBookmark(),
+              // 对齐原生 legado: 点书签按钮 → 弹 BookmarkDialog。
+              // 当前页已有书签 → 编辑态(显示删除); 无 → 新建态(预填整页原文)。
+              onPressed: () {
+                final draft = widget.controller.currentBookmarkDraft();
+                if (draft == null) return;
+                showBookmarkDialog(
+                  context,
+                  controller: widget.controller,
+                  bookmark: draft,
+                  isNew: !widget.controller.isCurrentPageBookmarked(),
+                );
+              },
             ),
           ],
         ),

@@ -841,17 +841,50 @@ class ReadingController extends ChangeNotifier {
     _scheduleProgressSave();
   }
 
-  /// 更新书签(笔记/原文编辑后保存)。按 id upsert 内存列表 + 落库。
-  ///
-  /// 供 BookmarkDialog 的「确定」按钮调用。
+  /// 保存书签(笔记/原文编辑后确定)。按 id upsert 内存列表 + 落库:
+  /// 已存在则覆盖, 不存在则新增。供 BookmarkDialog 的「确定」按钮调用
+  /// (新建态和编辑态统一走这里)。
   Future<void> updateBookmark(Bookmark bookmark) async {
     final i = _bookmarks.indexWhere((b) => b.id == bookmark.id);
-    if (i < 0) return;
-    _bookmarks[i] = bookmark;
+    if (i >= 0) {
+      _bookmarks[i] = bookmark;
+    } else {
+      _bookmarks.add(bookmark);
+    }
     if (_repository != null && bookmark.userId == _userId) {
       await _repository!.saveBookmark(bookmark);
     }
     notifyListeners();
+  }
+
+  /// 构造当前页的书签草稿, 供 BookmarkDialog 展示/编辑。
+  ///
+  /// 当前页已有书签 → 返回它(编辑态, Dialog 显示删除按钮)。
+  /// 当前页无书签 → 返回预填整页正文的新书签草稿(新建态, 笔记留空)。
+  /// 无书/无正文(_pages 空) → 返回 null(调用方应不弹 Dialog)。
+  Bookmark? currentBookmarkDraft() {
+    if (_book == null || _pages.isEmpty) return null;
+    final existing = _bookmarks.cast<Bookmark?>().firstWhere(
+          (b) =>
+              b!.bookId == _book!.id &&
+              b.chapterIndex == _currentChapterIndex &&
+              b.pageIndex == _currentPageIndex,
+          orElse: () => null,
+        );
+    if (existing != null) return existing;
+    final page = _currentPageIndex < _pages.length ? _pages[_currentPageIndex] : null;
+    final bookText = page?.lines.map((l) => l.text).join('\n').trim() ?? '';
+    return Bookmark(
+      id: '${_book!.id}_${_currentChapterIndex}_$_currentPageIndex',
+      bookId: _book!.id,
+      chapterIndex: _currentChapterIndex,
+      pageIndex: _currentPageIndex,
+      content: '',
+      bookText: bookText,
+      createdAt: DateTime.now(),
+      chapterCharOffset: charOffsetForCurrentPage(),
+      userId: _userId,
+    );
   }
 
   /// 按 id 删除书签(内存 + 落库)。供 BookmarkDialog 的「删除」按钮调用。
